@@ -1070,6 +1070,201 @@ p {
   font-weight: 700;
 }
 
+.reel-view {
+  position: relative;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: #040507;
+}
+
+.reel-tabs {
+  position: absolute;
+  z-index: 5;
+  top: 72px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.reel-tabs button {
+  min-height: 30px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: rgba(255,255,255,.72);
+  background: rgba(0,0,0,.28);
+  backdrop-filter: blur(14px);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.reel-tabs button.selected {
+  color: #fff;
+  background: rgba(121,132,255,.36);
+}
+
+.reel-stack {
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+
+.reel-stack::-webkit-scrollbar {
+  display: none;
+}
+
+.reel-card {
+  position: relative;
+  min-height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 0 78px 98px 18px;
+  background-size: cover;
+  background-position: center;
+}
+
+.reel-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.44), transparent 30%),
+    linear-gradient(0deg, rgba(0,0,0,.94), rgba(0,0,0,.2) 62%, transparent);
+}
+
+.reel-poster {
+  position: absolute;
+  z-index: 1;
+  right: 16px;
+  top: 128px;
+  width: 88px;
+  height: 132px;
+  min-height: 0;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 10px;
+  padding: 0;
+  box-shadow: 0 18px 44px rgba(0,0,0,.5);
+}
+
+.reel-poster strong {
+  display: none;
+}
+
+.reel-copy {
+  position: relative;
+  z-index: 2;
+  max-width: 260px;
+}
+
+.reel-copy h2 {
+  margin: 0 0 8px;
+  color: #fff;
+  font-size: 34px;
+  line-height: .92;
+}
+
+.reel-meta,
+.reel-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.reel-meta span,
+.reel-genres span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #fff;
+  background: rgba(255,255,255,.12);
+  font-size: 10px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.reel-genres span {
+  color: #dcd6ff;
+  background: rgba(155,124,255,.22);
+}
+
+.reel-copy p {
+  max-width: 260px;
+  margin: 8px 0 0;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.reel-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.reel-actions {
+  position: absolute;
+  z-index: 3;
+  right: 14px;
+  bottom: 86px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.reel-actions button,
+.reel-actions a {
+  width: 46px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: white;
+  background: transparent;
+}
+
+.reel-actions button.active,
+.reel-actions a:focus-visible {
+  color: #a997ff;
+}
+
+.reel-actions .reel-details-button {
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 50%;
+  background: rgba(255,255,255,.14);
+  backdrop-filter: blur(10px);
+}
+
+.reel-details-button span {
+  width: 0;
+  height: 0;
+  margin-left: 3px;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 12px solid currentColor;
+}
+
+.reel-actions svg {
+  width: 29px;
+  height: 29px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.6));
+}
+
+.reel-actions span {
+  margin-bottom: 6px;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .search-box {
   height: 38px;
   margin: 0 16px 10px;
@@ -1659,7 +1854,214 @@ p {
 }
 
 .log-screen {
-  padding: 0 16px;
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 112px;
+}
+
+.log-search,
+.mg2-log-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 0 12px;
+  color: #9fa7b2;
+  background: rgba(255,255,255,.055);
+}
+
+.log-search svg,
+.mg2-log-search svg {
+  width: 18px;
+  height: 18px;
+}
+
+.log-search input,
+.mg2-log-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 13px;
+}
+
+.log-tabs,
+.mg2-log-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid rgba(255,255,255,.09);
+  border-bottom: 1px solid rgba(255,255,255,.09);
+}
+
+.log-tabs button,
+.mg2-log-tabs button {
+  min-height: 42px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #9ea6b2;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.log-tabs button.selected,
+.mg2-log-tabs button.active {
+  border-bottom-color: #fff;
+  color: #fff;
+}
+
+.log-filters,
+.mg2-log-filters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.log-filters::-webkit-scrollbar,
+.mg2-log-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.log-filters button,
+.mg2-log-filters button,
+.log-filters select,
+.mg2-log-filters select {
+  min-height: 32px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #d9dee7;
+  background: rgba(255,255,255,.055);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.log-filters button.selected,
+.mg2-log-filters button.active {
+  color: #fff;
+  background: rgba(121,132,255,.22);
+}
+
+.log-poster-grid,
+.mg2-log-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  margin: 0 -16px;
+}
+
+.log-poster-grid .poster-card {
+  height: 156px;
+  border-radius: 0;
+}
+
+.mg2-log-grid {
+  margin: 0 -14px;
+}
+
+.mg2-log-grid .mg2-poster {
+  width: 100%;
+  border-radius: 0;
+}
+
+.mg2-log-grid .mg2-poster img {
+  aspect-ratio: 2 / 3;
+  border-radius: 0;
+}
+
+.log-list-cards,
+.mg2-log-lists {
+  display: grid;
+  gap: 10px;
+}
+
+.log-list-cards article,
+.mg2-log-lists button {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 86px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 10px;
+  color: #fff;
+  background: rgba(255,255,255,.045);
+  text-align: left;
+}
+
+.log-list-posters,
+.mg2-log-list-posters {
+  position: relative;
+  height: 62px;
+}
+
+.log-list-posters .poster-card,
+.mg2-log-list-posters img {
+  position: absolute;
+  width: 42px;
+  height: 62px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(0,0,0,.32);
+}
+
+.log-list-posters .poster-card {
+  min-height: 0;
+  padding: 0;
+}
+
+.log-list-posters .poster-card strong {
+  display: none;
+}
+
+.log-list-posters .poster-card:nth-child(1),
+.mg2-log-list-posters img:nth-child(1) {
+  left: 0;
+}
+
+.log-list-posters .poster-card:nth-child(2),
+.mg2-log-list-posters img:nth-child(2) {
+  left: 24px;
+}
+
+.log-list-posters .poster-card:nth-child(3),
+.mg2-log-list-posters img:nth-child(3) {
+  left: 48px;
+}
+
+.log-list-cards strong,
+.mg2-log-lists strong {
+  display: block;
+  overflow: hidden;
+  color: #fff;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-list-cards small,
+.mg2-log-lists small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #aeb5c1;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-log-lists em {
+  color: #a997ff;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .movie-detail-screen {
@@ -3739,69 +4141,185 @@ body {
 
 .mg2-reel-screen {
   position: relative;
-  min-height: 100%;
-  margin-top: -100px;
-  display: flex;
-  align-items: flex-end;
-  padding: 0 24px 34px;
+  height: calc(100% + 100px);
+  margin: -100px 0 0;
   overflow: hidden;
+  background: #040507;
 }
 
-.mg2-reel-screen > img {
+.mg2-reel-tabs {
+  position: absolute;
+  z-index: 5;
+  top: 102px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.mg2-reel-tabs button {
+  min-height: 30px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: rgba(255,255,255,.72);
+  background: rgba(0,0,0,.28);
+  backdrop-filter: blur(14px);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-reel-tabs button.active {
+  color: #fff;
+  background: rgba(121,132,255,.36);
+}
+
+.mg2-reel-stack {
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+
+.mg2-reel-stack::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-reel-card {
+  position: relative;
+  min-height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 0 78px 98px 18px;
+}
+
+.mg2-reel-bg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: brightness(.76);
+  filter: brightness(.68) saturate(1.08);
+  transform: scale(1.01);
 }
 
-.mg2-reel-screen::after {
+.mg2-reel-card::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(0deg, rgba(0,0,0,.9), transparent 58%);
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.45), transparent 28%),
+    linear-gradient(0deg, rgba(0,0,0,.94), rgba(0,0,0,.2) 62%, transparent);
+}
+
+.mg2-reel-poster {
+  position: absolute;
+  z-index: 1;
+  right: 16px;
+  top: 154px;
+  width: 88px;
+  aspect-ratio: 2 / 3;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: 0 18px 44px rgba(0,0,0,.5);
 }
 
 .mg2-reel-copy {
   position: relative;
-  z-index: 1;
-  max-width: 270px;
+  z-index: 2;
+  max-width: 260px;
 }
 
 .mg2-reel-copy h2 {
-  margin: 0;
-  font-size: 38px;
+  margin: 12px 0 8px;
+  color: #fff;
+  font-size: 34px;
   line-height: .92;
   text-transform: uppercase;
+}
+
+.mg2-reel-copy button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255,255,255,.12);
+  font-size: 12px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.mg2-reel-copy button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .mg2-reel-copy p {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 10px 0;
+  margin: 8px 0;
   color: #fff;
 }
 
-.mg2-reel-copy span {
-  color: #fff;
+.mg2-reel-copy small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #edf1f7;
   font-size: 13px;
+  line-height: 1.4;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.mg2-reel-meta,
+.mg2-reel-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mg2-reel-meta span,
+.mg2-reel-genres span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #fff;
+  background: rgba(255,255,255,.12);
+  font-size: 10px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.mg2-reel-genres span {
+  color: #dcd6ff;
+  background: rgba(155,124,255,.22);
 }
 
 .mg2-reel-actions {
   position: absolute;
   z-index: 2;
-  right: 20px;
-  bottom: 110px;
+  right: 16px;
+  bottom: 108px;
   display: grid;
   justify-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .mg2-reel-actions button {
   width: 44px;
-  height: 40px;
+  height: 42px;
   display: grid;
   place-items: center;
   border: 0;
@@ -3809,22 +4327,48 @@ body {
   background: transparent;
 }
 
+.mg2-reel-actions button.active {
+  color: #a997ff;
+}
+
+.mg2-reel-actions .mg2-reel-details-button {
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 50%;
+  background: rgba(255,255,255,.14);
+  backdrop-filter: blur(10px);
+}
+
+.mg2-reel-actions .mg2-reel-details-button svg {
+  width: 24px;
+  height: 24px;
+}
+
 .mg2-reel-actions svg {
   width: 28px;
   height: 28px;
+  filter: drop-shadow(0 3px 8px rgba(0,0,0,.62));
 }
 
 .mg2-reel-actions span {
-  margin-bottom: 7px;
+  margin-bottom: 6px;
   color: #fff;
   font-size: 11px;
   font-weight: 800;
 }
 
+.mg2-reel-empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #aeb5c1;
+  text-align: center;
+}
+
 .mg2-log-screen {
   display: grid;
   gap: 14px;
-  padding: 0 26px 24px;
+  padding: 0 14px 112px;
 }
 
 .mg2-log-poster {

@@ -622,41 +622,148 @@ function FeedScreen({ items, loadMore, likedFeed, savedFeed, toggleFeedLike, tog
   );
 }
 
-function ReelsScreen({ rows, onOpen }) {
-  const reel = rows.trending?.[2] || fallbackRows.trending[2];
+function ReelsScreen({ rows, watched = {}, watchlist = {}, onOpen, onWatchlist }) {
+  const [reelTab, setReelTab] = useState("forYou");
+  const [likedReels, setLikedReels] = useState({});
+  const [savedReels, setSavedReels] = useState({});
+  const baseReels = dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]);
+  const watchedReels = Object.values(watched);
+  const friendReels = dedupe([...(rows.series || []), ...(rows.anime || []), ...fallbackRows.series, ...fallbackRows.trending]);
+  const reels = (reelTab === "watched" ? (watchedReels.length ? watchedReels : fallbackRows.movies) : reelTab === "friends" ? friendReels : baseReels).slice(0, 10);
+  const reelTabs = [
+    { id: "forYou", label: "For You" },
+    { id: "watched", label: "Watched" },
+    { id: "friends", label: "Friends" }
+  ];
+
+  function toggleLike(key) {
+    setLikedReels((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function toggleSave(key) {
+    setSavedReels((current) => ({ ...current, [key]: !current[key] }));
+  }
 
   return (
     <section className="mg2-reel-screen">
-      <img src={backdropUrl(reel.backdrop_path || reel.poster_path)} alt="" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-      <div className="mg2-reel-actions">
-        <button type="button"><Icon name="heart" /></button><span>1,234</span>
-        <button type="button"><Icon name="chat" /></button><span>32</span>
-        <button type="button"><Icon name="send" /></button><span>78</span>
-        <button type="button" onClick={() => onOpen(reel)}><Icon name="play" /></button>
+      <div className="mg2-reel-tabs" aria-label="Reel feed filters">
+        {reelTabs.map((tab) => <button key={tab.id} className={reelTab === tab.id ? "active" : ""} type="button" onClick={() => setReelTab(tab.id)}>{tab.label}</button>)}
       </div>
-      <div className="mg2-reel-copy">
-        <h2>{titleOf(reel)}</h2>
-        <p>{yearOf(reel)}</p>
-        <p><Avatar friend={friends[2]} size="sm" /> <strong>rohan99</strong></p>
-        <span>{reel.overview || "Still the best scene in my feed today."}</span>
-      </div>
+      {reels.length === 0 ? (
+        <div className="mg2-reel-empty">Reels will appear after MovieGram loads trending titles.</div>
+      ) : (
+        <div className="mg2-reel-stack">
+          {reels.map((reel, index) => {
+            const key = keyOf(reel);
+            const type = mediaType(reel);
+            const saved = Boolean(watchlist[key]);
+            const liked = Boolean(likedReels[key]);
+            const reelGenres = type === "tv" ? ["Series", "Drama", "Binge"] : ["Movie", "Cinematic", "Popular"];
+            return (
+              <article key={key} className="mg2-reel-card">
+                <img className="mg2-reel-bg" src={backdropUrl(reel.backdrop_path || reel.poster_path)} alt="" loading={index === 0 ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+                <img className="mg2-reel-poster" src={posterUrl(reel.poster_path, "w342")} alt={titleOf(reel)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                <div className="mg2-reel-actions">
+                  <button className={liked ? "active" : ""} type="button" onClick={() => toggleLike(key)} aria-label="Like reel"><Icon name="heart" /></button><span>{liked ? "1.3k" : "1.2k"}</span>
+                  <button type="button" aria-label="Comment on reel"><Icon name="chat" /></button><span>{32 + index}</span>
+                  <button type="button" aria-label="Share reel"><Icon name="send" /></button><span>{78 + index}</span>
+                  <button className="mg2-reel-details-button" type="button" onClick={() => onOpen({ ...reel, media_type: type })} aria-label={`Open details for ${titleOf(reel)}`}><Icon name="play" /></button><span>Details</span>
+                  <button className={savedReels[key] ? "active" : ""} type="button" onClick={() => toggleSave(key)} aria-label="Save reel"><Icon name="bookmark" /></button><span>Save</span>
+                  <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(reel)} aria-label="Add to watchlist"><Icon name="check" /></button><span>{saved ? "Added" : "List"}</span>
+                </div>
+                <div className="mg2-reel-copy">
+                  <button type="button" onClick={() => onOpen(reel)}><Icon name="play" /> Open</button>
+                  <h2>{titleOf(reel)}</h2>
+                  <p><Avatar friend={friends[index % friends.length]} size="sm" /> <strong>{reelTab === "friends" ? friends[index % friends.length].handle.replace("@", "") : "moviegram"}</strong></p>
+                  <div className="mg2-reel-meta">
+                    <span>{type === "tv" ? "TV Show" : "Movie"}</span>
+                    <span>{reel.vote_average ? reel.vote_average.toFixed(1) : "NR"}/10</span>
+                    <span>{yearOf(reel)}</span>
+                  </div>
+                  <div className="mg2-reel-genres">{reelGenres.map((genre) => <span key={genre}>{genre}</span>)}</div>
+                  <small>{reel.overview || "A spoiler-free edit from the MovieGram queue."}</small>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
 
-function LogScreen({ rows, onOpen, onRate }) {
-  const item = rows.movies?.[0] || fallbackRows.movies[0];
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, onOpen }) {
+  const [logTab, setLogTab] = useState("watchlist");
+  const [logQuery, setLogQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [genreFilter, setGenreFilter] = useState("all");
+  const saved = Object.values(watchlist);
+  const watchedItems = Object.values(watched);
+  const favorites = dedupe([...saved, ...watchedItems, ...(rows.movies || []), ...(rows.series || [])]).slice(0, 12);
+  const listCards = [
+    { id: "weekend", title: "Weekend Watch Party", subtitle: "Big-screen crowd pleasers", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) },
+    { id: "comfort", title: "Comfort Rewatches", subtitle: "Reliable late-night picks", items: dedupe([...(rows.series || []), ...fallbackRows.series]).slice(0, 3) },
+    { id: "prestige", title: "Prestige Queue", subtitle: "Awards, drama, long conversations", items: dedupe([...(rows.movies || []), ...fallbackRows.movies]).slice(0, 3) }
+  ];
+  const logTabs = [
+    { id: "watchlist", label: "Watchlist" },
+    { id: "watched", label: "Watched" },
+    { id: "lists", label: "Lists" },
+    { id: "favorites", label: "Favorites" }
+  ];
+  const sourceItems = logTab === "watchlist"
+    ? (saved.length ? saved : dedupe([...(rows.trending || []), ...fallbackRows.trending]))
+    : logTab === "watched"
+      ? (watchedItems.length ? watchedItems : dedupe([...(rows.movies || []), ...fallbackRows.movies]))
+      : favorites;
+  const filteredItems = sourceItems.filter((item) => {
+    const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
+    const queryMatch = titleOf(item).toLowerCase().includes(logQuery.trim().toLowerCase());
+    const typeMatch = typeFilter === "all" || mediaType(item) === typeFilter;
+    const genreMatch = genreFilter === "all" || searchable.includes(genreFilter) || (genreFilter === "anime" && mediaType(item) === "tv");
+    return queryMatch && typeMatch && genreMatch;
+  });
 
   return (
     <section className="mg2-log-screen">
-      <div className="mg2-chips two"><button className="active" type="button">Movie</button><button type="button">TV Show</button></div>
-      <button className="mg2-log-poster" type="button" onClick={() => onOpen(item)}>
-        <img src={posterUrl(item.poster_path)} alt={titleOf(item)} />
-      </button>
-      <label>When did you watch it?<select defaultValue="today"><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">Earlier this week</option></select></label>
-      <label>Your rating<RatingControl value={8} onRate={(value) => onRate(item, value)} /></label>
-      <label>What did you think?<textarea defaultValue={`${titleOf(item)} still looks incredible on a late-night watch.`} /></label>
-      <button className="mg2-wide-button" type="button">Log Movie</button>
+      <div className="mg2-log-search">
+        <Icon name="search" />
+        <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="Search your movies and shows" />
+      </div>
+      <div className="mg2-log-tabs" aria-label="Log sections">
+        {logTabs.map((tab) => <button key={tab.id} className={logTab === tab.id ? "active" : ""} type="button" onClick={() => setLogTab(tab.id)}>{tab.label}</button>)}
+      </div>
+      <div className="mg2-log-filters" aria-label="Log filters">
+        <button className={typeFilter === "all" ? "active" : ""} type="button" onClick={() => setTypeFilter("all")}>All</button>
+        <button className={typeFilter === "movie" ? "active" : ""} type="button" onClick={() => setTypeFilter("movie")}>Movie</button>
+        <button className={typeFilter === "tv" ? "active" : ""} type="button" onClick={() => setTypeFilter("tv")}>TV</button>
+        <select value={genreFilter} onChange={(event) => setGenreFilter(event.target.value)} aria-label="Genre filter">
+          <option value="all">Genre</option>
+          <option value="drama">Drama</option>
+          <option value="sci-fi">Sci-Fi</option>
+          <option value="anime">Anime</option>
+        </select>
+      </div>
+
+      {logTab === "lists" ? (
+        <div className="mg2-log-lists">
+          {listCards.map((list) => (
+            <button key={list.id} type="button">
+              <span className="mg2-log-list-posters">
+                {list.items.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+              </span>
+              <span><strong>{list.title}</strong><small>{list.subtitle}</small></span>
+              <em>{list.items.length}</em>
+            </button>
+          ))}
+        </div>
+      ) : filteredItems.length ? (
+        <div className="mg2-log-grid">
+          {filteredItems.map((item) => <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={Boolean(watchlist[keyOf(item)])} rating={ratings[keyOf(item)]} compact />)}
+        </div>
+      ) : (
+        <div className="mg2-empty">{logTab === "watchlist" ? "Your watchlist is empty. Save titles from Home, Explore, or Details." : logTab === "watched" ? "Mark titles watched from Details to build your history." : "No titles match your current filters."}</div>
+      )}
     </section>
   );
 }
@@ -1273,9 +1380,9 @@ export default function Home() {
   if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} onOpen={openItem} watchlist={watchlist} ratings={ratings} continueWatching={continueWatching} recommended={recommended} feedItems={feedItems} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} onOpen={openItem} />;
+    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} onOpen={openItem} onRate={rateItem} />;
+    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} onOpen={openItem} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
