@@ -127,6 +127,13 @@ const socialFeedSeeds = [
   }
 ];
 
+const socialFriendProfiles = [
+  { ...friends[1], bio: "Sci-fi, prestige drama, and ruthless five-star restraint.", match: 94, mutuals: 8, genres: ["Sci-Fi", "Drama", "Thriller"], activity: "Rated Interstellar 5.0", stats: ["312 watched", "48 lists"] },
+  { ...friends[2], bio: "Neo-noir lists, comic book rewatches, and big theater energy.", match: 88, mutuals: 6, genres: ["Crime", "Action", "Noir"], activity: "Reviewed Joker", stats: ["526 watched", "132 reviews"] },
+  { ...friends[3], bio: "Slow cinema on weekdays, superhero chaos on weekends.", match: 81, mutuals: 4, genres: ["Action", "Drama", "Fantasy"], activity: "Added The Batman", stats: ["204 watched", "37 lists"] },
+  { ...friends[4], bio: "Comfort shows, sharp thrillers, and very serious watch parties.", match: 76, mutuals: 5, genres: ["Comedy", "Thriller", "TV"], activity: "Watched Friends", stats: ["188 watched", "21 reviews"] }
+];
+
 const fallbackRows = {
   trending: [
     { id: 693134, media_type: "movie", title: "Dune: Part Two", poster_path: "/8b8R8l88Qje9dn9OE8PY05Nxl1X.jpg", backdrop_path: "/xOMo8BRK7PfcJv9JCnx7s5hj0PX.jpg", vote_average: 8.2, release_date: "2024-02-27", overview: "Paul Atreides unites with Chani and the Fremen while seeking revenge." },
@@ -273,14 +280,15 @@ function Avatar({ friend, size = "" }) {
   return <span className={`mg2-avatar ${friend.avatar} ${size}`} aria-hidden="true" />;
 }
 
-function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, onOpenNotifications }) {
+function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, onOpenNotifications, socialActive, onCloseSocial }) {
   function activateTab(tabId) {
+    if (socialActive) onCloseSocial();
     setActiveTab(tabId);
   }
 
   return (
     <main className="mg2-app">
-      <section className="mg2-phone">
+      <section className={`mg2-phone${socialActive ? " social-active" : ""}`}>
         <div className="mg2-status"><span>9:41</span><span>Wi-Fi</span></div>
         <header className="mg2-topbar">
           {activeTab === "home" ? <h1 className="mg2-brand">Movie<span>Gram</span></h1> : <h1>{title}</h1>}
@@ -295,21 +303,23 @@ function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, 
             </button>
           </div>
         </header>
-        <div className="mg2-screen">{children}</div>
-        <nav className="mg2-bottom" aria-label="Primary navigation">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={activeTab === tab.id ? "active" : ""}
-              type="button"
-              onClick={() => activateTab(tab.id)}
-              onPointerUp={() => activateTab(tab.id)}
-            >
-              <Icon name={tab.icon} />
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
+        <div className={`mg2-screen${socialActive ? " social-active" : ""}`}>{children}</div>
+        {!socialActive && (
+          <nav className="mg2-bottom" aria-label="Primary navigation">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={activeTab === tab.id ? "active" : ""}
+                type="button"
+                onClick={() => activateTab(tab.id)}
+                onPointerUp={() => activateTab(tab.id)}
+              >
+                <Icon name={tab.icon} />
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        )}
       </section>
     </main>
   );
@@ -887,32 +897,161 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, loading, on
   );
 }
 
-function MessagesScreen({ selectedConversation, setSelectedConversation }) {
-  const conversation = conversations.find((item) => item.id === selectedConversation) || conversations[0];
+function FriendsScreen({ friendStates, onFriendAction }) {
+  const [friendQuery, setFriendQuery] = useState("");
+  const [previewFriend, setPreviewFriend] = useState(null);
+  const filteredFriends = socialFriendProfiles.filter((friend) => `${friend.name} ${friend.handle} ${friend.genres.join(" ")}`.toLowerCase().includes(friendQuery.trim().toLowerCase()));
+
+  function actionLabel(friendId) {
+    const state = friendStates[friendId] || "add";
+    if (state === "friends") return "Remove";
+    if (state === "requested") return "Requested";
+    return "Add";
+  }
 
   return (
-    <section className="mg2-messages">
-      <div className="mg2-conversations">
-        {conversations.map((item) => (
-          <button key={item.id} className={item.id === conversation.id ? "active" : ""} type="button" onClick={() => setSelectedConversation(item.id)}>
-            <Avatar friend={item.friend} size="sm" />
-            <span><strong>{item.friend.name}</strong><small>{item.messages.at(-1)?.text}</small></span>
-            {item.unread > 0 && <em>{item.unread}</em>}
+    <section className="mg2-friends-screen">
+      <div className="mg2-social-search"><Icon name="search" /><input value={friendQuery} onChange={(event) => setFriendQuery(event.target.value)} placeholder="Search people, genres, taste" /></div>
+      <div className="mg2-blend-row">
+        {socialFriendProfiles.slice(0, 3).map((friend) => (
+          <button key={`blend-${friend.id}`} type="button" onClick={() => setPreviewFriend(friend)}>
+            <strong>{friend.match}%</strong>
+            <span>{friend.name}</span>
+            <small>Blend preview</small>
           </button>
         ))}
       </div>
-      <div className="mg2-chat">
-        <div className="mg2-chat-head"><Avatar friend={conversation.friend} size="sm" /><strong>{conversation.friend.name}</strong><small>{conversation.friend.handle}</small></div>
-        <div className="mg2-chat-body">
-          {conversation.messages.map((message) => (
-            <p key={message.id} className={message.from === "me" ? "me" : ""}>{message.text}<span>{message.time}</span></p>
+      <div className="mg2-friend-list">
+        {filteredFriends.length ? filteredFriends.map((friend) => {
+          const state = friendStates[friend.id] || "add";
+          return (
+            <article key={friend.id}>
+              <button className="mg2-friend-main" type="button" onClick={() => setPreviewFriend(friend)}>
+                <Avatar friend={friend} size="sm" />
+                <span>
+                  <strong>{friend.name}<small>{friend.match}% match</small></strong>
+                  <em>{friend.mutuals} mutuals - {friend.genres.join(", ")}</em>
+                  <i>{friend.activity}</i>
+                </span>
+              </button>
+              <button className={state} type="button" onClick={() => onFriendAction(friend.id)}>{actionLabel(friend.id)}</button>
+            </article>
+          );
+        }) : <div className="mg2-empty">No people match that search yet.</div>}
+      </div>
+      {previewFriend && (
+        <div className="mg2-friend-preview" onMouseDown={() => setPreviewFriend(null)}>
+          <article onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => setPreviewFriend(null)}><Icon name="back" /> Back</button>
+            <Avatar friend={previewFriend} />
+            <h3>{previewFriend.name}</h3>
+            <p>{previewFriend.bio}</p>
+            <div className="mg2-friend-preview-stats">
+              <strong>{previewFriend.match}%<small>Match</small></strong>
+              <strong>{previewFriend.mutuals}<small>Mutuals</small></strong>
+              <strong>{previewFriend.stats[0].split(" ")[0]}<small>Watched</small></strong>
+            </div>
+            <div className="mg2-friend-genres">{previewFriend.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
+            <small>Recent: {previewFriend.activity}</small>
+          </article>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onClose }) {
+  const [socialTab, setSocialTab] = useState("messages");
+  const [chatId, setChatId] = useState(null);
+  const conversation = conversations.find((item) => item.id === chatId) || conversations.find((item) => item.id === selectedConversation) || conversations[0];
+
+  return (
+    <section className={`mg2-social-screen${chatId ? " chat-active" : ""}`}>
+      {!chatId && (
+        <>
+          <div className="mg2-social-header">
+            <button className="mg2-social-back" type="button" onClick={onClose}><Icon name="back" /></button>
+            <h2>Messages</h2>
+          </div>
+          <div className="mg2-social-tabs">
+            <button className={socialTab === "messages" ? "active" : ""} type="button" onClick={() => { setChatId(null); setSocialTab("messages"); }}>Messages</button>
+            <button className={socialTab === "friends" ? "active" : ""} type="button" onClick={() => { setChatId(null); setSocialTab("friends"); }}>Friends</button>
+          </div>
+        </>
+      )}
+      {socialTab === "friends" ? (
+        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} />
+      ) : chatId ? (
+        <div className="mg2-chat native">
+          <div className="mg2-chat-head">
+            <button type="button" onClick={() => setChatId(null)}><Icon name="back" /></button>
+            <Avatar friend={conversation.friend} size="sm" />
+            <strong>{conversation.friend.name}</strong>
+            <small>{conversation.friend.handle}</small>
+          </div>
+          <div className="mg2-chat-body">
+            {conversation.messages.map((message) => (
+              <p key={message.id} className={message.from === "me" ? "me" : ""}>{message.text}<span>{message.time}</span></p>
+            ))}
+          </div>
+          <form className="mg2-composer" onSubmit={(event) => event.preventDefault()}>
+            <input placeholder={`Message ${conversation.friend.name}...`} />
+            <button type="submit"><Icon name="send" /></button>
+          </form>
+        </div>
+      ) : (
+        <div className="mg2-conversations native">
+          {conversations.map((item) => (
+            <button key={item.id} type="button" onClick={() => { setChatId(item.id); setSelectedConversation(item.id); }}>
+              <Avatar friend={item.friend} size="sm" />
+              <span><strong>{item.friend.name}</strong><small>{item.messages.at(-1)?.text}</small></span>
+              <span className="mg2-conversation-meta">
+                <small>{item.messages.at(-1)?.time || "Now"}</small>
+                {item.unread > 0 && <em>{item.unread}</em>}
+              </span>
+            </button>
           ))}
         </div>
-        <form className="mg2-composer" onSubmit={(event) => event.preventDefault()}>
-          <input placeholder="Message..." />
-          <button type="submit"><Icon name="send" /></button>
-        </form>
-      </div>
+      )}
+    </section>
+  );
+}
+
+function NotificationsScreen() {
+  const groups = [
+    { label: "Today", items: [
+      { friend: socialFriendProfiles[0], title: "Shruti followed you", detail: "You both love sci-fi and prestige drama.", time: "20m" },
+      { friend: socialFriendProfiles[1], title: "Rohan liked your Joker review", detail: "Your review is getting attention.", time: "2h" },
+      { friend: socialFriendProfiles[2], title: "New Blend ready", detail: "Arjun has 81% taste overlap with you.", time: "5h" }
+    ] },
+    { label: "This Week", items: [
+      { friend: socialFriendProfiles[3], title: "Meera watched Friends", detail: "Comfort episode unlocked.", time: "1d" },
+      { friend: socialFriendProfiles[0], title: "Shruti reviewed Interstellar", detail: "Rated it 5.0 after a weekend rewatch.", time: "2d" },
+      { friend: friends[0], title: "Recommendation for you", detail: "Because you saved Dune, try Foundation next.", time: "3d" }
+    ] },
+    { label: "Earlier", items: [
+      { friend: socialFriendProfiles[1], title: "Rohan added The Batman", detail: "Added to a neo-noir watchlist.", time: "1w" },
+      { friend: socialFriendProfiles[2], title: "Arjun liked your list", detail: "Best rainy-night movies got a new like.", time: "2w" }
+    ] }
+  ];
+
+  return (
+    <section className="mg2-notifications-screen">
+      {groups.map((group) => (
+        <div key={group.label} className="mg2-notification-group">
+          <h3>{group.label}</h3>
+          {group.items.map((notification) => (
+            <article key={`${group.label}-${notification.title}`}>
+              <Avatar friend={notification.friend} size="sm" />
+              <span>
+                <strong>{notification.title}</strong>
+                <small>{notification.detail}</small>
+              </span>
+              <em>{notification.time}</em>
+            </article>
+          ))}
+        </div>
+      ))}
     </section>
   );
 }
@@ -1095,7 +1234,8 @@ export default function Home() {
   const [likedFeed, setLikedFeed] = useState({});
   const [savedFeed, setSavedFeed] = useState({});
   const [selectedConversation, setSelectedConversation] = useState(conversations[0].id);
-  const [activeOverlay, setActiveOverlay] = useState(null);
+  const [activeSocial, setActiveSocial] = useState(null);
+  const [friendStates, setFriendStates] = useState({});
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -1138,6 +1278,7 @@ export default function Home() {
     setClickSignals(stored("moviegram.clickSignals", {}));
     setLikedFeed(stored("moviegram.feedLikes", {}));
     setSavedFeed(stored("moviegram.feedSaves", {}));
+    setFriendStates(stored("moviegram.friendStates", { shruti: "friends", rohan: "friends" }));
   }, []);
 
   useEffect(() => {
@@ -1361,7 +1502,15 @@ export default function Home() {
     persist("moviegram.feedSaves", next);
   }
 
-  const title = tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
+  function toggleFriendState(friendId) {
+    const current = friendStates[friendId] || "add";
+    const nextState = current === "add" ? "requested" : current === "requested" ? "friends" : "add";
+    const next = { ...friendStates, [friendId]: nextState };
+    setFriendStates(next);
+    persist("moviegram.friendStates", next);
+  }
+
+  const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
   const selectedKey = selected ? keyOf(selected) : "";
 
   const queryProps = {
@@ -1377,7 +1526,23 @@ export default function Home() {
   };
 
   let screen = null;
-  if (activeTab === "home") {
+  if (activeSocial === "messages") {
+    screen = (
+      <section className="mg2-native-social messages">
+        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onClose={() => setActiveSocial(null)} />
+      </section>
+    );
+  } else if (activeSocial === "notifications") {
+    screen = (
+      <section className="mg2-native-social">
+        <div className="mg2-social-header">
+          <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
+          <h2>Notifications</h2>
+        </div>
+        <NotificationsScreen />
+      </section>
+    );
+  } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} onOpen={openItem} watchlist={watchlist} ratings={ratings} continueWatching={continueWatching} recommended={recommended} feedItems={feedItems} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
@@ -1409,23 +1574,13 @@ export default function Home() {
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       title={title}
-      onOpenMessages={() => setActiveOverlay("messages")}
-      onOpenNotifications={() => setActiveOverlay("notifications")}
+      onOpenMessages={() => setActiveSocial("messages")}
+      onOpenNotifications={() => setActiveSocial("notifications")}
+      socialActive={Boolean(activeSocial)}
+      onCloseSocial={() => setActiveSocial(null)}
     >
       {!API_KEY && <div className="mg2-empty">Add NEXT_PUBLIC_TMDB_API_KEY to .env.local.</div>}
       {screen}
-      {activeOverlay === "messages" && (
-        <div className="mg2-panel-overlay">
-          <div className="mg2-panel-head"><h2>Messages</h2><button type="button" onClick={() => setActiveOverlay(null)}>Close</button></div>
-          <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} />
-        </div>
-      )}
-      {activeOverlay === "notifications" && (
-        <div className="mg2-panel-overlay">
-          <div className="mg2-panel-head"><h2>Notifications</h2><button type="button" onClick={() => setActiveOverlay(null)}>Close</button></div>
-          <FeedScreen items={feedItems} loadMore={() => setFeedPage((page) => page + 1)} likedFeed={likedFeed} savedFeed={savedFeed} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} />
-        </div>
-      )}
       {selected && (
         <DetailModal
           item={selected}

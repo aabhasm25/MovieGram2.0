@@ -12,6 +12,62 @@
   --danger: #ff4e68;
 }
 
+.mg2-conversations.native button {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 38px;
+  align-items: center;
+}
+
+.mg2-conversations.native .mg2-avatar,
+.mg2-notification-group .mg2-avatar,
+.mg2-chat.native .mg2-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+}
+
+.mg2-conversations.native > button > span:not(.mg2-avatar):not(.mg2-conversation-meta) {
+  min-width: 0;
+  flex: initial;
+}
+
+.mg2-conversations.native .mg2-conversation-meta {
+  flex: initial;
+}
+
+.mg2-social-screen,
+.mg2-native-social,
+.mg2-notifications-screen {
+  min-height: 0;
+}
+
+.mg2-conversations.native {
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: minmax(62px, max-content);
+}
+
+.mg2-conversations.native button {
+  min-height: 62px;
+  max-height: 86px;
+}
+
+.mg2-social-screen > .mg2-friends-screen,
+.mg2-notifications-screen {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.mg2-blend-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: visible;
+}
+
+.mg2-social-search {
+  min-height: 38px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -741,6 +797,230 @@ textarea {
 .notification > small {
   color: var(--muted);
   white-space: nowrap;
+}
+
+.social-route {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 112px;
+}
+
+.social-back {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.social-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border-top: 1px solid rgba(255,255,255,.09);
+  border-bottom: 1px solid rgba(255,255,255,.09);
+}
+
+.social-tabs button {
+  min-height: 40px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #9ea6b2;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.social-tabs button.selected {
+  border-bottom-color: #fff;
+  color: #fff;
+}
+
+.messages-screen .conversation {
+  width: 100%;
+  border: 0;
+  color: #fff;
+  text-align: left;
+}
+
+.social-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 0 12px;
+  color: #9fa7b2;
+  background: rgba(255,255,255,.055);
+}
+
+.social-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: #fff;
+  background: transparent;
+}
+
+.friend-suggestions {
+  display: grid;
+  gap: 9px;
+}
+
+.friend-suggestions article {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 9px 0;
+}
+
+.friend-suggestions span {
+  min-width: 0;
+}
+
+.friend-suggestions strong,
+.friend-suggestions em,
+.friend-suggestions i {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.friend-suggestions strong {
+  color: #fff;
+  font-size: 13px;
+}
+
+.friend-suggestions strong small {
+  margin-left: 8px;
+  color: #a997ff;
+  font-size: 10px;
+}
+
+.friend-suggestions em,
+.friend-suggestions i {
+  color: #aeb5c1;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.friend-suggestions button {
+  min-height: 30px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(121,132,255,.22);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.friend-suggestions button.friends {
+  background: rgba(255,255,255,.07);
+}
+
+.friend-suggestions button.requested {
+  color: #c8c1ff;
+  background: rgba(155,124,255,.14);
+}
+
+.route-chat {
+  min-height: 560px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  background: rgba(255,255,255,.04);
+}
+
+.route-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+.route-chat-head small {
+  margin-left: auto;
+  color: #9aa3ad;
+}
+
+.route-chat-body {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 12px;
+}
+
+.route-chat-body p {
+  width: fit-content;
+  max-width: 78%;
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 12px 12px 12px 3px;
+  background: #20252d;
+  font-size: 12px;
+}
+
+.route-chat-body p.me {
+  justify-self: end;
+  border-radius: 12px 12px 3px 12px;
+  background: #515bbc;
+}
+
+.route-chat-body span {
+  display: block;
+  margin-top: 4px;
+  color: rgba(255,255,255,.65);
+  font-size: 9px;
+}
+
+.route-composer {
+  display: flex;
+  gap: 8px;
+  padding: 9px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.route-composer input {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 999px;
+  outline: 0;
+  padding: 0 12px;
+  color: #fff;
+  background: #12161b;
+}
+
+.route-composer button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #7984ff;
+}
+
+.notification-group {
+  display: grid;
+  gap: 8px;
+}
+
+.notification-group h2 {
+  margin: 10px 0 2px;
+  font-size: 15px;
 }
 
 /* Instagram-first visual refresh */
@@ -3049,6 +3329,15 @@ body {
   transition: opacity .18s ease, transform .18s ease;
 }
 
+.mg2-screen.social-active {
+  height: calc(100% - 32px);
+  padding: 0;
+}
+
+.mg2-phone.social-active .mg2-topbar {
+  display: none;
+}
+
 .mg2-screen::-webkit-scrollbar,
 .mg2-row::-webkit-scrollbar,
 .mg2-stories::-webkit-scrollbar,
@@ -3975,6 +4264,496 @@ body {
 
 .mg2-messages {
   padding: 0 16px 16px;
+}
+
+.mg2-native-social,
+.mg2-social-screen,
+.mg2-friends-screen,
+.mg2-notifications-screen {
+  display: grid;
+  gap: 0;
+}
+
+.mg2-native-social {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 0 16px 12px;
+  overflow: hidden;
+}
+
+.mg2-native-social.messages {
+  grid-template-rows: 1fr;
+}
+
+.mg2-native-social.messages .mg2-social-screen {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto 1fr;
+  overflow: hidden;
+}
+
+.mg2-native-social.messages .mg2-social-screen.chat-active {
+  grid-template-rows: 1fr;
+}
+
+.mg2-social-screen > .mg2-conversations.native,
+.mg2-social-screen > .mg2-friends-screen,
+.mg2-notifications-screen {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.mg2-social-screen > .mg2-conversations.native::-webkit-scrollbar,
+.mg2-social-screen > .mg2-friends-screen::-webkit-scrollbar,
+.mg2-notifications-screen::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-friends-screen {
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-top: 10px;
+}
+
+.mg2-notifications-screen {
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-bottom: 18px;
+}
+
+.mg2-social-header {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+}
+
+.mg2-social-header h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+  text-align: center;
+}
+
+.mg2-social-back {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mg2-social-back svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mg2-social-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 -16px;
+  border-top: 1px solid rgba(255,255,255,.09);
+  border-bottom: 1px solid rgba(255,255,255,.09);
+}
+
+.mg2-social-tabs button {
+  min-height: 36px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #9ea6b2;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-social-tabs button.active {
+  border-bottom-color: #fff;
+  color: #fff;
+}
+
+.mg2-social-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 0 12px;
+  color: #9fa7b2;
+  background: rgba(255,255,255,.055);
+}
+
+.mg2-social-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 13px;
+}
+
+.mg2-blend-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  overflow: visible;
+}
+
+.mg2-blend-row::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-blend-row button {
+  min-width: 0;
+  min-height: 74px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, rgba(155,124,255,.18), rgba(255,255,255,.045));
+  text-align: left;
+}
+
+.mg2-blend-row strong,
+.mg2-blend-row span,
+.mg2-blend-row small {
+  display: block;
+}
+
+.mg2-blend-row strong {
+  font-size: 20px;
+}
+
+.mg2-blend-row small {
+  margin-top: 5px;
+  color: #aeb5c1;
+}
+
+.mg2-friend-list {
+  display: grid;
+  gap: 0;
+}
+
+.mg2-friend-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  min-height: 62px;
+  padding: 8px 0;
+}
+
+.mg2-friend-main {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  text-align: left;
+}
+
+.mg2-friend-main span {
+  min-width: 0;
+}
+
+.mg2-friend-main strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.mg2-friend-main .mg2-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+}
+
+.mg2-friend-main strong small {
+  color: #a997ff;
+  font-size: 10px;
+}
+
+.mg2-friend-main em,
+.mg2-friend-main i {
+  display: block;
+  overflow: hidden;
+  color: #aeb5c1;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-friend-list article > button:last-child {
+  justify-self: end;
+  width: 82px;
+  min-height: 30px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(121,132,255,.22);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-friend-list article > button:last-child.friends {
+  background: rgba(255,255,255,.07);
+}
+
+.mg2-friend-list article > button:last-child.requested {
+  color: #c8c1ff;
+  background: rgba(155,124,255,.14);
+}
+
+.mg2-friend-preview {
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  padding: 18px;
+  background: rgba(0,0,0,.56);
+  backdrop-filter: blur(10px);
+}
+
+.mg2-friend-preview article {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(9,12,16,.96);
+}
+
+.mg2-friend-preview article > button {
+  justify-self: start;
+  display: inline-flex;
+  gap: 6px;
+  border: 0;
+  color: #fff;
+  background: transparent;
+}
+
+.mg2-friend-preview h3,
+.mg2-friend-preview p {
+  margin: 0;
+  text-align: center;
+}
+
+.mg2-friend-preview p {
+  color: #b7bfca;
+  font-size: 13px;
+}
+
+.mg2-friend-preview-stats {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  text-align: center;
+}
+
+.mg2-friend-preview-stats small {
+  display: block;
+  margin-top: 3px;
+  color: #9ea6b2;
+  font-weight: 400;
+}
+
+.mg2-friend-genres {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.mg2-friend-genres span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #e6ddff;
+  background: rgba(155,124,255,.18);
+  font-size: 11px;
+}
+
+.mg2-conversations.native {
+  align-content: start;
+  grid-auto-rows: minmax(62px, max-content);
+  gap: 0;
+  margin-bottom: 0;
+}
+
+.mg2-conversations.native button {
+  min-height: 62px;
+  gap: 10px;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 8px 0;
+  background: transparent;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+}
+
+.mg2-conversations.native .mg2-avatar,
+.mg2-notification-group .mg2-avatar,
+.mg2-chat.native .mg2-avatar {
+  width: 42px;
+  height: 42px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  flex: 0 0 42px;
+}
+
+.mg2-conversations.native span {
+  min-width: 0;
+}
+
+.mg2-conversations.native strong {
+  display: block;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.mg2-conversations.native small {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.mg2-conversations.native em {
+  min-width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.mg2-conversation-meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 36px;
+}
+
+.mg2-conversations.native .mg2-conversation-meta small {
+  margin: 0;
+  color: #8f98a5;
+  font-size: 10px;
+}
+
+.mg2-conversation-meta em {
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: #7984ff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.mg2-chat.native {
+  min-height: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mg2-chat.native .mg2-chat-head button {
+  border: 0;
+  color: #fff;
+  background: transparent;
+}
+
+.mg2-chat.native .mg2-chat-head {
+  min-height: 50px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+.mg2-chat.native .mg2-chat-body {
+  align-content: end;
+  min-height: 0;
+  overflow-y: auto;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.mg2-chat.native .mg2-composer {
+  padding: 9px 0 0;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.mg2-notification-group {
+  display: grid;
+  gap: 0;
+}
+
+.mg2-notification-group h3 {
+  margin: 14px 0 6px;
+  color: #fff;
+  font-size: 15px;
+}
+
+.mg2-notification-group article {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  min-height: 58px;
+  padding: 8px 0;
+}
+
+.mg2-notification-group span {
+  min-width: 0;
+}
+
+.mg2-notification-group strong,
+.mg2-notification-group small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-notification-group strong {
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.mg2-notification-group small,
+.mg2-notification-group em {
+  color: #aeb5c1;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.mg2-notification-group em {
+  align-self: start;
+  padding-top: 2px;
+  white-space: nowrap;
 }
 
 .mg2-conversations {
@@ -5299,4 +6078,28 @@ body {
   .mg2-detail-hero h2 {
     font-size: 27px;
   }
+}
+
+.mg2-conversations.native button {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 38px;
+  align-items: center;
+}
+
+.mg2-conversations.native .mg2-avatar,
+.mg2-notification-group .mg2-avatar,
+.mg2-chat.native .mg2-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+}
+
+.mg2-conversations.native > button > span:not(.mg2-avatar):not(.mg2-conversation-meta) {
+  min-width: 0;
+  flex: initial;
+}
+
+.mg2-conversations.native .mg2-conversation-meta {
+  flex: initial;
 }

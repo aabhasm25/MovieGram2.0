@@ -50,6 +50,9 @@ const icons = {
   bookmark: (
     <path d="M6 4h12v17l-6-4-6 4z" />
   ),
+  back: (
+    <path d="M15 18 9 12l6-6" />
+  ),
   more: (
     <>
       <circle cx="5" cy="12" r="1.5" />
