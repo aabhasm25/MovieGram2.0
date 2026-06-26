@@ -33,6 +33,15 @@ const exploreTabs = [
   { id: "upcoming", label: "Upcoming", endpoint: "/movie/upcoming" }
 ];
 
+const exploreHubSections = [
+  { id: "today", title: "Trending Today", endpoint: "/trending/all/day" },
+  { id: "week", title: "Trending This Week", endpoint: "/trending/all/week" },
+  { id: "popularMovies", title: "Popular Movies", endpoint: "/movie/popular" },
+  { id: "popularTv", title: "Popular TV Shows", endpoint: "/tv/popular" },
+  { id: "topRated", title: "Top Rated", endpoint: "/movie/top_rated" },
+  { id: "upcoming", title: "Upcoming", endpoint: "/movie/upcoming" }
+];
+
 const friends = [
   { id: "aabhas", name: "Aabhas", handle: "@aabhas_07", avatar: "avatar-one" },
   { id: "shruti", name: "Shruti", handle: "@shruti", avatar: "avatar-two" },
@@ -140,6 +149,30 @@ const fallbackRows = {
     { id: 95479, media_type: "tv", name: "Jujutsu Kaisen", poster_path: "/fHpKWq9ayzSk8nSwqRuaAUemRKh.jpg", backdrop_path: "/5DUMPBSnHOZsbBv81GFXZXvDpo6.jpg", vote_average: 8.6, first_air_date: "2020-10-03", overview: "A student joins a secret organization of sorcerers." }
   ]
 };
+
+const genreSeeds = [
+  { id: 28, name: "Action", tone: "violet" },
+  { id: 878, name: "Sci-Fi", tone: "blue" },
+  { id: 18, name: "Drama", tone: "rose" },
+  { id: 53, name: "Thriller", tone: "amber" },
+  { id: 16, name: "Anime", tone: "green" },
+  { id: 35, name: "Comedy", tone: "purple" },
+  { id: 80, name: "Crime", tone: "red" }
+];
+
+const collectionSeeds = [
+  { id: "sci-fi", title: "Mind-Bending Sci-Fi", subtitle: "12 titles", items: [fallbackRows.movies[0], fallbackRows.trending[0]] },
+  { id: "prestige", title: "Prestige TV Nights", subtitle: "8 shows", items: [fallbackRows.trending[2], fallbackRows.series[1]] },
+  { id: "dark", title: "Dark & Gritty", subtitle: "15 picks", items: [fallbackRows.trending[1], fallbackRows.movies[1]] },
+  { id: "anime", title: "Anime Starter Pack", subtitle: "10 shows", items: [fallbackRows.anime[0], fallbackRows.anime[1]] }
+];
+
+const actorFallbacks = [
+  { id: 1, name: "Cillian Murphy", known_for_department: "Acting", profile_path: "/llkbyWKwpfowZ6C8peBjIV9jj99.jpg" },
+  { id: 2, name: "Zendaya", known_for_department: "Acting", profile_path: "/3WdOloHpjtjL96uVOhFRRCcYSwq.jpg" },
+  { id: 3, name: "Robert Pattinson", known_for_department: "Acting", profile_path: "/8A4PS5iG7GWEAVFftyqMZKl3qcr.jpg" },
+  { id: 4, name: "Anya Taylor-Joy", known_for_department: "Acting", profile_path: "/6bX3q6o7Qf9LhEDPH1v3cV6ZJYz.jpg" }
+];
 
 function mediaType(item) {
   if (item.media_type) return item.media_type;
@@ -327,6 +360,64 @@ function ContentRow({ title, items, loading, onOpen, watchlist, ratings }) {
   );
 }
 
+function GenreRow({ genres }) {
+  return (
+    <section className="mg2-section mg2-explore-section">
+      <div className="mg2-section-head"><h2>Genres</h2><span>Browse</span></div>
+      <div className="mg2-genre-row">
+        {genres.map((genre) => (
+          <button key={genre.id} className={`mg2-genre-card ${genre.tone}`} type="button">
+            <strong>{genre.name}</strong>
+            <span>Explore</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CollectionRow({ collections, onOpen }) {
+  return (
+    <section className="mg2-section mg2-explore-section">
+      <div className="mg2-section-head"><h2>Collections</h2><span>Curated</span></div>
+      <div className="mg2-collection-row">
+        {collections.map((collection) => (
+          <article className="mg2-collection-card" key={collection.id}>
+            <div>
+              {collection.items.map((item) => (
+                <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
+                  <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                </button>
+              ))}
+            </div>
+            <strong>{collection.title}</strong>
+            <span>{collection.subtitle}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ActorRow({ actors, loading }) {
+  return (
+    <section className="mg2-section mg2-explore-section">
+      <div className="mg2-section-head"><h2>Popular People</h2><span>People</span></div>
+      {loading ? <SkeletonRow /> : (
+        <div className="mg2-actor-row">
+          {actors.map((actor) => (
+            <article className="mg2-actor-card" key={actor.id}>
+              <img src={posterUrl(actor.profile_path, "w185")} alt={actor.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+              <strong>{actor.name}</strong>
+              <span>{actor.known_for_department || "Acting"}</span>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ContinueWatchingRow({ items, onOpen }) {
   const rowItems = items.length > 0 ? items : [fallbackRows.movies[0], fallbackRows.trending[1], fallbackRows.trending[2], fallbackRows.series[0]];
 
@@ -466,21 +557,37 @@ function HomeScreen({ rows, loading, onOpen, watchlist, ratings, continueWatchin
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, onOpen, watchlist, ratings }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, ratings }) {
+  const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
+
   return (
     <>
       <SearchPanel {...queryProps} onOpen={onOpen} watchlist={watchlist} ratings={ratings} />
+      <section className="mg2-explore-hero">
+        <span>Discovery Hub</span>
+        <h2>Find your next obsession.</h2>
+        <p>Live TMDB trends, curated collections, genres, and people picks in one place.</p>
+      </section>
       <div className="mg2-chips">
         {exploreTabs.map((tab) => (
           <button key={tab.id} className={activeExplore === tab.id ? "active" : ""} type="button" onClick={() => setActiveExplore(tab.id)}>{tab.label}</button>
         ))}
       </div>
-      <div className="mg2-section-head"><h2>Trending This Week</h2><span>See All</span></div>
-      {tabLoading ? <SkeletonRow /> : (
-        <div className="mg2-grid">
-          {tabResults.map((item) => <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={Boolean(watchlist[keyOf(item)])} rating={ratings[keyOf(item)]} compact />)}
-        </div>
-      )}
+      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} watchlist={watchlist} ratings={ratings} />
+      {exploreHubSections.map((section) => (
+        <ContentRow
+          key={section.id}
+          title={section.title}
+          items={exploreRows[section.id] || []}
+          loading={exploreLoading}
+          onOpen={onOpen}
+          watchlist={watchlist}
+          ratings={ratings}
+        />
+      ))}
+      <GenreRow genres={genreSeeds} />
+      <CollectionRow collections={collectionSeeds} onOpen={onOpen} />
+      <ActorRow actors={actors} loading={actorsLoading} />
     </>
   );
 }
@@ -689,6 +796,17 @@ export default function Home() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [tabResults, setTabResults] = useState([]);
   const [tabLoading, setTabLoading] = useState(false);
+  const [exploreRows, setExploreRows] = useState({
+    today: fallbackRows.trending,
+    week: fallbackRows.trending,
+    popularMovies: fallbackRows.movies,
+    popularTv: fallbackRows.series,
+    topRated: fallbackRows.movies,
+    upcoming: fallbackRows.trending
+  });
+  const [exploreLoading, setExploreLoading] = useState(false);
+  const [popularActors, setPopularActors] = useState(actorFallbacks);
+  const [actorsLoading, setActorsLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -795,6 +913,44 @@ export default function Home() {
     }
     loadExplore();
   }, [activeExplore, apiFetch]);
+
+  useEffect(() => {
+    async function loadExploreHub() {
+      setExploreLoading(true);
+      try {
+        const settled = await Promise.allSettled(exploreHubSections.map(async (section) => {
+          const data = await apiFetch(section.endpoint, { page: 1 });
+          return [section.id, dedupe(normalize(data.results)).slice(0, 16)];
+        }));
+        const next = { ...exploreRows };
+        Object.assign(next, Object.fromEntries(
+          settled
+            .filter((result) => result.status === "fulfilled")
+            .map((result) => result.value)
+        ));
+        setExploreRows(next);
+      } catch {
+        setExploreRows((current) => current);
+      } finally {
+        setExploreLoading(false);
+      }
+    }
+
+    async function loadActors() {
+      setActorsLoading(true);
+      try {
+        const data = await apiFetch("/person/popular", { page: 1 });
+        setPopularActors((data.results || []).slice(0, 14));
+      } catch {
+        setPopularActors(actorFallbacks);
+      } finally {
+        setActorsLoading(false);
+      }
+    }
+
+    loadExploreHub();
+    loadActors();
+  }, [apiFetch]);
 
   const search = useCallback(async (page = 1, append = false) => {
     if (!debouncedQuery) {
@@ -935,7 +1091,22 @@ export default function Home() {
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} onOpen={openItem} onRate={rateItem} />;
   } else if (activeTab === "explore") {
-    screen = <ExploreScreen activeExplore={activeExplore} setActiveExplore={setActiveExplore} queryProps={queryProps} tabResults={tabResults} tabLoading={tabLoading} onOpen={openItem} watchlist={watchlist} ratings={ratings} />;
+    screen = (
+      <ExploreScreen
+        activeExplore={activeExplore}
+        setActiveExplore={setActiveExplore}
+        queryProps={queryProps}
+        tabResults={tabResults}
+        tabLoading={tabLoading}
+        exploreRows={exploreRows}
+        exploreLoading={exploreLoading}
+        actors={popularActors}
+        actorsLoading={actorsLoading}
+        onOpen={openItem}
+        watchlist={watchlist}
+        ratings={ratings}
+      />
+    );
   } else {
     screen = <ProfileScreen watchlist={watchlist} ratings={ratings} onOpen={openItem} />;
   }
