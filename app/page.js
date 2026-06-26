@@ -134,6 +134,12 @@ const socialFriendProfiles = [
   { ...friends[4], bio: "Comfort shows, sharp thrillers, and very serious watch parties.", match: 76, mutuals: 5, genres: ["Comedy", "Thriller", "TV"], activity: "Watched Friends", stats: ["188 watched", "21 reviews"] }
 ];
 
+const blendSeeds = [
+  { id: "shruti-blend", title: "Aabhas + Shruti", friends: [socialFriendProfiles[0]], match: 94, genres: ["Sci-Fi", "Drama", "Thriller"] },
+  { id: "night-crew", title: "Night Crew Blend", friends: [socialFriendProfiles[0], socialFriendProfiles[1], socialFriendProfiles[2]], match: 87, genres: ["Crime", "Action", "Sci-Fi"] },
+  { id: "comfort-club", title: "Comfort Club", friends: [socialFriendProfiles[2], socialFriendProfiles[3]], match: 79, genres: ["TV", "Comedy", "Fantasy"] }
+];
+
 const fallbackRows = {
   trending: [
     { id: 693134, media_type: "movie", title: "Dune: Part Two", poster_path: "/8b8R8l88Qje9dn9OE8PY05Nxl1X.jpg", backdrop_path: "/xOMo8BRK7PfcJv9JCnx7s5hj0PX.jpg", vote_average: 8.2, release_date: "2024-02-27", overview: "Paul Atreides unites with Chani and the Fremen while seeking revenge." },
@@ -778,7 +784,7 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, onOpen })
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, loading, onOpen }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, loading, onOpen, onOpenBlend, onOpenStats }) {
   const [profileTab, setProfileTab] = useState("activity");
   const saved = Object.values(watchlist);
   const watchedItems = Object.values(watched);
@@ -842,7 +848,14 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, loading, on
 
       <div className="mg2-profile-highlights" aria-label="Profile highlights">
         {highlights.map((highlight) => (
-          <button key={highlight.label} type="button">
+          <button
+            key={highlight.label}
+            type="button"
+            onClick={() => {
+              if (highlight.label === "Stats") onOpenStats();
+              if (highlight.label === "Friends") onOpenBlend();
+            }}
+          >
             <span>
               {highlight.items.slice(0, 3).map((item) => (
                 <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
@@ -897,7 +910,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, loading, on
   );
 }
 
-function FriendsScreen({ friendStates, onFriendAction }) {
+function FriendsScreen({ friendStates, onFriendAction, onOpenBlend }) {
   const [friendQuery, setFriendQuery] = useState("");
   const [previewFriend, setPreviewFriend] = useState(null);
   const filteredFriends = socialFriendProfiles.filter((friend) => `${friend.name} ${friend.handle} ${friend.genres.join(" ")}`.toLowerCase().includes(friendQuery.trim().toLowerCase()));
@@ -914,7 +927,7 @@ function FriendsScreen({ friendStates, onFriendAction }) {
       <div className="mg2-social-search"><Icon name="search" /><input value={friendQuery} onChange={(event) => setFriendQuery(event.target.value)} placeholder="Search people, genres, taste" /></div>
       <div className="mg2-blend-row">
         {socialFriendProfiles.slice(0, 3).map((friend) => (
-          <button key={`blend-${friend.id}`} type="button" onClick={() => setPreviewFriend(friend)}>
+          <button key={`blend-${friend.id}`} type="button" onClick={() => onOpenBlend(friend.id)}>
             <strong>{friend.match}%</strong>
             <span>{friend.name}</span>
             <small>Blend preview</small>
@@ -960,7 +973,132 @@ function FriendsScreen({ friendStates, onFriendAction }) {
   );
 }
 
-function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onClose }) {
+function BlendScreen({ rows, savedBlendLists, onSaveBlend }) {
+  const [selectedBlend, setSelectedBlend] = useState(blendSeeds[0].id);
+  const [blendTab, setBlendTab] = useState("feed");
+  const [createdBlend, setCreatedBlend] = useState(false);
+  const blend = blendSeeds.find((item) => item.id === selectedBlend) || blendSeeds[0];
+  const members = [{ ...friends[0], match: 100 }, ...blend.friends];
+  const commonWatched = dedupe([...fallbackRows.movies, ...fallbackRows.trending]).slice(0, 4);
+  const sharedFavorites = dedupe([fallbackRows.movies[0], fallbackRows.trending[0], fallbackRows.series[2], fallbackRows.movies[1]]).slice(0, 4);
+  const recommendations = dedupe([...(rows.series || []), ...(rows.anime || []), ...fallbackRows.series, ...fallbackRows.anime]).slice(0, 6);
+  const sharedList = dedupe([...(rows.trending || []), ...fallbackRows.movies, ...fallbackRows.series]).slice(0, 5);
+  const saved = Boolean(savedBlendLists[blend.id]);
+  const savedLists = Object.values(savedBlendLists || {});
+  const blendTabs = [
+    { id: "feed", label: "Feed" },
+    { id: "reels", label: "Reels" },
+    { id: "lists", label: "Lists" },
+    { id: "match", label: "Match" }
+  ];
+  const reelItems = dedupe([...commonWatched, ...recommendations]).slice(0, 4);
+
+  return (
+    <section className="mg2-blend-screen">
+      <div className="mg2-blend-switcher">
+        {blendSeeds.map((item) => <button key={item.id} className={item.id === blend.id ? "active" : ""} type="button" onClick={() => setSelectedBlend(item.id)}>{item.title}</button>)}
+      </div>
+      <div className="mg2-blend-hero">
+        <div className="mg2-blend-member-stack">
+          {members.slice(0, 4).map((friend) => <Avatar key={friend.id} friend={friend} size="sm" />)}
+        </div>
+        <strong>{blend.match}%</strong>
+        <span>{blend.title}</span>
+        <small>{members.map((friend) => friend.name).join(" + ")}</small>
+      </div>
+      <div className="mg2-blend-genres">{blend.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
+      <div className="mg2-blend-insight">
+        <strong>Why this works</strong>
+        <small>{blend.genres[0]} overlap, {commonWatched.length} common watches, and a shared pull toward high-rated TV nights.</small>
+      </div>
+      <div className="mg2-blend-actions">
+        <button type="button" onClick={() => setCreatedBlend(true)}>{createdBlend ? "Blend Created" : "Create Blend"}</button>
+        <button className={saved ? "active" : ""} type="button" onClick={() => onSaveBlend(blend.id, sharedList)}>{saved ? "Saved" : "Save Blend List"}</button>
+      </div>
+      <div className="mg2-blend-tabs" aria-label="Blend sections">
+        {blendTabs.map((tab) => <button key={tab.id} className={blendTab === tab.id ? "active" : ""} type="button" onClick={() => setBlendTab(tab.id)}>{tab.label}</button>)}
+      </div>
+
+      {blendTab === "feed" && (
+        <div className="mg2-blend-feed">
+          {recommendations.map((item, index) => (
+            <article key={keyOf(item)}>
+              <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+              <span>
+                <strong>{titleOf(item)}</strong>
+                <small>Because {members[index % members.length].name} likes {blend.genres[index % blend.genres.length]} and you share {commonWatched.length} watched titles.</small>
+              </span>
+              <button type="button" onClick={() => onSaveBlend(`${blend.id}-feed-${item.id}`, [item])}>Save</button>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {blendTab === "reels" && (
+        <div className="mg2-blend-reel-grid">
+          {reelItems.map((item) => (
+            <article key={keyOf(item)}>
+              <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+              <span><Icon name="play" /></span>
+              <strong>{titleOf(item)}</strong>
+              <small>Spoiler-free edit for this Blend</small>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {blendTab === "lists" && (
+        <>
+          <div className="mg2-social-section"><h3>Shared Watchlist</h3>{sharedList.map((item) => <p key={keyOf(item)}>{titleOf(item)} <small>{mediaType(item) === "tv" ? "TV" : "Movie"}</small></p>)}</div>
+          <div className="mg2-social-section">
+            <h3>Saved Blend Lists</h3>
+            {savedLists.length ? savedLists.map((list) => <p key={list.id}>{list.id.replaceAll("-", " ")} <small>{list.items?.length || 0} titles</small></p>) : <p>No saved Blend lists yet <small>Save one from Feed</small></p>}
+          </div>
+          <button className="mg2-blend-wide-save" type="button" onClick={() => onSaveBlend(blend.id, sharedList)}>Save Shared Watchlist</button>
+        </>
+      )}
+
+      {blendTab === "match" && (
+        <>
+          <div className="mg2-social-section"><h3>People in Blend</h3><div className="mg2-blend-people">{members.map((friend) => <span key={friend.id}><Avatar friend={friend} size="sm" /><strong>{friend.name}</strong><small>{friend.match || blend.match}% match</small></span>)}</div></div>
+          <div className="mg2-social-section"><h3>Shared Favorites</h3><div className="mg2-mini-poster-row">{commonWatched.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}</div></div>
+          <div className="mg2-social-section"><h3>Common Watched</h3>{sharedFavorites.map((item) => <p key={keyOf(item)}>{titleOf(item)} <small>{item.vote_average ? `${item.vote_average.toFixed(1)}/10` : yearOf(item)}</small></p>)}</div>
+          <div className="mg2-social-section"><h3>Compatibility Stats</h3>{blend.genres.map((genre, index) => <p key={genre}>{genre}<small>{blend.match - index * 7}% overlap</small></p>)}</div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function StatsScreen({ watched = {}, ratings = {} }) {
+  const watchedCount = Object.keys(watched).length || 78;
+  const ratingValues = Object.values(ratings);
+  const avgRating = ratingValues.length ? (ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length).toFixed(1) : "4.3";
+  const stats = [
+    { label: "Watched", value: watchedCount },
+    { label: "Hours", value: Math.round(watchedCount * 2.1) },
+    { label: "Avg Rating", value: avgRating },
+    { label: "Favorite Genre", value: "Sci-Fi" },
+    { label: "Top Actor", value: "Cillian" },
+    { label: "Top Director", value: "Nolan" }
+  ];
+
+  return (
+    <section className="mg2-stats-screen">
+      <div className="mg2-stats-grid">{stats.map((stat) => <article key={stat.label}><strong>{stat.value}</strong><small>{stat.label}</small></article>)}</div>
+      <div className="mg2-social-section">
+        <h3>By Genre</h3>
+        {["Sci-Fi", "Drama", "Action"].map((genre, index) => <p key={genre}><span style={{ width: `${70 - index * 16}%` }} />{genre}<small>{32 - index * 7}%</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Year Preview</h3>
+        <div className="mg2-stats-bars">{[24, 48, 67, 81, 91, 63].map((value, index) => <span key={index} style={{ height: `${value}%` }} />)}</div>
+      </div>
+    </section>
+  );
+}
+
+function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onOpenBlend, onClose }) {
   const [socialTab, setSocialTab] = useState("messages");
   const [chatId, setChatId] = useState(null);
   const conversation = conversations.find((item) => item.id === chatId) || conversations.find((item) => item.id === selectedConversation) || conversations[0];
@@ -980,7 +1118,7 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
         </>
       )}
       {socialTab === "friends" ? (
-        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} />
+        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} onOpenBlend={onOpenBlend} />
       ) : chatId ? (
         <div className="mg2-chat native">
           <div className="mg2-chat-head">
@@ -1236,6 +1374,7 @@ export default function Home() {
   const [selectedConversation, setSelectedConversation] = useState(conversations[0].id);
   const [activeSocial, setActiveSocial] = useState(null);
   const [friendStates, setFriendStates] = useState({});
+  const [savedBlendLists, setSavedBlendLists] = useState({});
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -1279,6 +1418,7 @@ export default function Home() {
     setLikedFeed(stored("moviegram.feedLikes", {}));
     setSavedFeed(stored("moviegram.feedSaves", {}));
     setFriendStates(stored("moviegram.friendStates", { shruti: "friends", rohan: "friends" }));
+    setSavedBlendLists(stored("moviegram.blendLists", {}));
   }, []);
 
   useEffect(() => {
@@ -1510,7 +1650,13 @@ export default function Home() {
     persist("moviegram.friendStates", next);
   }
 
-  const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
+  function saveBlendList(blendId, items) {
+    const next = { ...savedBlendLists, [blendId]: { id: blendId, items, savedAt: new Date().toISOString() } };
+    setSavedBlendLists(next);
+    persist("moviegram.blendLists", next);
+  }
+
+  const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : activeSocial === "blend" ? "Blend" : activeSocial === "stats" ? "Stats" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
   const selectedKey = selected ? keyOf(selected) : "";
 
   const queryProps = {
@@ -1529,7 +1675,7 @@ export default function Home() {
   if (activeSocial === "messages") {
     screen = (
       <section className="mg2-native-social messages">
-        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onClose={() => setActiveSocial(null)} />
+        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onOpenBlend={() => setActiveSocial("blend")} onClose={() => setActiveSocial(null)} />
       </section>
     );
   } else if (activeSocial === "notifications") {
@@ -1540,6 +1686,26 @@ export default function Home() {
           <h2>Notifications</h2>
         </div>
         <NotificationsScreen />
+      </section>
+    );
+  } else if (activeSocial === "blend") {
+    screen = (
+      <section className="mg2-native-social">
+        <div className="mg2-social-header">
+          <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
+          <h2>Blend</h2>
+        </div>
+        <BlendScreen rows={rows} savedBlendLists={savedBlendLists} onSaveBlend={saveBlendList} />
+      </section>
+    );
+  } else if (activeSocial === "stats") {
+    screen = (
+      <section className="mg2-native-social">
+        <div className="mg2-social-header">
+          <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
+          <h2>Stats</h2>
+        </div>
+        <StatsScreen watched={watched} ratings={ratings} />
       </section>
     );
   } else if (activeTab === "home") {
@@ -1566,7 +1732,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} loading={loadingRows} onOpen={openItem} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} />;
   }
 
   return (
