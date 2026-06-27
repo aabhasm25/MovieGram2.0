@@ -229,44 +229,9 @@ function hasStoredItem(item, collection = {}) {
 
 function ratingForItem(item, ratings = {}) {
   if (!item) return null;
-  const raw = ratings[keyOf(item)] || (item.id ? ratings[`movie:${item.id}`] || ratings[`tv:${item.id}`] : null);
-  return normalizeUserRating(raw);
-}
-
-function normalizeUserRating(value) {
-  const numeric = Number(value || 0);
-  if (!numeric) return null;
-  const fivePoint = numeric > 5 ? numeric / 2 : numeric;
-  const rounded = Math.round(fivePoint * 2) / 2;
-  return rounded > 0 ? Math.min(5, rounded) : null;
-}
-
-function formatUserRating(value) {
-  const rating = normalizeUserRating(value);
-  if (!rating) return "";
-  return `${Number.isInteger(rating) ? rating.toFixed(0) : rating.toFixed(1)}/5`;
-}
-
-function normalizeRatingsCollection(collection = {}) {
-  return Object.entries(collection).reduce((next, [key, value]) => {
-    const rating = normalizeUserRating(value);
-    if (rating) next[key] = rating;
-    return next;
-  }, {});
-}
-
-function externalRatingCacheKey(item) {
-  return `moviegram.externalRatings.${keyOf(item)}`;
-}
-
-function parseOmdbRatings(data) {
-  if (!data || data.Response === "False") return [];
-  const ratings = [];
-  if (data.imdbRating && data.imdbRating !== "N/A") ratings.push({ source: "IMDb", value: data.imdbRating });
-  (data.Ratings || []).forEach((entry) => {
-    if (entry.Source === "Rotten Tomatoes" && entry.Value && entry.Value !== "N/A") ratings.push({ source: "RT Critics", value: entry.Value });
-  });
-  return ratings;
+  if (ratings[keyOf(item)]) return ratings[keyOf(item)];
+  if (item.id) return ratings[`movie:${item.id}`] || ratings[`tv:${item.id}`] || null;
+  return null;
 }
 
 function normalizedTrackingItem(item = {}) {
@@ -462,14 +427,14 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
   );
 }
 
-function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings, favorites = {} }) {
+function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings }) {
   return (
     <section className="mg2-section">
       <div className="mg2-section-head"><h2>{title}</h2><span>See All</span></div>
       {loading ? <SkeletonRow /> : (
         <div className="mg2-row">
           {items.map((item) => (
-            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} />
+            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={(ratingForItem(item, ratings) || 0) >= 9} />
           ))}
         </div>
       )}
@@ -679,7 +644,7 @@ function SocialHomeFeed({ likedFeed, toggleFeedLike }) {
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, watchlist, watched = {}, ratings, favorites = {}, sentinelRef }) {
+function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, watchlist, watched = {}, ratings, sentinelRef }) {
   return (
     <section className="mg2-search-panel">
       <div className="mg2-search">
@@ -694,7 +659,7 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
           <div className="mg2-grid">
             {results.map((item) => {
               const userRating = ratingForItem(item, ratings);
-              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={(userRating || 0) >= 9} compact />;
             })}
           </div>
           <div ref={sentinelRef} className="mg2-sentinel" />
@@ -708,7 +673,7 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
   );
 }
 
-function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
+function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
   return (
     <>
       <div className="mg2-stories">
@@ -728,23 +693,23 @@ function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, f
       </section>
 
       <ContinueWatchingRow items={continueWatching} onOpen={onOpen} />
-      <ContentRow title="Recommended for You" items={recommended} loading={loading && recommended.length === 0} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <ContentRow title="Recommended for You" items={recommended} loading={loading && recommended.length === 0} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} />
       <RecommendationIntelligence rows={rows} intelligenceRows={intelligenceRows} watchlist={watchlist} hiddenRecs={hiddenRecs} onOpen={onOpen} onWatchlist={onWatchlist} onNotInterested={onNotInterested} />
-      <ContentRow title="Trending This Week" items={rows.trending || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <ContentRow title="Trending This Week" items={rows.trending || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} />
 
       {contentSections.filter((section) => section.id !== "trending").map((section) => (
-        <ContentRow key={section.id} title={section.title} items={rows[section.id] || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+        <ContentRow key={section.id} title={section.title} items={rows[section.id] || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} />
       ))}
     </>
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, watched = {}, ratings, favorites = {} }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, watched = {}, ratings }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -755,7 +720,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           <button key={tab.id} className={activeExplore === tab.id ? "active" : ""} type="button" onClick={() => setActiveExplore(tab.id)}>{tab.label}</button>
         ))}
       </div>
-      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} />
       {exploreHubSections.map((section) => (
         <ContentRow
           key={section.id}
@@ -766,7 +731,6 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           watchlist={watchlist}
           watched={watched}
           ratings={ratings}
-          favorites={favorites}
         />
       ))}
       <GenreRow genres={genreSeeds} />
@@ -875,14 +839,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, onOpen, onWatchlist }
   );
 }
 
-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, onOpen, onOpenDiary }) {
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, onOpen, onOpenDiary }) {
   const [logTab, setLogTab] = useState("watchlist");
   const [logQuery, setLogQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [genreFilter, setGenreFilter] = useState("all");
   const saved = Object.values(watchlist);
   const watchedItems = Object.values(watched);
-  const favoriteItems = Object.values(favorites);
+  const favorites = dedupe([...saved, ...watchedItems, ...(rows.movies || []), ...(rows.series || [])]).slice(0, 12);
   const listCards = [
     { id: "weekend", title: "Weekend Watch Party", subtitle: "Big-screen crowd pleasers", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) },
     { id: "comfort", title: "Comfort Rewatches", subtitle: "Reliable late-night picks", items: dedupe([...(rows.series || []), ...fallbackRows.series]).slice(0, 3) },
@@ -898,7 +862,7 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
     ? (saved.length ? saved : dedupe([...(rows.trending || []), ...fallbackRows.trending]))
     : logTab === "watched"
       ? (watchedItems.length ? watchedItems : dedupe([...(rows.movies || []), ...fallbackRows.movies]))
-      : favoriteItems;
+      : favorites;
   const filteredItems = sourceItems.filter((item) => {
     const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
     const queryMatch = titleOf(item).toLowerCase().includes(logQuery.trim().toLowerCase());
@@ -948,7 +912,7 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
         <div className="mg2-log-grid">
           {filteredItems.map((item) => {
             const userRating = ratingForItem(item, ratings);
-            return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+            return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={(userRating || 0) >= 9} compact />;
           })}
         </div>
       ) : (
@@ -964,12 +928,12 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   const [typeFilter, setTypeFilter] = useState("all");
   const [ratingFilter, setRatingFilter] = useState("all");
   const watchedItems = Object.values(watched)
-    .map((item) => ({ ...item, media_type: mediaType(item), rating: ratingForItem(item, ratings) }))
+    .map((item) => ({ ...item, media_type: mediaType(item), rating: ratings[keyOf(item)] || null }))
     .sort((a, b) => new Date(b.watchedAt || 0) - new Date(a.watchedAt || 0));
-  const watchlistItems = Object.values(watchlist).map((item) => ({ ...item, media_type: mediaType(item), rating: ratingForItem(item, ratings) }));
+  const watchlistItems = Object.values(watchlist).map((item) => ({ ...item, media_type: mediaType(item), rating: ratings[keyOf(item)] || null }));
   const ratedItems = dedupe([...watchedItems, ...watchlistItems])
-    .filter((item) => ratingForItem(item, ratings))
-    .map((item) => ({ ...item, rating: ratingForItem(item, ratings) }))
+    .filter((item) => ratings[keyOf(item)])
+    .map((item) => ({ ...item, rating: ratings[keyOf(item)] }))
     .sort((a, b) => (b.rating || 0) - (a.rating || 0));
   const monthOptions = [...new Set(watchedItems.map((item) => (item.watchedAt || "").slice(0, 7)).filter(Boolean))];
   const currentMonth = monthOptions[0] || new Date().toISOString().slice(0, 7);
@@ -1036,7 +1000,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
     : activityTab === "watchlist"
       ? watchlistItems
       : activityTab === "reviews"
-        ? ratedItems.filter((item) => item.rating >= 4)
+        ? ratedItems.filter((item) => item.rating >= 8)
         : watchedItems;
   const activityEmpty = activityTab === "watched"
     ? "Mark titles watched to build activity."
@@ -1083,7 +1047,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
                 <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                 <b>{dateBadge(item.watchedAt)}</b>
                 <strong>{titleOf(item)}</strong>
-                <small>{mediaType(item) === "tv" ? "TV" : "Movie"}{item.rating ? ` - ${formatUserRating(item.rating)}` : ""}</small>
+                <small>{mediaType(item) === "tv" ? "TV" : "Movie"}{item.rating ? ` - ${item.rating}/10` : ""}</small>
               </button>
             ))}
           </div>
@@ -1101,10 +1065,10 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
               <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
               <span>
                 <strong>{titleOf(item)}</strong>
-                <small>{activityTab === "watchlist" ? "Added to watchlist" : activityTab === "ratings" ? `Rated ${formatUserRating(item.rating)}` : activityTab === "reviews" ? `Strong rating: ${formatUserRating(item.rating)}` : `Watched ${dateBadge(item.watchedAt)}`}</small>
+                <small>{activityTab === "watchlist" ? "Added to watchlist" : activityTab === "ratings" ? `Rated ${item.rating}/10` : activityTab === "reviews" ? `Strong rating: ${item.rating}/10` : `Watched ${dateBadge(item.watchedAt)}`}</small>
                 <em>{mediaType(item) === "tv" ? "TV Show" : "Movie"}{item.watchedAt ? ` - ${new Date(item.watchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</em>
               </span>
-              <b>{item.rating ? formatUserRating(item.rating) : dateBadge(item.watchedAt)}</b>
+              <b>{item.rating ? `${item.rating}/10` : dateBadge(item.watchedAt)}</b>
             </button>
           ))}
           {activityItems.length === 0 && <div className="mg2-diary-empty"><strong>No {activityTab} activity</strong><small>{activityEmpty}</small></div>}
@@ -1157,10 +1121,10 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
                   <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                   <span>
                     <strong>{titleOf(item)}</strong>
-                    <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {item.rating ? formatUserRating(item.rating) : item.vote_average ? `${item.vote_average.toFixed(1)} TMDB` : "Not rated"}</small>
+                    <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {item.rating ? `${item.rating}/10` : item.vote_average ? `${item.vote_average.toFixed(1)} TMDB` : "Not rated"}</small>
                     <em>{item.watchedAt ? new Date(item.watchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Watched date saved locally"}</em>
                   </span>
-                  <b>{item.rating ? formatUserRating(item.rating) : "Diary"}</b>
+                  <b>{item.rating ? `${item.rating}/10` : "Diary"}</b>
                 </button>
               ))}
             </section>
@@ -1172,17 +1136,19 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites = {}, savedBlendLists = {}, loading, onOpen, onOpenBlend, onOpenStats, onOpenDiary }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, savedBlendLists = {}, loading, onOpen, onOpenBlend, onOpenStats, onOpenDiary }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const saved = Object.values(watchlist);
   const watchedItems = Object.values(watched);
   const ratedKeys = Object.keys(ratings);
-  const likedItems = Object.values(favorites);
-  const localItems = dedupe([...watchedItems, ...saved, ...likedItems]);
+  const localItems = dedupe([...watchedItems, ...saved]);
   const fallbackItems = [...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.trending];
-  const favoriteItems = likedItems;
+  const favoriteItems = ratedKeys
+    .filter((key) => ratings[key] >= 9)
+    .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
+    .filter(Boolean);
   const blendListItems = Object.values(savedBlendLists || {});
   const customLists = [
     { id: "watchlist", title: "Watchlist", subtitle: `${saved.length} saved`, items: saved, action: () => { setProfilePanel(null); setSelectedList(null); setProfileTab("watchlist"); } },
@@ -1218,13 +1184,9 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
     { id: "watchlist", label: "Watchlist" },
     { id: "reviews", label: "Reviews" }
   ];
-  const ratingReviewItems = dedupe([
-    ...ratedKeys.map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key)).filter(Boolean),
-    ...realReviewItems
-  ]);
-  const reviewCards = ratingReviewItems.map((item) => ({
+  const reviewCards = realReviewItems.map((item) => ({
     item,
-    rating: ratingForItem(item, ratings) || normalizeUserRating(item.rating) || null,
+    rating: ratings[keyOf(item)] || item.rating || item.vote_average || 0,
     note: reviewTextFor(item)
   }));
   const fallbackTimestamp = (index) => new Date(Date.now() - (index + 1) * 5400000).toISOString();
@@ -1255,9 +1217,9 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
   saved.forEach((item, index) => addProfileStatus({ type: "watchlisted", item, timestamp: item.savedAt || fallbackTimestamp(index + watchedItems.length) }));
   ratedKeys.forEach((key, index) => {
       const item = localItems.find((entry) => keyOf(entry) === key) || fallbackItems.find((entry) => keyOf(entry) === key);
-      if (item) addProfileStatus({ type: "rated", item, timestamp: item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length), rating: normalizeUserRating(ratings[key]) });
+      if (item) addProfileStatus({ type: "rated", item, timestamp: item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length), rating: ratings[key] });
     });
-  realReviewItems.forEach((item, index) => addProfileStatus({ type: "reviewed", item, timestamp: item.reviewedAt || item.reviewAt || item.updatedAt || item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length + ratedKeys.length), rating: ratingForItem(item, ratings), review: reviewTextFor(item) }));
+  realReviewItems.forEach((item, index) => addProfileStatus({ type: "reviewed", item, timestamp: item.reviewedAt || item.reviewAt || item.updatedAt || item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length + ratedKeys.length), rating: ratings[keyOf(item)], review: reviewTextFor(item) }));
   const activityEvents = Array.from(statusMap.values())
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .slice(0, 12);
@@ -1312,7 +1274,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
               <div className="mg2-profile-poster-grid">
                 {favoriteItems.map((item) => {
                   const userRating = ratingForItem(item, ratings);
-                  return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+                  return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={(userRating || 0) >= 9} compact />;
                 })}
               </div>
             ) : <div className="mg2-empty">No favorites yet</div>
@@ -1339,7 +1301,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
                 <div className="mg2-profile-poster-grid">
                   {selectedList.items.map((item) => {
                     const userRating = ratingForItem(item, ratings);
-                    return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+                    return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={(userRating || 0) >= 9} compact />;
                   })}
                 </div>
               </div>
@@ -1355,7 +1317,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
                     <span className="mg2-activity-badges">
                       {event.statuses.map((status) => (
                         <i key={status} className={`mg2-activity-badge ${status}`}>
-                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : event.rating ? formatUserRating(event.rating) : "★"}
+                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : event.rating ? `${event.rating}` : "★"}
                         </i>
                       ))}
                     </span>
@@ -1371,7 +1333,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
             gridItems.length ? (
               <div className="mg2-profile-poster-grid">
                 {gridItems.map((item) => (
-                  <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} compact />
+                  <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={(ratingForItem(item, ratings) || 0) >= 9} compact />
                 ))}
               </div>
             ) : <div className="mg2-empty">Add titles to this section from Home, Explore, or Details.</div>
@@ -1385,9 +1347,9 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
                     <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <span>
                       <strong>{titleOf(item)}</strong>
-                      <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {note || "Rating only"}</small>
+                      <small>{yearOf(item)} - {note}</small>
                     </span>
-                    <em>{formatUserRating(rating)}</em>
+                    <em>{rating}/10</em>
                   </button>
                 ))}
               </div>
@@ -1565,11 +1527,11 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
   const savedItems = Object.values(watchlist);
   const watchedCount = watchedItems.length;
   const ratingValues = Object.values(ratings);
-  const avgRating = ratingValues.length ? (ratingValues.reduce((sum, value) => sum + (normalizeUserRating(value) || 0), 0) / ratingValues.length).toFixed(1) : "0.0";
+  const avgRating = ratingValues.length ? (ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length).toFixed(1) : "0.0";
   const movieItems = watchedItems.filter((item) => mediaType(item) === "movie");
   const showItems = watchedItems.filter((item) => mediaType(item) === "tv");
   const ratedWatched = watchedItems
-    .map((item) => ({ item, rating: ratingForItem(item, ratings) || 0 }))
+    .map((item) => ({ item, rating: ratings[keyOf(item)] || 0 }))
     .sort((a, b) => b.rating - a.rating);
   const topItem = ratedWatched.find(({ rating }) => rating > 0)?.item || watchedItems[0];
   const latestItem = [...watchedItems].sort((a, b) => new Date(b.watchedAt || 0) - new Date(a.watchedAt || 0))[0];
@@ -1642,11 +1604,11 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
     { title: "Shows watched", value: review.shows, detail: showItems[0] ? `Latest show: ${titleOf(showItems[0])}` : "No shows marked watched yet.", poster: showItems[0] },
     { title: "Hours watched", value: review.hours, detail: "Estimated from your watched titles." },
     { title: "Favorite lane", value: review.genre, detail: "Based on your movie vs TV watch mix.", poster: latestItem },
-    { title: "Top movie/show", value: review.topTitle, detail: ratedWatched[0]?.rating ? `Your rating: ${formatUserRating(ratedWatched[0].rating)}.` : "Your most recent watched highlight.", poster: topItem },
+    { title: "Top movie/show", value: review.topTitle, detail: ratedWatched[0]?.rating ? `Your rating: ${ratedWatched[0].rating}/10.` : "Your most recent watched highlight.", poster: topItem },
     { title: "Longest binge", value: review.binge, detail: showItems.length ? "TV title from your watched history." : "Mark TV watched to unlock binge stats.", poster: showItems[0] },
     { title: "Most watched month", value: review.month, detail: "Calculated from watched dates saved locally." },
     { title: "Top saved title", value: savedPreview ? titleOf(savedPreview) : "No saved title yet", detail: savedPreview ? "Pulled from your current watchlist." : "Add titles to watchlist to fill this card.", poster: savedPreview },
-    { title: "Final share card", value: "MovieGram 2026", detail: `${watchedCount} watched, ${savedItems.length} saved, ${avgRating}/5 average rating.`, tone: "share", poster: topItem }
+    { title: "Final share card", value: "MovieGram 2026", detail: `${watchedCount} watched, ${savedItems.length} saved, ${avgRating}/10 average rating.`, tone: "share", poster: topItem }
   ] : [];
   const stats = [
     { label: "Watched", value: watchedCount },
@@ -1813,7 +1775,7 @@ function WatchlistScreen({ items, onOpen, watchlist, ratings }) {
         {items.map((item) => (
           <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
             <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
-            <span><strong>{titleOf(item)}</strong><small>{yearOf(item)} {ratingForItem(item, ratings) ? `- You ${formatUserRating(ratingForItem(item, ratings))}` : ""}</small></span>
+            <span><strong>{titleOf(item)}</strong><small>{yearOf(item)} {ratings[keyOf(item)] ? `- You ${ratings[keyOf(item)]}/10` : ""}</small></span>
             <Icon name="dots" />
           </button>
         ))}
@@ -1823,29 +1785,20 @@ function WatchlistScreen({ items, onOpen, watchlist, ratings }) {
 }
 
 function RatingControl({ value, onRate }) {
-  const current = normalizeUserRating(value) || 0;
   return (
     <div className="mg2-rating">
-      <button className="clear" type="button" onClick={() => onRate(0)}>Clear</button>
       {Array.from({ length: 5 }, (_, index) => {
-        const star = index + 1;
-        const state = current >= star ? "full" : current >= star - .5 ? "half" : "";
-        return (
-          <span key={star} className={`star ${state}`}>
-            <button type="button" aria-label={`${star - .5} stars`} onClick={() => onRate(star - .5)} />
-            <button type="button" aria-label={`${star} stars`} onClick={() => onRate(star)} />
-          </span>
-        );
+        const rating = (index + 1) * 2;
+        return <button key={rating} className={Number(value || 0) >= rating ? "active" : ""} type="button" onClick={() => onRate(rating)}>*</button>;
       })}
     </div>
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, externalRatings = [], watchProviders, favorite, onFavorite }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen }) {
   const shown = details || item;
   const similar = normalize(details?.similar?.results || []).slice(0, 8);
   const recs = normalize(details?.recommendations?.results || []).slice(0, 8);
-  const similarContent = dedupe([...similar, ...recs]).slice(0, 12);
   const cast = details?.credits?.cast?.slice(0, 10) || [];
   const trailer = details?.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
     details?.videos?.results?.find((video) => video.site === "YouTube");
@@ -1854,27 +1807,6 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const runtimeLabel = type === "tv"
     ? `${details?.number_of_seasons || 1} season${(details?.number_of_seasons || 1) === 1 ? "" : "s"} - ${details?.number_of_episodes || 0} episodes`
     : `${details?.runtime || "Runtime unavailable"}${details?.runtime ? " min" : ""}`;
-  const director = details?.credits?.crew?.find((person) => person.job === "Director")?.name;
-  const certification = type === "movie"
-    ? details?.release_dates?.results?.find((entry) => entry.iso_3166_1 === "US")?.release_dates?.find((entry) => entry.certification)?.certification
-    : details?.content_ratings?.results?.find((entry) => entry.iso_3166_1 === "US")?.rating;
-  const genres = details?.genres || [];
-  const userRating = normalizeUserRating(rating);
-  const externalRatingMeta = (entry) => {
-    if (entry.source === "IMDb") return { className: "imdb", icon: "IMDb", value: String(entry.value || "").replace(/\/10$/, "") };
-    if (entry.source === "RT Critics") return { className: "tomato", icon: "🍅", value: entry.value };
-    if (entry.source === "RT Audience") return { className: "popcorn", icon: "🍿", value: entry.value };
-    return { className: "meta", icon: entry.source, value: entry.value };
-  };
-  const providerGroups = [
-    { id: "stream", label: "Stream", items: watchProviders?.stream || [] },
-    { id: "rent", label: "Rent", items: watchProviders?.rent || [] },
-    { id: "buy", label: "Buy", items: watchProviders?.buy || [] }
-  ].filter((group) => group.items.length > 0);
-  const watchedByFriends = feedSeeds
-    .filter((entry) => ["watched", "rated", "reviewed"].includes(entry.action) && titleOf(shown).toLowerCase().includes(entry.title.toLowerCase().split(":")[0]))
-    .slice(0, 4);
-  const friendReviews = feedSeeds.filter((entry) => entry.action === "reviewed" || entry.body).slice(0, 3);
   const hasBackdrop = Boolean(shown.backdrop_path);
   const heroImage = hasBackdrop
     ? backdropUrl(shown.backdrop_path)
@@ -1907,46 +1839,36 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 <div>
                   <span className="mg2-detail-type">{type === "tv" ? "TV Show" : "Movie"}</span>
                   <h2>{titleOf(shown)}</h2>
-                  <p className="mg2-detail-meta">
-                    <span>{yearOf(shown)}</span>
-                    <span>{runtimeLabel}</span>
-                    {certification && <span>{certification}</span>}
-                    {director && <span>{director}</span>}
-                  </p>
-                  <div className="mg2-detail-status">
-                    {watched && <span><Icon name="check" /> Watched</span>}
-                    {saved && <span><Icon name="bookmark" /> Watchlist</span>}
-                    {favorite && <span><Icon name="heart" /> Favorite</span>}
-                  </div>
-                  {genres.length > 0 && <div className="mg2-detail-hero-genres">{genres.slice(0, 3).map((genre) => <span key={genre.id}>{genre.name}</span>)}</div>}
-                  <div className="mg2-ratings-row">
-                    <span className={`user ${userRating ? "active" : ""}`}><b>★</b>{userRating ? formatUserRating(userRating) : "Rate"}</span>
-                    {shown.vote_average && <span className="tmdb"><b>★</b>{Math.round(shown.vote_average * 10)}%</span>}
-                    {externalRatings.map((entry) => {
-                      const meta = externalRatingMeta(entry);
-                      return <span key={`${entry.source}-${entry.value}`} className={meta.className}><b>{meta.icon}</b>{meta.value}</span>;
-                    })}
-                  </div>
-                  <RatingControl value={rating} onRate={(next) => onRate(shown, next)} />
+                  <p>{releaseDate} - {runtimeLabel}</p>
+                  <strong>{shown.vote_average ? shown.vote_average.toFixed(1) : "NR"}/10</strong>
                 </div>
               </div>
             </div>
             <div className="mg2-detail-actions">
-              <button className={watched ? "active watched" : ""} type="button" onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : "Mark watched"}><Icon name="check" /><span>{watched ? "Watched" : "Watch"}</span></button>
-              <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
-              <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
-              {trailer && <a href={`https://www.youtube.com/watch?v=${trailer.key}`} target="_blank" rel="noreferrer" aria-label="Open trailer"><Icon name="play" /><span>Trailer</span></a>}
+              <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)}>{saved ? "Saved" : "Watchlist"}</button>
+              <button className={watched ? "active watched" : ""} type="button" onClick={() => onWatched(shown)}>
+                {watched && <Icon name="check" />}
+                {watched ? "Watched" : "Mark Watched"}
+              </button>
+              <button type="button">Like</button>
             </div>
+            <section className="mg2-detail-panel">
+              <div className="mg2-detail-panel-head">
+                <h3>Your Rating</h3>
+                <span>{rating ? `${rating}/10` : "Not rated"}</span>
+              </div>
+              <RatingControl value={rating} onRate={(next) => onRate(shown, next)} />
+            </section>
             <section className="mg2-detail-panel">
               <h3>Overview</h3>
               <p className="mg2-overview">{shown.overview || "No overview available for this title yet."}</p>
               <div className="mg2-genre-list">
-                {genres.length ? genres.map((genre) => <span key={genre.id}>{genre.name}</span>) : <span>Genre unavailable</span>}
+                {details?.genres?.length ? details.genres.map((genre) => <span key={genre.id}>{genre.name}</span>) : <span>Genre unavailable</span>}
               </div>
             </section>
             <section className="mg2-detail-panel">
               <div className="mg2-detail-panel-head">
-                <h3>Actors</h3>
+                <h3>Cast</h3>
                 <span>{cast.length ? `${cast.length} featured` : "Unavailable"}</span>
               </div>
               <div className="mg2-cast-row">
@@ -1954,34 +1876,11 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                   <article key={`${person.id}-${person.character}`}>
                     <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <strong>{person.name}</strong>
-                    <span>{person.character || person.job || "Actor"}</span>
+                    <span>{person.character || person.job || "Cast"}</span>
                   </article>
-                )) : <p>No actor data available.</p>}
+                )) : <p>No cast data available.</p>}
               </div>
             </section>
-            {providerGroups.length > 0 && (
-              <section className="mg2-detail-panel">
-                <div className="mg2-detail-panel-head">
-                  <h3>Where to Watch</h3>
-                  <span>{watchProviders?.region || "IN"}</span>
-                </div>
-                <div className="mg2-provider-list">
-                  {providerGroups.map((group) => (
-                    <div key={group.id}>
-                      <strong>{group.label}</strong>
-                      <span>
-                        {group.items.map((provider) => (
-                          <em key={`${group.id}-${provider.id || provider.name}`}>
-                            {provider.logo_path && <img src={`${IMAGE_BASE}/w92${provider.logo_path}`} alt="" loading="lazy" />}
-                            {provider.name}
-                          </em>
-                        ))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
             {trailer && (
               <section className="mg2-detail-panel">
                 <div className="mg2-detail-panel-head">
@@ -1998,40 +1897,8 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 </div>
               </section>
             )}
-            {watchedByFriends.length > 0 && (
-              <section className="mg2-detail-panel">
-                <div className="mg2-detail-panel-head">
-                  <h3>Watched by Friends</h3>
-                  <span>{watchedByFriends.length}</span>
-                </div>
-                <div className="mg2-detail-friends-row">
-                  {watchedByFriends.map((entry) => (
-                    <article key={entry.id}>
-                      <Avatar friend={entry.friend} size="sm" />
-                      <span><strong>{entry.friend.name}</strong><small>{entry.action} {entry.time}</small></span>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
-            {friendReviews.length > 0 && (
-              <section className="mg2-detail-panel">
-                <div className="mg2-detail-panel-head">
-                  <h3>Friend Reviews</h3>
-                  <span>Social</span>
-                </div>
-                <div className="mg2-detail-review-list">
-                  {friendReviews.map((entry) => (
-                    <article key={`review-${entry.id}`}>
-                      <Avatar friend={entry.friend} size="sm" />
-                      <span><strong>{entry.friend.name}</strong><small>{entry.body}</small></span>
-                      {entry.rating && <em>{entry.rating}/5</em>}
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
-            {similarContent.length > 0 && <ContentRow title="Similar Content" items={similarContent} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
+            {similar.length > 0 && <ContentRow title="Similar Content" items={similar} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
+            {recs.length > 0 && <ContentRow title="Recommendations" items={recs} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
           </>
         )}
       </section>
@@ -2068,14 +1935,11 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState({});
   const [watched, setWatched] = useState({});
   const [ratings, setRatings] = useState({});
-  const [favorites, setFavorites] = useState({});
   const [continueWatching, setContinueWatching] = useState([]);
   const [clickSignals, setClickSignals] = useState({});
   const [selected, setSelected] = useState(null);
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [externalRatings, setExternalRatings] = useState([]);
-  const [watchProviders, setWatchProviders] = useState(null);
   const [feedPage, setFeedPage] = useState(2);
   const [likedFeed, setLikedFeed] = useState({});
   const [savedFeed, setSavedFeed] = useState({});
@@ -2129,12 +1993,7 @@ export default function Home() {
     setWatched(normalizedWatched);
     persist("moviegram.watchlist", exclusiveWatchlist);
     persist("moviegram.watched", normalizedWatched);
-    const normalizedRatings = normalizeRatingsCollection(stored("moviegram.ratings", {}));
-    setRatings(normalizedRatings);
-    persist("moviegram.ratings", normalizedRatings);
-    const normalizedFavorites = normalizeTrackingCollection(stored("moviegram.favorites", {}));
-    setFavorites(normalizedFavorites);
-    persist("moviegram.favorites", normalizedFavorites);
+    setRatings(stored("moviegram.ratings", {}));
     setContinueWatching(stored("moviegram.continueWatching", []));
     setClickSignals(stored("moviegram.clickSignals", {}));
     setLikedFeed(stored("moviegram.feedLikes", {}));
@@ -2272,13 +2131,9 @@ export default function Home() {
       if (!selected) return;
       setDetailsLoading(true);
       setDetails(null);
-      setWatchProviders(null);
       try {
         const type = mediaType(selected);
-        const append = type === "tv"
-          ? "credits,videos,similar,recommendations,external_ids,content_ratings"
-          : "credits,videos,similar,recommendations,external_ids,release_dates";
-        const data = await apiFetch(`/${type}/${selected.id}`, { append_to_response: append });
+        const data = await apiFetch(`/${type}/${selected.id}`, { append_to_response: "credits,videos,similar,recommendations" });
         setDetails({ ...data, media_type: type });
       } catch {
         setDetails(null);
@@ -2288,65 +2143,6 @@ export default function Home() {
     }
     loadDetails();
   }, [apiFetch, selected]);
-
-  useEffect(() => {
-    async function loadWatchProviders() {
-      if (!selected?.id) {
-        setWatchProviders(null);
-        return;
-      }
-      try {
-        const type = mediaType(selected);
-        const data = await apiFetch(`/${type}/${selected.id}/watch/providers`);
-        const regionData = data?.results?.IN || {};
-        const normalizeProviderBucket = (items = []) => items.map((provider) => ({
-          id: provider.provider_id,
-          name: provider.provider_name,
-          logo_path: provider.logo_path
-        }));
-        setWatchProviders({
-          region: "IN",
-          stream: normalizeProviderBucket(regionData.flatrate),
-          rent: normalizeProviderBucket(regionData.rent),
-          buy: normalizeProviderBucket(regionData.buy)
-        });
-      } catch {
-        setWatchProviders(null);
-      }
-    }
-    loadWatchProviders();
-  }, [apiFetch, selected]);
-
-  useEffect(() => {
-    async function loadExternalRatings() {
-      if (!selected) {
-        setExternalRatings([]);
-        return;
-      }
-      const normalized = { ...selected, media_type: mediaType(selected) };
-      const cached = stored(externalRatingCacheKey(normalized), null);
-      if (cached) {
-        setExternalRatings(cached);
-        return;
-      }
-      const imdbId = details?.external_ids?.imdb_id;
-      const apiKey = process.env.NEXT_PUBLIC_OMDB_API_KEY;
-      if (!imdbId || !apiKey || typeof window === "undefined") {
-        setExternalRatings([]);
-        return;
-      }
-      try {
-        const response = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(apiKey)}`);
-        if (!response.ok) throw new Error("OMDb request failed.");
-        const parsed = parseOmdbRatings(await response.json());
-        setExternalRatings(parsed);
-        persist(externalRatingCacheKey(normalized), parsed);
-      } catch {
-        setExternalRatings([]);
-      }
-    }
-    loadExternalRatings();
-  }, [details, selected]);
 
   const feedItems = useMemo(() => {
     return Array.from({ length: feedPage }, (_, page) => feedSeeds.map((item, index) => ({
@@ -2372,12 +2168,12 @@ export default function Home() {
     const all = dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.anime]);
     const watchedKeys = new Set(watchedItems.map((item) => keyOf(item)));
     const hasWatched = (needle) => watchedItems.some((item) => titleOf(item).toLowerCase().includes(needle));
-    const hasRated = (needle, min = 4) => [...watchedItems, ...saved, ...all].some((item) => titleOf(item).toLowerCase().includes(needle) && (ratingForItem(item, ratings) || 0) >= min);
-    const hasSciFiTaste = hasWatched("interstellar") || hasWatched("dune") || hasRated("interstellar", 4) || saved.some((item) => ["interstellar", "dune"].some((needle) => titleOf(item).toLowerCase().includes(needle)));
+    const hasRated = (needle, min = 8) => [...watchedItems, ...saved, ...all].some((item) => titleOf(item).toLowerCase().includes(needle) && (ratings[keyOf(item)] || 0) >= min);
+    const hasSciFiTaste = hasWatched("interstellar") || hasWatched("dune") || hasRated("interstellar", 8) || saved.some((item) => ["interstellar", "dune"].some((needle) => titleOf(item).toLowerCase().includes(needle)));
     const available = all.filter((item) => !hiddenRecs[keyOf(item)] && !watchedKeys.has(keyOf(item)));
     const byTitle = (needles) => available.filter((item) => needles.some((needle) => titleOf(item).toLowerCase().includes(needle)));
     const byMedia = (type) => available.filter((item) => mediaType(item) === type);
-    const score = (item) => (clickSignals[keyOf(item)] || 0) + (watchlist[keyOf(item)] ? 5 : 0) + (ratingForItem(item, ratings) || 0) + (item.vote_average || 0) / 2;
+    const score = (item) => (clickSignals[keyOf(item)] || 0) + (watchlist[keyOf(item)] ? 5 : 0) + (ratings[keyOf(item)] || 0) + (item.vote_average || 0) / 2;
     const sorted = [...available].sort((a, b) => score(b) - score(a));
     const crimeDramaPool = dedupe([
       ...byTitle(["the boys", "batman", "parasite", "oppenheimer"]),
@@ -2391,7 +2187,7 @@ export default function Home() {
     const blendPool = dedupe([...(rows.series || []), ...fallbackRows.series, ...fallbackRows.anime]).filter((item) => !hiddenRecs[keyOf(item)] && !watchedKeys.has(keyOf(item))).sort((a, b) => score(b) - score(a));
     return {
       breakingBad: (hasWatched("breaking bad") ? crimeDramaPool : []).slice(0, 8),
-      interstellar: (hasRated("interstellar", 4) || hasWatched("interstellar") ? sciFiPool : []).slice(0, 8),
+      interstellar: (hasRated("interstellar", 8) || hasWatched("interstellar") ? sciFiPool : []).slice(0, 8),
       sciFi: (hasSciFiTaste ? sciFiPool : []).slice(0, 8),
       friend: friendPool.slice(0, 8),
       blend: blendPool.slice(0, 8),
@@ -2462,28 +2258,9 @@ export default function Home() {
 
   function rateItem(item, value) {
     const key = keyOf({ ...item, media_type: mediaType(item) });
-    const rating = normalizeUserRating(value);
-    const next = { ...ratings };
-    if (rating) next[key] = rating;
-    else delete next[key];
+    const next = { ...ratings, [key]: value };
     setRatings(next);
     persist("moviegram.ratings", next);
-  }
-
-  function toggleFavorite(item) {
-    const normalized = { ...item, media_type: mediaType(item) };
-    const key = keyOf(normalized);
-    const normalizedFavorites = normalizeTrackingCollection(favorites);
-    const next = { ...normalizedFavorites };
-    if (hasStoredItem(normalized, next)) {
-      const removed = removeMatchingItem(next, normalized);
-      setFavorites(removed);
-      persist("moviegram.favorites", removed);
-    } else {
-      next[key] = { ...normalized, likedAt: new Date().toISOString() };
-      setFavorites(next);
-      persist("moviegram.favorites", next);
-    }
   }
 
   function toggleFeedLike(id) {
@@ -2582,11 +2359,11 @@ export default function Home() {
       </section>
     );
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} onOpen={openItem} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} onOpen={openItem} watchlist={watchlist} watched={watched} ratings={ratings} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
@@ -2603,11 +2380,10 @@ export default function Home() {
         watchlist={watchlist}
         watched={watched}
         ratings={ratings}
-        favorites={favorites}
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} savedBlendLists={savedBlendLists} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} savedBlendLists={savedBlendLists} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} />;
   }
 
   return (
@@ -2629,16 +2405,12 @@ export default function Home() {
           loading={detailsLoading}
           onClose={() => setSelected(null)}
           onWatchlist={toggleWatchlist}
-          saved={hasStoredItem(selected, watchlist)}
-          watched={hasStoredItem(selected, watched)}
+          saved={Boolean(watchlist[selectedKey])}
+          watched={Boolean(watched[selectedKey])}
           onWatched={toggleWatched}
-          rating={ratingForItem(selected, ratings)}
+          rating={ratings[selectedKey]}
           onRate={rateItem}
           onOpen={openItem}
-          externalRatings={externalRatings}
-          watchProviders={watchProviders}
-          favorite={hasStoredItem(selected, favorites)}
-          onFavorite={toggleFavorite}
         />
       )}
     </PhoneShell>
