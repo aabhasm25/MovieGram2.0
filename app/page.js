@@ -329,6 +329,12 @@ function normalize(items = []) {
     .map((item) => ({ ...item, media_type: mediaType(item) }));
 }
 
+function normalizeSearch(items = []) {
+  return items
+    .filter((item) => item?.id && ["movie", "tv", "person"].includes(item.media_type || mediaType(item)))
+    .map((item) => ({ ...item, media_type: item.media_type || mediaType(item) }));
+}
+
 function dedupe(items = []) {
   const seen = new Set();
   return items.filter((item) => {
@@ -535,16 +541,42 @@ function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ra
   );
 }
 
+function PersonCard({ person, onOpenPerson }) {
+  const knownFor = (person.known_for || [])
+    .map((item) => titleOf(item))
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(", ");
+  return (
+    <button className="mg2-person-result" type="button" onClick={() => onOpenPerson(person)}>
+      <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+      <span>
+        <strong>{person.name}</strong>
+        <small>{person.known_for_department || "Person"}{knownFor ? ` - ${knownFor}` : ""}</small>
+      </span>
+    </button>
+  );
+}
+
 function WatchedDateSheet({ action, onChoose, onCancel }) {
   const [picking, setPicking] = useState(false);
   const [pickedDate, setPickedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState("");
   if (!action) return null;
   const chooseDate = (mode) => {
+    setError("");
     if (mode === "pick") {
       setPicking(true);
       return;
     }
     onChoose(mode);
+  };
+  const submitPicked = () => {
+    if (pickedDate > new Date().toISOString().slice(0, 10)) {
+      setError("You can't mark something watched in the future.");
+      return;
+    }
+    onChoose("picked", pickedDate);
   };
 
   return (
@@ -555,8 +587,9 @@ function WatchedDateSheet({ action, onChoose, onCancel }) {
         <p>{action.message || `When did you watch ${titleOf(action.item)}?`}</p>
         {picking ? (
           <div className="mg2-date-picker">
-            <input type="date" value={pickedDate} onChange={(event) => setPickedDate(event.target.value)} />
-            <button type="button" onClick={() => onChoose("picked", pickedDate)}>Save date</button>
+            <input type="date" max={new Date().toISOString().slice(0, 10)} value={pickedDate} onChange={(event) => { setPickedDate(event.target.value); setError(""); }} />
+            {error && <em>{error}</em>}
+            <button type="button" onClick={submitPicked}>Save date</button>
             <button type="button" onClick={() => setPicking(false)}>Back</button>
           </div>
         ) : (
@@ -590,6 +623,149 @@ function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, 
         <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
         <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
         <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
+      </section>
+    </div>
+  );
+}
+
+function ReviewSheet({ item, initialReview = "", onSave, onDelete, onClose }) {
+  const [text, setText] = useState(initialReview || "");
+  if (!item) return null;
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg2-watch-sheet mg2-review-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>{initialReview ? "Edit Review" : "Write Review"}</h3>
+        <p>{titleOf(item)}</p>
+        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="What did you think?" />
+        <div className="mg2-sheet-actions">
+          <button type="button" onClick={() => onSave(item, text)}>Save Review</button>
+          {initialReview && <button type="button" onClick={() => onDelete(item)}>Delete Review</button>}
+          <button type="button" onClick={onClose}>Cancel</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) {
+  const [name, setName] = useState("");
+  if (!item) return null;
+  const listEntries = Object.values(lists);
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg2-watch-sheet mg2-list-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>Add to List</h3>
+        <p>{titleOf(item)}</p>
+        <div className="mg2-list-create">
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New list name" />
+          <button type="button" onClick={() => {
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            onCreate(trimmed, item);
+            setName("");
+          }}>Create</button>
+        </div>
+        <div className="mg2-custom-list-options">
+          {listEntries.map((list) => {
+            const contains = (list.items || []).some((entry) => itemMatches(entry, item));
+            return <button key={list.id} type="button" onClick={() => onToggleItem(list.id, item)}>{contains ? "✓" : "+"} {list.title}<small>{(list.items || []).length} titles</small></button>;
+          })}
+          {listEntries.length === 0 && <em>No custom lists yet. Create one above.</em>}
+        </div>
+        <button type="button" onClick={onClose}>Done</button>
+      </section>
+    </div>
+  );
+}
+
+function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ratings = {}, reviews = {}, onClose, onOpen }) {
+  const [details, setDetails] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [filmFilter, setFilmFilter] = useState("all");
+  const [historyFilter, setHistoryFilter] = useState("all");
+  useEffect(() => {
+    async function loadPerson() {
+      if (!person?.id || !apiFetch) return;
+      setLoading(true);
+      try {
+        const data = await apiFetch(`/person/${person.id}`, { append_to_response: "combined_credits" });
+        setDetails(data);
+      } catch {
+        setDetails(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPerson();
+  }, [apiFetch, person?.id]);
+  if (!person) return null;
+  const shown = details || person;
+  const credits = dedupe(normalize((shown.combined_credits?.cast || []).filter((item) => ["movie", "tv"].includes(item.media_type || mediaType(item)))))
+    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+  const filterCredits = (items, filter) => items.filter((credit) => filter === "all" || mediaType(credit) === filter);
+  const filteredCredits = filterCredits(credits, filmFilter);
+  const history = filterCredits(credits.filter((credit) => (
+    hasStoredItem(credit, watched) ||
+    hasStoredItem(credit, watchlist) ||
+    Boolean(ratingForItem(credit, ratings)) ||
+    Boolean(reviews[keyOf(credit)]?.text)
+  )), historyFilter);
+  const bio = shown.biography || "Biography unavailable.";
+  const longBio = bio.length > 260;
+  const birthday = shown.birthday ? new Date(shown.birthday) : null;
+  const age = birthday ? Math.max(0, Math.floor((Date.now() - birthday.getTime()) / 31557600000)) : null;
+  const bornLabel = birthday ? birthday.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "";
+  const heroPortrait = shown.profile_path ? posterUrl(shown.profile_path, "w780") : "";
+  const filterTabs = [
+    { id: "all", label: "All" },
+    { id: "movie", label: "Movies" },
+    { id: "tv", label: "TV" }
+  ];
+  return (
+    <div className="mg2-modal-backdrop" onMouseDown={onClose}>
+      <section className="mg2-modal mg2-person-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <button className="mg2-back" type="button" onClick={onClose}><Icon name="back" /> Back</button>
+        {loading ? <div className="mg2-detail-skeleton"><div /><span /><span /><i /></div> : (
+          <>
+            <div className="mg2-person-hero">
+              {heroPortrait && <img className="mg2-person-hero-bg" src={heroPortrait} alt="" aria-hidden="true" />}
+              <img className="mg2-person-portrait" src={posterUrl(shown.profile_path, "w342")} alt={shown.name} onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+              <div>
+                <span>{shown.known_for_department || "Acting"}</span>
+                <h2>{shown.name}</h2>
+                {bornLabel && <p>Born {bornLabel}</p>}
+                {age !== null && <p>Age {age}</p>}
+                {shown.place_of_birth && <p>{shown.place_of_birth}</p>}
+              </div>
+            </div>
+            <section className="mg2-detail-panel">
+              <h3>Biography</h3>
+              <p className="mg2-overview">{longBio && !expanded ? `${bio.slice(0, 260).trim()}...` : bio}</p>
+              {longBio && <button className="mg2-read-more" type="button" onClick={() => setExpanded((value) => !value)}>{expanded ? "Show less" : "Read more"}</button>}
+            </section>
+            <section className="mg2-person-columns">
+              <div className="mg2-person-column">
+                <div className="mg2-detail-panel-head"><h3>From Your History</h3><span>{history.length}</span></div>
+                <div className="mg2-person-filters">{filterTabs.map((tab) => <button key={tab.id} className={historyFilter === tab.id ? "active" : ""} type="button" onClick={() => setHistoryFilter(tab.id)}>{tab.label}</button>)}</div>
+                {history.length ? (
+                  <div className="mg2-person-film-grid history">
+                    {history.slice(0, 16).map((credit) => <PosterCard key={keyOf(credit)} item={credit} onOpen={onOpen} saved={hasStoredItem(credit, watchlist)} watched={hasStoredItem(credit, watched)} rating={ratingForItem(credit, ratings)} compact />)}
+                  </div>
+                ) : <div className="mg2-empty">No local history with this actor yet.</div>}
+              </div>
+              <div className="mg2-person-column">
+                <div className="mg2-detail-panel-head"><h3>Filmography</h3><span>{filteredCredits.length}</span></div>
+                <div className="mg2-person-filters">{filterTabs.map((tab) => <button key={tab.id} className={filmFilter === tab.id ? "active" : ""} type="button" onClick={() => setFilmFilter(tab.id)}>{tab.label}</button>)}</div>
+                <div className="mg2-person-film-grid">
+                  {filteredCredits.slice(0, 40).map((credit) => <PosterCard key={keyOf(credit)} item={credit} onOpen={onOpen} saved={hasStoredItem(credit, watchlist)} watched={hasStoredItem(credit, watched)} rating={ratingForItem(credit, ratings)} compact />)}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
       </section>
     </div>
   );
@@ -695,18 +871,18 @@ function CollectionRow({ collections, onOpen }) {
   );
 }
 
-function ActorRow({ actors, loading }) {
+function ActorRow({ actors, loading, onOpenPerson }) {
   return (
     <section className="mg2-section mg2-explore-section">
       <div className="mg2-section-head"><h2>Popular People</h2><span>People</span></div>
       {loading ? <SkeletonRow /> : (
         <div className="mg2-actor-row">
           {actors.map((actor) => (
-            <article className="mg2-actor-card" key={actor.id}>
+            <button className="mg2-actor-card" key={actor.id} type="button" onClick={() => onOpenPerson(actor)}>
               <img src={posterUrl(actor.profile_path, "w185")} alt={actor.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
               <strong>{actor.name}</strong>
               <span>{actor.known_for_department || "Acting"}</span>
-            </article>
+            </button>
           ))}
         </div>
       )}
@@ -714,23 +890,52 @@ function ActorRow({ actors, loading }) {
   );
 }
 
+function CastActorCard({ person, type, character, onOpenPerson }) {
+  const startX = useRef(0);
+  const moved = useRef(false);
+  return (
+    <button
+      className="mg2-cast-card"
+      type="button"
+      onPointerDown={(event) => { startX.current = event.clientX; moved.current = false; }}
+      onPointerMove={(event) => { if (Math.abs(event.clientX - startX.current) > 10) moved.current = true; }}
+      onClick={(event) => {
+        if (moved.current) {
+          event.preventDefault();
+          return;
+        }
+        onOpenPerson(person);
+      }}
+    >
+      <i>
+        <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+        {type === "tv" && person.total_episode_count ? <em>{person.total_episode_count} eps.</em> : null}
+      </i>
+      <strong>{person.name}</strong>
+      <span>{character}</span>
+    </button>
+  );
+}
+
 function ContinueWatchingRow({ items, onOpen }) {
-  const rowItems = items.length > 0 ? items : [fallbackRows.movies[0], fallbackRows.trending[1], fallbackRows.trending[2], fallbackRows.series[0]];
+  const rowItems = items.filter((item) => mediaType(item) === "tv").slice(0, 8);
 
   return (
     <section className="mg2-section">
       <div className="mg2-section-head"><h2>Continue Watching</h2><span>See All</span></div>
-      <div className="mg2-continue-row">
-        {rowItems.map((item, index) => (
-          <button key={`${keyOf(item)}-${index}`} type="button" onClick={() => onOpen(item)}>
-            <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-            <span><Icon name="play" /></span>
-            <strong>{titleOf(item)}</strong>
-            <small>{index === 0 ? "1h 24m left" : index === 1 ? "45m left" : "S3 E7 - 32m left"}</small>
-            <i style={{ width: `${72 - index * 12}%` }} />
-          </button>
-        ))}
-      </div>
+      {rowItems.length ? (
+        <div className="mg2-continue-row">
+          {rowItems.map((item, index) => (
+            <button key={`${keyOf(item)}-${index}`} type="button" onClick={() => onOpen(item)}>
+              <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+              <span><Icon name="play" /></span>
+              <strong>Continue {titleOf(item)}</strong>
+              <small>Open Details for your next episode</small>
+              <i style={{ width: `${72 - index * 10}%` }} />
+            </button>
+          ))}
+        </div>
+      ) : <div className="mg2-empty">Start tracking TV episodes to build Continue Watching.</div>}
     </section>
   );
 }
@@ -797,7 +1002,14 @@ function SocialHomeFeed({ likedFeed, toggleFeedLike }) {
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
+function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
+  const [searchFilter, setSearchFilter] = useState("all");
+  const visibleResults = results.filter((item) => (
+    searchFilter === "all" ||
+    (searchFilter === "movie" && item.media_type === "movie") ||
+    (searchFilter === "tv" && item.media_type === "tv") ||
+    (searchFilter === "person" && item.media_type === "person")
+  ));
   return (
     <section className="mg2-search-panel">
       <div className="mg2-search">
@@ -807,10 +1019,21 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
       </div>
       {query.trim() && (
         <>
+          <div className="mg2-search-filters" aria-label="Search result filters">
+            {[
+              { id: "all", label: "All" },
+              { id: "movie", label: "Movies" },
+              { id: "tv", label: "TV Shows" },
+              { id: "person", label: "People" }
+            ].map((filter) => (
+              <button key={filter.id} className={searchFilter === filter.id ? "active" : ""} type="button" onClick={() => setSearchFilter(filter.id)}>{filter.label}</button>
+            ))}
+          </div>
           <div className="mg2-section-head"><h2>Search Results</h2><span>Page {page} / {totalPages}</span></div>
-          {!loading && results.length === 0 && <div className="mg2-empty">No matches yet. Try another title.</div>}
+          {!loading && visibleResults.length === 0 && <div className="mg2-empty">No matches yet. Try another title or filter.</div>}
           <div className="mg2-grid">
-            {results.map((item) => {
+            {visibleResults.map((item) => {
+              if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
               const userRating = ratingForItem(item, ratings);
               return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
             })}
@@ -857,12 +1080,12 @@ function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, f
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -890,7 +1113,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
       ))}
       <GenreRow genres={genreSeeds} />
       <CollectionRow collections={collectionSeeds} onOpen={onOpen} />
-      <ActorRow actors={actors} loading={actorsLoading} />
+      <ActorRow actors={actors} loading={actorsLoading} onOpenPerson={onOpenPerson} />
     </>
   );
 }
@@ -994,7 +1217,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, onOpen, onWatchlist }
   );
 }
 
-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, onOpen, onOpenDiary }) {
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, onOpen, onOpenDiary }) {
   const [logTab, setLogTab] = useState("watchlist");
   const [logQuery, setLogQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -1002,10 +1225,9 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
   const saved = Object.values(watchlist);
   const watchedItems = Object.values(watched);
   const favoriteItems = Object.values(favorites);
-  const listCards = [
-    { id: "weekend", title: "Weekend Watch Party", subtitle: "Big-screen crowd pleasers", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) },
-    { id: "comfort", title: "Comfort Rewatches", subtitle: "Reliable late-night picks", items: dedupe([...(rows.series || []), ...fallbackRows.series]).slice(0, 3) },
-    { id: "prestige", title: "Prestige Queue", subtitle: "Awards, drama, long conversations", items: dedupe([...(rows.movies || []), ...fallbackRows.movies]).slice(0, 3) }
+  const userListCards = Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [] }));
+  const listCards = userListCards.length ? userListCards : [
+    { id: "weekend", title: "Weekend Watch Party", subtitle: "Create your own lists from Details", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) }
   ];
   const logTabs = [
     { id: "watchlist", label: "Watchlist" },
@@ -1096,7 +1318,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   const filtered = watchedItems.filter((item) => {
     const typeMatch = typeFilter === "all" || mediaType(item) === typeFilter;
     const ratingMatch = ratingFilter === "all" || (item.rating || 0) >= Number(ratingFilter);
-    const monthMatch = !monthFilter || (item.watchedAt || "").startsWith(monthFilter);
+    const monthMatch = !monthFilter || !item.watchedAt || (item.watchedAt || "").startsWith(monthFilter);
     return typeMatch && ratingMatch && monthMatch;
   });
   const monthDate = new Date(`${monthFilter || currentMonth}-01T00:00:00`);
@@ -1113,7 +1335,14 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
     })
   ];
   const grouped = filtered.reduce((acc, item) => {
-    const key = item.watchedAt ? new Date(item.watchedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Date not saved";
+    let key = "Unknown date";
+    if (item.watchedAt) {
+      const date = new Date(item.watchedAt);
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const todayStart = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+      const diff = Math.round((todayStart - start) / 86400000);
+      key = diff === 0 ? "Today" : diff === 1 ? "Yesterday" : "Earlier";
+    }
     acc[key] = acc[key] || [];
     acc[key].push(item);
     return acc;
@@ -1121,7 +1350,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const dateBadge = (dateString) => {
-    if (!dateString) return "Saved";
+    if (!dateString) return "Unknown";
     const date = new Date(dateString);
     const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const diff = Math.round((startOfToday - start) / 86400000);
@@ -1277,7 +1506,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
                   <span>
                     <strong>{titleOf(item)}</strong>
                     <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {item.rating ? formatUserRating(item.rating) : item.vote_average ? `${item.vote_average.toFixed(1)} TMDB` : "Not rated"}</small>
-                    <em>{item.watchedAt ? new Date(item.watchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Watched date saved locally"}</em>
+                    <em>{item.watchedAt ? new Date(item.watchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Unknown watched date"}</em>
                   </span>
                   <b>{item.rating ? formatUserRating(item.rating) : "Diary"}</b>
                 </button>
@@ -1291,7 +1520,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites = {}, savedBlendLists = {}, loading, onOpen, onOpenBlend, onOpenStats, onOpenDiary }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, onOpen, onOpenBlend, onOpenStats, onOpenDiary }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -1299,15 +1528,17 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
   const watchedItems = Object.values(watched);
   const ratedKeys = Object.keys(ratings);
   const likedItems = Object.values(favorites);
-  const localItems = dedupe([...watchedItems, ...saved, ...likedItems]);
+  const reviewedItems = Object.values(reviews || {}).map((entry) => entry.item).filter(Boolean);
+  const localItems = dedupe([...watchedItems, ...saved, ...likedItems, ...reviewedItems]);
   const fallbackItems = [...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.trending];
   const favoriteItems = likedItems;
   const blendListItems = Object.values(savedBlendLists || {});
-  const customLists = [
+  const userLists = Object.values(customLists || {});
+  const profileLists = [
     { id: "watchlist", title: "Watchlist", subtitle: `${saved.length} saved`, items: saved, action: () => { setProfilePanel(null); setSelectedList(null); setProfileTab("watchlist"); } },
     { id: "favorites", title: "Favorites", subtitle: `${favoriteItems.length} favorites`, items: favoriteItems, action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
     ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], action: () => { setSelectedList({ title: "Blend List", subtitle: "Saved from Blend", items: list.items || [] }); setProfilePanel("list-detail"); } })),
-    { id: "custom-weekend", title: "Weekend Watch Party", subtitle: "Custom list", items: dedupe([...saved, ...favoriteItems]).slice(0, 8), action: () => { setSelectedList({ title: "Weekend Watch Party", subtitle: "Custom list", items: dedupe([...saved, ...favoriteItems]).slice(0, 8) }); setProfilePanel("list-detail"); } }
+    ...userLists.map((list) => ({ ...list, subtitle: "Custom list", action: () => { setSelectedList({ title: list.title, subtitle: "Custom list", items: list.items || [] }); setProfilePanel("list-detail"); } }))
   ];
   const recent = (localItems.length ? localItems : fallbackItems).slice(0, 9);
   const reviewItems = ratedKeys
@@ -1316,7 +1547,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
     .slice(0, 9);
   const watchedGrid = (watchedItems.length ? watchedItems : dedupe([...fallbackRows.movies, ...fallbackRows.series])).slice(0, 12);
   const watchlistGrid = (saved.length ? saved : dedupe([...fallbackRows.trending, ...fallbackRows.movies])).slice(0, 12);
-  const reviewTextFor = (item) => item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
+  const reviewTextFor = (item) => reviews[keyOf(item)]?.text || item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
   const realReviewItems = localItems.filter((item) => reviewTextFor(item).trim());
   const statCards = [
     { label: "Watched", value: watchedItems.length || 526 },
@@ -1439,7 +1670,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
 
           {profilePanel === "lists" && (
             <div className="mg2-profile-list-hub">
-              {customLists.map((list) => (
+              {profileLists.map((list) => (
                 <button key={list.id} type="button" onClick={list.action}>
                   <span>{list.items.slice(0, 3).map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}</span>
                   <strong>{list.title}<small>{list.subtitle}</small></strong>
@@ -1960,7 +2191,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenPerson, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -2015,6 +2246,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const seasons = type === "tv" ? [...normalSeasons, ...specials] : [];
   const selectedSeason = seasons.find((season) => season.season_number === selectedSeasonNumber) || seasons[0];
   const episodes = seasonDetails?.episodes || [];
+  const nextEpisode = episodes.find((episode) => !episodeProgress[episodeKey(shown.id, episode.season_number, episode.episode_number)]);
   const overview = shown.overview || "No overview available for this title yet.";
   const overviewLong = overview.length > 220;
   const visibleOverview = overviewLong && !overviewExpanded ? `${overview.slice(0, 220).trim()}...` : overview;
@@ -2126,16 +2358,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
               <div className="mg2-cast-row">
                 {cast.length ? cast.map((person) => {
                   const character = person.roles?.[0]?.character || person.character || person.roles?.map((role) => role.character).filter(Boolean).join(", ") || "Actor";
-                  return (
-                  <article key={`${person.id}-${character}`}>
-                    <i>
-                      <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
-                      {type === "tv" && person.total_episode_count ? <em>{person.total_episode_count} eps.</em> : null}
-                    </i>
-                    <strong>{person.name}</strong>
-                    <span>{character}</span>
-                  </article>
-                  );
+                  return <CastActorCard key={`${person.id}-${character}`} person={person} type={type} character={character} onOpenPerson={onOpenPerson} />;
                 }) : <p>No actor data available.</p>}
               </div>
             </section>
@@ -2162,6 +2385,17 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 </div>
                 {selectedSeason && (
                   <div className="mg2-episode-section">
+                    {nextEpisode ? (
+                      <div className="mg2-next-episode">
+                        <strong>Continue {titleOf(shown)}</strong>
+                        <small>Next: S{nextEpisode.season_number} E{nextEpisode.episode_number} - {nextEpisode.name || "Episode"}</small>
+                      </div>
+                    ) : episodes.length ? (
+                      <div className="mg2-next-episode complete">
+                        <strong>Completed</strong>
+                        <small>All loaded episodes in this season are watched.</small>
+                      </div>
+                    ) : null}
                     <div className="mg2-detail-panel-head">
                       <h3>{selectedSeason.name || `Season ${selectedSeason.season_number}`}</h3>
                       <span>{seasonProgress(selectedSeason).watchedCount}/{seasonProgress(selectedSeason).count || selectedSeason.episode_count || 0} watched</span>
@@ -2248,6 +2482,19 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 </div>
               </section>
             )}
+            <section className="mg2-detail-panel">
+              <div className="mg2-detail-panel-head">
+                <h3>Private Review</h3>
+                <button type="button" onClick={() => onEditReview(shown)}>{review ? "Edit private review" : "Write a private review"}</button>
+              </div>
+              {review ? (
+                <div className="mg2-user-review">
+                  <p>{review}</p>
+                  <button type="button" onClick={() => onDeleteReview(shown)}>Delete Review</button>
+                </div>
+              ) : <p className="mg2-overview">Write a private review. Ratings still work separately.</p>}
+              <button className="mg2-season-toggle" type="button" onClick={() => onOpenListSheet(shown)}>Add to custom list</button>
+            </section>
             {friendReviews.length > 0 && (
               <section className="mg2-detail-panel">
                 <div className="mg2-detail-panel-head">
@@ -2303,7 +2550,9 @@ export default function Home() {
   const [watched, setWatched] = useState({});
   const [episodeProgress, setEpisodeProgress] = useState({});
   const [ratings, setRatings] = useState({});
+  const [reviews, setReviews] = useState({});
   const [favorites, setFavorites] = useState({});
+  const [customLists, setCustomLists] = useState({});
   const [continueWatching, setContinueWatching] = useState([]);
   const [clickSignals, setClickSignals] = useState({});
   const [selected, setSelected] = useState(null);
@@ -2313,6 +2562,9 @@ export default function Home() {
   const [watchProviders, setWatchProviders] = useState(null);
   const [watchedAction, setWatchedAction] = useState(null);
   const [quickActionItem, setQuickActionItem] = useState(null);
+  const [reviewItem, setReviewItem] = useState(null);
+  const [listItem, setListItem] = useState(null);
+  const [selectedPerson, setSelectedPerson] = useState(null);
   const [feedPage, setFeedPage] = useState(2);
   const [likedFeed, setLikedFeed] = useState({});
   const [savedFeed, setSavedFeed] = useState({});
@@ -2370,6 +2622,8 @@ export default function Home() {
     const normalizedRatings = normalizeRatingsCollection(stored("moviegram.ratings", {}));
     setRatings(normalizedRatings);
     persist("moviegram.ratings", normalizedRatings);
+    setReviews(stored("moviegram.reviews", {}));
+    setCustomLists(stored("moviegram.customLists", {}));
     const normalizedFavorites = normalizeTrackingCollection(stored("moviegram.favorites", {}));
     setFavorites(normalizedFavorites);
     persist("moviegram.favorites", normalizedFavorites);
@@ -2476,7 +2730,7 @@ export default function Home() {
     setSearchLoading(true);
     try {
       const data = await apiFetch("/search/multi", { query: debouncedQuery, include_adult: "false", page });
-      const merged = append ? dedupe([...searchResults, ...normalize(data.results)]) : dedupe(normalize(data.results));
+      const merged = append ? dedupe([...searchResults, ...normalizeSearch(data.results)]) : dedupe(normalizeSearch(data.results));
       setSearchResults(sortResults(merged, debouncedQuery));
       setSearchPage(data.page || page);
       setSearchTotalPages(Math.min(data.total_pages || 1, 500));
@@ -2640,6 +2894,10 @@ export default function Home() {
   }, [clickSignals, hiddenRecs, ratings, rows, watched, watchlist]);
 
   function openItem(item) {
+    if (item?.media_type === "person") {
+      setSelectedPerson(item);
+      return;
+    }
     const normalized = { ...item, media_type: mediaType(item) };
     const key = keyOf(normalized);
     const nextSignals = { ...clickSignals, [key]: (clickSignals[key] || 0) + 1 };
@@ -2649,6 +2907,10 @@ export default function Home() {
     setContinueWatching(nextContinue);
     persist("moviegram.clickSignals", nextSignals);
     persist("moviegram.continueWatching", nextContinue);
+  }
+
+  function openPerson(person) {
+    setSelectedPerson({ ...person, media_type: "person" });
   }
 
   function toggleWatchlist(item) {
@@ -2822,6 +3084,7 @@ export default function Home() {
     if (!watchedAction) return;
     const watchedAt = watchedAtForChoice(choice, pickedDate);
     if (watchedAction.type === "season") applySeasonWatched(watchedAction.item, watchedAction.season, watchedAction.showDetails, watchedAt);
+    else if (watchedAction.type === "episode") applyEpisodeWatched(watchedAction.item, watchedAction.episode, watchedAction.season, watchedAction.showDetails, watchedAt);
     else applyWatchedItem(watchedAction.item, watchedAt);
     setWatchedAction(null);
   }
@@ -2829,16 +3092,40 @@ export default function Home() {
   function toggleEpisodeWatched(show, episode, season, showDetails) {
     const normalized = { ...show, media_type: "tv" };
     const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
+    if (!episodeProgress[progressKey]) {
+      setWatchedAction({
+        type: "episode",
+        item: normalized,
+        episode,
+        season,
+        showDetails,
+        title: "Mark episode watched",
+        message: `When did you watch S${episode.season_number} E${episode.episode_number} - ${episode.name || "Episode"}?`
+      });
+      return;
+    }
     const nextEpisodes = { ...episodeProgress };
-    if (nextEpisodes[progressKey]) delete nextEpisodes[progressKey];
-    else nextEpisodes[progressKey] = {
-      key: progressKey,
-      showId: normalized.id,
-      seasonNumber: episode.season_number,
-      episodeNumber: episode.episode_number,
-      watchedAt: new Date().toISOString()
-    };
+    delete nextEpisodes[progressKey];
+    syncEpisodeProgress(normalized, showDetails, nextEpisodes);
+  }
 
+  function applyEpisodeWatched(show, episode, season, showDetails, watchedAt) {
+    const normalized = { ...show, media_type: "tv" };
+    const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
+    const nextEpisodes = {
+      ...episodeProgress,
+      [progressKey]: {
+        key: progressKey,
+        showId: normalized.id,
+        seasonNumber: episode.season_number,
+        episodeNumber: episode.episode_number,
+        watchedAt
+      }
+    };
+    syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt);
+  }
+
+  function syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt) {
     const source = showDetails?.id === normalized.id ? showDetails : details;
     const knownKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => (
       Array.from({ length: seasonItem.episode_count || 0 }, (_, index) => episodeKey(normalized.id, seasonItem.season_number, index + 1))
@@ -2846,7 +3133,7 @@ export default function Home() {
     const nextWatched = normalizeTrackingCollection(watched);
     const allKnownWatched = knownKeys.length > 0 && knownKeys.every((keyName) => Boolean(nextEpisodes[keyName]));
     if (allKnownWatched) {
-      nextWatched[keyOf(normalized)] = watchedPayload(normalized);
+      nextWatched[keyOf(normalized)] = watchedPayload(normalized, watchedAt);
       const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
       setWatchlist(nextWatchlist);
       persist("moviegram.watchlist", nextWatchlist);
@@ -2873,6 +3160,54 @@ export default function Home() {
     else delete next[key];
     setRatings(next);
     persist("moviegram.ratings", next);
+  }
+
+  function reviewForItem(item) {
+    const entry = reviews[keyOf({ ...item, media_type: mediaType(item) })];
+    return entry?.text || "";
+  }
+
+  function saveReview(item, text) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const key = keyOf(normalized);
+    const trimmed = text.trim();
+    const next = { ...reviews };
+    if (trimmed) next[key] = { item: normalized, text: trimmed, reviewedAt: new Date().toISOString() };
+    else delete next[key];
+    setReviews(next);
+    persist("moviegram.reviews", next);
+    setReviewItem(null);
+  }
+
+  function deleteReview(item) {
+    const key = keyOf({ ...item, media_type: mediaType(item) });
+    const next = { ...reviews };
+    delete next[key];
+    setReviews(next);
+    persist("moviegram.reviews", next);
+    setReviewItem(null);
+  }
+
+  function createCustomList(title, item) {
+    const id = `list-${Date.now()}`;
+    const normalized = { ...item, media_type: mediaType(item) };
+    const next = {
+      ...customLists,
+      [id]: { id, title, createdAt: new Date().toISOString(), items: [normalized] }
+    };
+    setCustomLists(next);
+    persist("moviegram.customLists", next);
+  }
+
+  function toggleCustomListItem(listId, item) {
+    const list = customLists[listId];
+    if (!list) return;
+    const normalized = { ...item, media_type: mediaType(item) };
+    const exists = (list.items || []).some((entry) => itemMatches(entry, normalized));
+    const nextItems = exists ? (list.items || []).filter((entry) => !itemMatches(entry, normalized)) : [...(list.items || []), normalized];
+    const next = { ...customLists, [listId]: { ...list, items: nextItems, updatedAt: new Date().toISOString() } };
+    setCustomLists(next);
+    persist("moviegram.customLists", next);
   }
 
   function toggleFavorite(item) {
@@ -2991,7 +3326,7 @@ export default function Home() {
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
@@ -3005,6 +3340,7 @@ export default function Home() {
         actors={popularActors}
         actorsLoading={actorsLoading}
         onOpen={openItem}
+        onOpenPerson={openPerson}
         onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
         watchlist={watchlist}
         watched={watched}
@@ -3013,7 +3349,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} savedBlendLists={savedBlendLists} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} />;
   }
 
   return (
@@ -3041,6 +3377,7 @@ export default function Home() {
           rating={ratingForItem(selected, ratings)}
           onRate={rateItem}
           onOpen={openItem}
+          onOpenPerson={openPerson}
           externalRatings={externalRatings}
           watchProviders={watchProviders}
           favorite={hasStoredItem(selected, favorites)}
@@ -3049,8 +3386,22 @@ export default function Home() {
           episodeProgress={episodeProgress}
           onToggleEpisode={toggleEpisodeWatched}
           onToggleSeason={toggleSeasonWatched}
+          review={reviewForItem(selected)}
+          onEditReview={(item) => setReviewItem({ ...item, media_type: mediaType(item) })}
+          onDeleteReview={deleteReview}
+          onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })}
         />
       )}
+      <PersonProfileModal
+        person={selectedPerson}
+        apiFetch={apiFetch}
+        watched={watched}
+        watchlist={watchlist}
+        ratings={ratings}
+        reviews={reviews}
+        onClose={() => setSelectedPerson(null)}
+        onOpen={(item) => { setSelectedPerson(null); openItem(item); }}
+      />
       <WatchedDateSheet
         action={watchedAction}
         onChoose={applyWatchedAction}
@@ -3066,6 +3417,20 @@ export default function Home() {
         onWatchlist={toggleWatchlist}
         onFavorite={toggleFavorite}
         onOpen={openItem}
+      />
+      <ReviewSheet
+        item={reviewItem}
+        initialReview={reviewItem ? reviewForItem(reviewItem) : ""}
+        onSave={saveReview}
+        onDelete={deleteReview}
+        onClose={() => setReviewItem(null)}
+      />
+      <CustomListSheet
+        item={listItem}
+        lists={customLists}
+        onCreate={createCustomList}
+        onToggleItem={toggleCustomListItem}
+        onClose={() => setListItem(null)}
       />
     </PhoneShell>
   );
