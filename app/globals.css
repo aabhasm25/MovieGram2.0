@@ -428,6 +428,220 @@
   font-weight: 900;
 }
 
+.mg2-read-more {
+  display: inline-flex;
+  margin-top: 8px;
+  border: 0;
+  padding: 0;
+  color: #a78bff;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-cast-row {
+  grid-auto-columns: 96px;
+}
+
+.mg2-cast-row article em {
+  display: block;
+  margin-top: 3px;
+  color: #a78bff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.mg2-season-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 118px;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.mg2-season-row::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-season-row button {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 8px;
+  color: #eef2f8;
+  background: rgba(255,255,255,.045);
+  text-align: left;
+}
+
+.mg2-season-row button.active {
+  border-color: rgba(167,139,255,.34);
+  background: rgba(121,132,255,.14);
+}
+
+.mg2-season-row button.complete {
+  border-color: rgba(255,194,71,.32);
+}
+
+.mg2-season-row img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 9px;
+  object-fit: cover;
+  background: #151a22;
+}
+
+.mg2-season-row strong,
+.mg2-season-row small,
+.mg2-season-row em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-season-row strong {
+  font-size: 12px;
+}
+
+.mg2-season-row small {
+  color: #aeb7c6;
+  font-size: 10px;
+}
+
+.mg2-season-row em {
+  color: #a78bff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.mg2-season-row i {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #111319;
+  background: #ffc247;
+}
+
+.mg2-season-row i svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mg2-episode-section {
+  margin-top: 16px;
+}
+
+.mg2-season-toggle {
+  width: 100%;
+  min-height: 36px;
+  margin: 0 0 12px;
+  border: 1px solid rgba(167, 139, 255, .22);
+  border-radius: 10px;
+  color: #f2edff;
+  background: rgba(121, 132, 255, .12);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-episode-list {
+  display: grid;
+  gap: 9px;
+}
+
+.mg2-episode-list button {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 13px;
+  padding: 8px;
+  color: #fff;
+  background: rgba(255,255,255,.04);
+  text-align: left;
+}
+
+.mg2-episode-list button.watched {
+  border-color: rgba(167,139,255,.28);
+  background: rgba(121,132,255,.12);
+}
+
+.mg2-episode-list img {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: 9px;
+  object-fit: cover;
+  background: #151a22;
+}
+
+.mg2-episode-list span {
+  min-width: 0;
+}
+
+.mg2-episode-list strong,
+.mg2-episode-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-episode-list strong {
+  font-size: 13px;
+}
+
+.mg2-episode-list small {
+  margin-top: 3px;
+  color: #aeb7c6;
+  font-size: 11px;
+}
+
+.mg2-episode-list em {
+  min-width: 38px;
+  display: inline-flex;
+  justify-content: flex-end;
+  color: #a78bff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.mg2-episode-list em svg {
+  width: 16px;
+  height: 16px;
+  color: #ffc247;
+}
+
+.mg2-provider-list a,
+.mg2-provider-list em {
+  min-width: 82px;
+  max-width: 96px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #eef2f8;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+}
+
+.mg2-provider-list a:hover {
+  color: #fff;
+}
+
 @media (max-width: 480px) {
   .mg2-detail-hero {
     min-height: 468px;
@@ -7968,6 +8182,135 @@ body {
   display: none;
 }
 
+.mg2-sheet-backdrop {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .58);
+  backdrop-filter: blur(10px);
+}
+
+.mg2-watch-sheet,
+.mg2-quick-sheet {
+  width: min(100%, 430px);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 22px 22px 18px 18px;
+  padding: 10px 14px 16px;
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(24, 27, 38, .98), rgba(7, 9, 13, .98)),
+    #090b10;
+  box-shadow: 0 -18px 70px rgba(0, 0, 0, .54);
+  animation: mg2-sheet-in .2s ease both;
+}
+
+.mg2-watch-sheet > span,
+.mg2-quick-sheet > span {
+  width: 42px;
+  height: 4px;
+  display: block;
+  margin: 0 auto 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .22);
+}
+
+.mg2-watch-sheet h3,
+.mg2-quick-sheet h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.mg2-watch-sheet p,
+.mg2-quick-title p {
+  margin: 7px 0 14px;
+  color: #aeb7c6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mg2-sheet-actions,
+.mg2-date-picker,
+.mg2-quick-sheet {
+  display: grid;
+  gap: 8px;
+}
+
+.mg2-sheet-actions button,
+.mg2-date-picker button,
+.mg2-quick-sheet > button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 12px;
+  color: #f4f7fb;
+  background: rgba(255, 255, 255, .075);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mg2-sheet-actions button:first-child,
+.mg2-date-picker button:first-of-type {
+  border-color: rgba(167, 139, 255, .28);
+  background: linear-gradient(90deg, rgba(79, 90, 169, .96), rgba(121, 132, 255, .9));
+}
+
+.mg2-date-picker input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+}
+
+.mg2-quick-title {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.mg2-quick-title img {
+  width: 48px;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #151a22;
+}
+
+.mg2-quick-title h3,
+.mg2-quick-title p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-quick-sheet > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.mg2-quick-sheet svg {
+  width: 17px;
+  height: 17px;
+  color: #a78bff;
+}
+
+@keyframes mg2-sheet-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .mg2-back {
   position: sticky;
   z-index: 3;
@@ -8174,9 +8517,10 @@ body {
 .mg2-cast-row {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 92px;
-  gap: 11px;
+  grid-auto-columns: 108px;
+  gap: 12px;
   overflow-x: auto;
+  padding-bottom: 2px;
   scrollbar-width: none;
 }
 
@@ -8188,12 +8532,42 @@ body {
   min-width: 0;
 }
 
+.mg2-cast-row article i {
+  position: relative;
+  display: block;
+  width: 108px;
+  height: 136px;
+  overflow: hidden;
+  border-radius: 12px;
+  background:
+    linear-gradient(145deg, rgba(139, 92, 246, .18), rgba(255, 255, 255, .04)),
+    #151a22;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .28);
+}
+
 .mg2-cast-row img {
-  width: 92px;
-  height: 116px;
-  border-radius: 10px;
+  width: 108px;
+  height: 136px;
+  border-radius: 12px;
   object-fit: cover;
   background: #151a22;
+}
+
+.mg2-cast-row article em {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  max-width: calc(100% - 14px);
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(0, 0, 0, .48);
+  backdrop-filter: blur(10px);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .mg2-cast-row strong,
@@ -8207,7 +8581,7 @@ body {
 .mg2-cast-row strong {
   margin-top: 8px;
   color: #fff;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .mg2-cast-row span {

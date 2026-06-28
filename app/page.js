@@ -259,6 +259,32 @@ function externalRatingCacheKey(item) {
   return `moviegram.externalRatings.${keyOf(item)}`;
 }
 
+function episodeKey(showId, seasonNumber, episodeNumber) {
+  return `tv:${showId}:s${seasonNumber}:e${episodeNumber}`;
+}
+
+function normalSeasonsOf(show = {}) {
+  return (show.seasons || [])
+    .filter((season) => season && season.season_number !== 0 && season.episode_count > 0)
+    .sort((a, b) => a.season_number - b.season_number);
+}
+
+function providerSearchUrl(provider = {}, title = "") {
+  const query = encodeURIComponent(title || "");
+  if (!query) return "";
+  const name = (provider.name || "").toLowerCase();
+  if (name.includes("netflix")) return `https://www.netflix.com/search?q=${query}`;
+  if (name.includes("prime")) return `https://www.primevideo.com/search/ref=atv_nb_sr?phrase=${query}`;
+  if (name.includes("hotstar") || name.includes("disney")) return `https://www.hotstar.com/in/search?q=${query}`;
+  if (name.includes("apple")) return `https://tv.apple.com/search?term=${query}`;
+  if (name.includes("youtube")) return `https://www.youtube.com/results?search_query=${query}`;
+  if (name.includes("google")) return `https://play.google.com/store/search?q=${query}&c=movies`;
+  if (name.includes("zee")) return `https://www.zee5.com/search?q=${query}`;
+  if (name.includes("sony")) return `https://www.sonyliv.com/search/${query}`;
+  if (name.includes("jio")) return `https://www.jiocinema.com/search/${query}`;
+  return "";
+}
+
 function parseOmdbRatings(data) {
   if (!data || data.Response === "False") return [];
   const ratings = [];
@@ -429,16 +455,48 @@ function SkeletonRow() {
   );
 }
 
-function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = false }) {
+function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = false, onQuickActions }) {
+  const longPressTimer = useRef(null);
+  const longPressFired = useRef(false);
   const statusBadges = [
     watched && { key: "watched", icon: <Icon name="check" />, label: "Watched" },
     saved && { key: "watchlisted", icon: <Icon name="bookmark" />, label: "Watchlist" },
     rating && { key: "rated", text: rating, label: `Rated ${rating}` },
     favorite && { key: "favorite", icon: <Icon name="heart" />, label: "Favorite" }
   ].filter(Boolean);
+  const startLongPress = () => {
+    if (!onQuickActions) return;
+    longPressFired.current = false;
+    window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true;
+      onQuickActions(item);
+    }, 520);
+  };
+  const cancelLongPress = () => window.clearTimeout(longPressTimer.current);
+  const handleClick = () => {
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    onOpen(item);
+  };
 
   return (
-    <button className={`mg2-poster ${compact ? "compact" : ""}`} type="button" onClick={() => onOpen(item)}>
+    <button
+      className={`mg2-poster ${compact ? "compact" : ""}`}
+      type="button"
+      onClick={handleClick}
+      onPointerDown={startLongPress}
+      onPointerUp={cancelLongPress}
+      onPointerLeave={cancelLongPress}
+      onPointerCancel={cancelLongPress}
+      onContextMenu={(event) => {
+        if (!onQuickActions) return;
+        event.preventDefault();
+        onQuickActions(item);
+      }}
+    >
       <img
         src={posterUrl(item.poster_path)}
         alt={titleOf(item)}
@@ -462,18 +520,78 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
   );
 }
 
-function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings, favorites = {} }) {
+function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   return (
     <section className="mg2-section">
       <div className="mg2-section-head"><h2>{title}</h2><span>See All</span></div>
       {loading ? <SkeletonRow /> : (
         <div className="mg2-row">
           {items.map((item) => (
-            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} />
+            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function WatchedDateSheet({ action, onChoose, onCancel }) {
+  const [picking, setPicking] = useState(false);
+  const [pickedDate, setPickedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  if (!action) return null;
+  const chooseDate = (mode) => {
+    if (mode === "pick") {
+      setPicking(true);
+      return;
+    }
+    onChoose(mode);
+  };
+
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onCancel}>
+      <section className="mg2-watch-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>{action.title || "Mark watched"}</h3>
+        <p>{action.message || `When did you watch ${titleOf(action.item)}?`}</p>
+        {picking ? (
+          <div className="mg2-date-picker">
+            <input type="date" value={pickedDate} onChange={(event) => setPickedDate(event.target.value)} />
+            <button type="button" onClick={() => onChoose("picked", pickedDate)}>Save date</button>
+            <button type="button" onClick={() => setPicking(false)}>Back</button>
+          </div>
+        ) : (
+          <div className="mg2-sheet-actions">
+            <button type="button" onClick={() => chooseDate("today")}>Today</button>
+            <button type="button" onClick={() => chooseDate("yesterday")}>Yesterday</button>
+            <button type="button" onClick={() => chooseDate("pick")}>Pick date</button>
+            <button type="button" onClick={() => chooseDate("unknown")}>Unknown date</button>
+            <button type="button" onClick={onCancel}>Cancel</button>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, onWatchlist, onFavorite, onOpen }) {
+  if (!item) return null;
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg2-quick-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <div className="mg2-quick-title">
+          <img src={posterUrl(item.poster_path, "w185")} alt="" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+          <div>
+            <h3>{titleOf(item)}</h3>
+            <p>{mediaType(item) === "tv" ? "TV Show" : "Movie"} - {yearOf(item)}</p>
+          </div>
+        </div>
+        <button type="button" onClick={() => { onWatched(item); onClose(); }}><Icon name="check" /> {watched ? "Mark unwatched" : "Mark watched"}</button>
+        <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
+        <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
+        <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
+      </section>
+    </div>
   );
 }
 
@@ -679,7 +797,7 @@ function SocialHomeFeed({ likedFeed, toggleFeedLike }) {
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, watchlist, watched = {}, ratings, favorites = {}, sentinelRef }) {
+function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
   return (
     <section className="mg2-search-panel">
       <div className="mg2-search">
@@ -694,7 +812,7 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
           <div className="mg2-grid">
             {results.map((item) => {
               const userRating = ratingForItem(item, ratings);
-              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
             })}
           </div>
           <div ref={sentinelRef} className="mg2-sentinel" />
@@ -739,12 +857,12 @@ function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, f
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, watched = {}, ratings, favorites = {} }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -755,7 +873,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           <button key={tab.id} className={activeExplore === tab.id ? "active" : ""} type="button" onClick={() => setActiveExplore(tab.id)}>{tab.label}</button>
         ))}
       </div>
-      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       {exploreHubSections.map((section) => (
         <ContentRow
           key={section.id}
@@ -763,6 +881,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           items={exploreRows[section.id] || []}
           loading={exploreLoading}
           onOpen={onOpen}
+          onQuickActions={onQuickActions}
           watchlist={watchlist}
           watched={watched}
           ratings={ratings}
@@ -1355,7 +1474,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, favorites =
                     <span className="mg2-activity-badges">
                       {event.statuses.map((status) => (
                         <i key={status} className={`mg2-activity-badge ${status}`}>
-                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : event.rating ? formatUserRating(event.rating) : "★"}
+                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
                         </i>
                       ))}
                     </span>
@@ -1841,12 +1960,15 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, externalRatings = [], watchProviders, favorite, onFavorite }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason }) {
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
+  const [seasonDetails, setSeasonDetails] = useState(null);
+  const [seasonLoading, setSeasonLoading] = useState(false);
   const shown = details || item;
   const similar = normalize(details?.similar?.results || []).slice(0, 8);
   const recs = normalize(details?.recommendations?.results || []).slice(0, 8);
   const similarContent = dedupe([...similar, ...recs]).slice(0, 12);
-  const cast = details?.credits?.cast?.slice(0, 10) || [];
   const trailer = details?.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
     details?.videos?.results?.find((video) => video.site === "YouTube");
   const type = mediaType(shown);
@@ -1859,6 +1981,14 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     ? details?.release_dates?.results?.find((entry) => entry.iso_3166_1 === "US")?.release_dates?.find((entry) => entry.certification)?.certification
     : details?.content_ratings?.results?.find((entry) => entry.iso_3166_1 === "US")?.rating;
   const genres = details?.genres || [];
+  const actorSource = type === "tv" && details?.aggregate_credits?.cast?.length
+    ? [...details.aggregate_credits.cast].sort((a, b) => (b.total_episode_count || 0) - (a.total_episode_count || 0))
+    : details?.credits?.cast || [];
+  const cast = type === "tv"
+    ? (actorSource.some((person) => Number.isFinite(person.total_episode_count))
+      ? actorSource.filter((person) => (person.total_episode_count || 0) > 3).slice(0, 40)
+      : actorSource.filter((person) => person?.name).slice(0, 40))
+    : actorSource.filter((person) => person?.name).slice(0, 40);
   const userRating = normalizeUserRating(rating);
   const externalRatingMeta = (entry) => {
     if (entry.source === "IMDb") return { className: "imdb", icon: "IMDb", value: String(entry.value || "").replace(/\/10$/, "") };
@@ -1866,6 +1996,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     if (entry.source === "RT Audience") return { className: "popcorn", icon: "🍿", value: entry.value };
     return { className: "meta", icon: entry.source, value: entry.value };
   };
+  const ratingIcon = (entry, meta) => entry.source === "RT Critics" ? "\uD83C\uDF45" : entry.source === "RT Audience" ? "\uD83C\uDF7F" : meta.icon;
   const providerGroups = [
     { id: "stream", label: "Stream", items: watchProviders?.stream || [] },
     { id: "rent", label: "Rent", items: watchProviders?.rent || [] },
@@ -1879,6 +2010,50 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const heroImage = hasBackdrop
     ? backdropUrl(shown.backdrop_path)
     : (shown.poster_path ? posterUrl(shown.poster_path, "w780") : BACKDROP_FALLBACK);
+  const normalSeasons = normalSeasonsOf(details || {});
+  const specials = (details?.seasons || []).filter((season) => season?.season_number === 0 && season.episode_count > 0);
+  const seasons = type === "tv" ? [...normalSeasons, ...specials] : [];
+  const selectedSeason = seasons.find((season) => season.season_number === selectedSeasonNumber) || seasons[0];
+  const episodes = seasonDetails?.episodes || [];
+  const overview = shown.overview || "No overview available for this title yet.";
+  const overviewLong = overview.length > 220;
+  const visibleOverview = overviewLong && !overviewExpanded ? `${overview.slice(0, 220).trim()}...` : overview;
+  const seasonProgress = (season) => {
+    const count = season?.episode_count || 0;
+    const watchedCount = Array.from({ length: count }, (_, index) => index + 1)
+      .filter((episodeNumber) => episodeProgress[episodeKey(shown.id, season.season_number, episodeNumber)])
+      .length;
+    return { watchedCount, count };
+  };
+
+  useEffect(() => {
+    setOverviewExpanded(false);
+    setSeasonDetails(null);
+    if (mediaType(shown) !== "tv") {
+      setSelectedSeasonNumber(null);
+      return;
+    }
+    const normal = normalSeasonsOf(details || {});
+    const fallbackSeason = normal[0] || (details?.seasons || []).find((season) => season?.episode_count > 0);
+    setSelectedSeasonNumber(fallbackSeason?.season_number ?? null);
+  }, [details?.id, shown?.id]);
+
+  useEffect(() => {
+    async function loadSeason() {
+      if (type !== "tv" || selectedSeasonNumber === null || !shown.id || !apiFetch) return;
+      setSeasonLoading(true);
+      setSeasonDetails(null);
+      try {
+        const data = await apiFetch(`/tv/${shown.id}/season/${selectedSeasonNumber}`);
+        setSeasonDetails(data);
+      } catch {
+        setSeasonDetails(null);
+      } finally {
+        setSeasonLoading(false);
+      }
+    }
+    loadSeason();
+  }, [apiFetch, selectedSeasonNumber, shown.id, type]);
 
   return (
     <div className="mg2-modal-backdrop" onMouseDown={onClose}>
@@ -1920,11 +2095,11 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                   </div>
                   {genres.length > 0 && <div className="mg2-detail-hero-genres">{genres.slice(0, 3).map((genre) => <span key={genre.id}>{genre.name}</span>)}</div>}
                   <div className="mg2-ratings-row">
-                    <span className={`user ${userRating ? "active" : ""}`}><b>★</b>{userRating ? formatUserRating(userRating) : "Rate"}</span>
-                    {shown.vote_average && <span className="tmdb"><b>★</b>{Math.round(shown.vote_average * 10)}%</span>}
+                    <span className={`user ${userRating ? "active" : ""}`}><b>{"\u2605"}</b>{userRating ? formatUserRating(userRating) : "Rate"}</span>
+                    {shown.vote_average && <span className="tmdb"><b>{"\u2605"}</b>{Math.round(shown.vote_average * 10)}%</span>}
                     {externalRatings.map((entry) => {
                       const meta = externalRatingMeta(entry);
-                      return <span key={`${entry.source}-${entry.value}`} className={meta.className}><b>{meta.icon}</b>{meta.value}</span>;
+                      return <span key={`${entry.source}-${entry.value}`} className={meta.className}><b>{ratingIcon(entry, meta)}</b>{meta.value}</span>;
                     })}
                   </div>
                   <RatingControl value={rating} onRate={(next) => onRate(shown, next)} />
@@ -1935,11 +2110,11 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
               <button className={watched ? "active watched" : ""} type="button" onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : "Mark watched"}><Icon name="check" /><span>{watched ? "Watched" : "Watch"}</span></button>
               <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
               <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
-              {trailer && <a href={`https://www.youtube.com/watch?v=${trailer.key}`} target="_blank" rel="noreferrer" aria-label="Open trailer"><Icon name="play" /><span>Trailer</span></a>}
             </div>
             <section className="mg2-detail-panel">
               <h3>Overview</h3>
-              <p className="mg2-overview">{shown.overview || "No overview available for this title yet."}</p>
+              <p className="mg2-overview">{visibleOverview}</p>
+              {overviewLong && <button className="mg2-read-more" type="button" onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? "Show less" : "Read more"}</button>}
               <div className="mg2-genre-list">
                 {genres.length ? genres.map((genre) => <span key={genre.id}>{genre.name}</span>) : <span>Genre unavailable</span>}
               </div>
@@ -1947,35 +2122,94 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
             <section className="mg2-detail-panel">
               <div className="mg2-detail-panel-head">
                 <h3>Actors</h3>
-                <span>{cast.length ? `${cast.length} featured` : "Unavailable"}</span>
               </div>
               <div className="mg2-cast-row">
-                {cast.length ? cast.map((person) => (
-                  <article key={`${person.id}-${person.character}`}>
-                    <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                {cast.length ? cast.map((person) => {
+                  const character = person.roles?.[0]?.character || person.character || person.roles?.map((role) => role.character).filter(Boolean).join(", ") || "Actor";
+                  return (
+                  <article key={`${person.id}-${character}`}>
+                    <i>
+                      <img src={posterUrl(person.profile_path, "w185")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                      {type === "tv" && person.total_episode_count ? <em>{person.total_episode_count} eps.</em> : null}
+                    </i>
                     <strong>{person.name}</strong>
-                    <span>{person.character || person.job || "Actor"}</span>
+                    <span>{character}</span>
                   </article>
-                )) : <p>No actor data available.</p>}
+                  );
+                }) : <p>No actor data available.</p>}
               </div>
             </section>
+            {type === "tv" && seasons.length > 0 && (
+              <section className="mg2-detail-panel">
+                <div className="mg2-detail-panel-head">
+                  <h3>Seasons</h3>
+                  <span>{normalSeasons.length || seasons.length} seasons</span>
+                </div>
+                <div className="mg2-season-row">
+                  {seasons.map((season) => {
+                    const progress = seasonProgress(season);
+                    const complete = progress.count > 0 && progress.watchedCount === progress.count;
+                    return (
+                      <button key={season.id || season.season_number} className={`${selectedSeason?.season_number === season.season_number ? "active" : ""} ${complete ? "complete" : ""}`} type="button" onClick={() => setSelectedSeasonNumber(season.season_number)}>
+                        <img src={posterUrl(season.poster_path || shown.poster_path, "w185")} alt={season.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                        <strong>{season.name || `Season ${season.season_number}`}</strong>
+                        <small>{season.episode_count || 0} eps</small>
+                        <em>{progress.watchedCount}/{progress.count || season.episode_count || 0} watched</em>
+                        {complete && <i><Icon name="check" /></i>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedSeason && (
+                  <div className="mg2-episode-section">
+                    <div className="mg2-detail-panel-head">
+                      <h3>{selectedSeason.name || `Season ${selectedSeason.season_number}`}</h3>
+                      <span>{seasonProgress(selectedSeason).watchedCount}/{seasonProgress(selectedSeason).count || selectedSeason.episode_count || 0} watched</span>
+                    </div>
+                    <button className="mg2-season-toggle" type="button" onClick={() => onToggleSeason(shown, selectedSeason, details)}>
+                      {seasonProgress(selectedSeason).count > 0 && seasonProgress(selectedSeason).watchedCount === seasonProgress(selectedSeason).count ? "Unwatch season" : "Mark season watched"}
+                    </button>
+                    {seasonLoading ? <div className="mg2-empty">Loading episodes...</div> : (
+                      <div className="mg2-episode-list">
+                        {episodes.length ? episodes.map((episode) => {
+                          const isWatched = Boolean(episodeProgress[episodeKey(shown.id, episode.season_number, episode.episode_number)]);
+                          return (
+                            <button key={episode.id || episodeKey(shown.id, episode.season_number, episode.episode_number)} className={isWatched ? "watched" : ""} type="button" onClick={() => onToggleEpisode(shown, episode, selectedSeason, details)}>
+                              <img src={episode.still_path ? `${IMAGE_BASE}/w300${episode.still_path}` : posterUrl(shown.poster_path, "w185")} alt={episode.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                              <span>
+                                <strong>{episode.name || `Episode ${episode.episode_number}`}</strong>
+                                <small>S{episode.season_number} E{episode.episode_number}{episode.runtime ? ` - ${episode.runtime} min` : ""}</small>
+                              </span>
+                              <em>{isWatched ? <Icon name="check" /> : "Watch"}</em>
+                            </button>
+                          );
+                        }) : <div className="mg2-empty">Episode data is unavailable for this season.</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
             {providerGroups.length > 0 && (
               <section className="mg2-detail-panel">
                 <div className="mg2-detail-panel-head">
                   <h3>Where to Watch</h3>
-                  <span>{watchProviders?.region || "IN"}</span>
                 </div>
                 <div className="mg2-provider-list">
                   {providerGroups.map((group) => (
                     <div key={group.id}>
                       <strong>{group.label}</strong>
                       <span>
-                        {group.items.map((provider) => (
-                          <em key={`${group.id}-${provider.id || provider.name}`}>
+                        {group.items.map((provider) => {
+                          const providerLink = providerSearchUrl(provider, titleOf(shown)) || provider.link || watchProviders?.link;
+                          const providerBody = <>
                             {provider.logo_path && <img src={`${IMAGE_BASE}/w92${provider.logo_path}`} alt="" loading="lazy" />}
                             {provider.name}
-                          </em>
-                        ))}
+                          </>;
+                          return providerLink
+                            ? <a key={`${group.id}-${provider.id || provider.name}`} href={providerLink} target="_blank" rel="noreferrer">{providerBody}</a>
+                            : <em key={`${group.id}-${provider.id || provider.name}`}>{providerBody}</em>;
+                        })}
                       </span>
                     </div>
                   ))}
@@ -2067,6 +2301,7 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [watchlist, setWatchlist] = useState({});
   const [watched, setWatched] = useState({});
+  const [episodeProgress, setEpisodeProgress] = useState({});
   const [ratings, setRatings] = useState({});
   const [favorites, setFavorites] = useState({});
   const [continueWatching, setContinueWatching] = useState([]);
@@ -2076,6 +2311,8 @@ export default function Home() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [externalRatings, setExternalRatings] = useState([]);
   const [watchProviders, setWatchProviders] = useState(null);
+  const [watchedAction, setWatchedAction] = useState(null);
+  const [quickActionItem, setQuickActionItem] = useState(null);
   const [feedPage, setFeedPage] = useState(2);
   const [likedFeed, setLikedFeed] = useState({});
   const [savedFeed, setSavedFeed] = useState({});
@@ -2127,6 +2364,7 @@ export default function Home() {
     }, {});
     setWatchlist(exclusiveWatchlist);
     setWatched(normalizedWatched);
+    setEpisodeProgress(stored("moviegram.episodeProgress", {}));
     persist("moviegram.watchlist", exclusiveWatchlist);
     persist("moviegram.watched", normalizedWatched);
     const normalizedRatings = normalizeRatingsCollection(stored("moviegram.ratings", {}));
@@ -2276,7 +2514,7 @@ export default function Home() {
       try {
         const type = mediaType(selected);
         const append = type === "tv"
-          ? "credits,videos,similar,recommendations,external_ids,content_ratings"
+          ? "credits,aggregate_credits,videos,similar,recommendations,external_ids,content_ratings"
           : "credits,videos,similar,recommendations,external_ids,release_dates";
         const data = await apiFetch(`/${type}/${selected.id}`, { append_to_response: append });
         setDetails({ ...data, media_type: type });
@@ -2302,10 +2540,12 @@ export default function Home() {
         const normalizeProviderBucket = (items = []) => items.map((provider) => ({
           id: provider.provider_id,
           name: provider.provider_name,
-          logo_path: provider.logo_path
+          logo_path: provider.logo_path,
+          link: regionData.link || ""
         }));
         setWatchProviders({
           region: "IN",
+          link: regionData.link || "",
           stream: normalizeProviderBucket(regionData.flatrate),
           rent: normalizeProviderBucket(regionData.rent),
           buy: normalizeProviderBucket(regionData.buy)
@@ -2430,17 +2670,26 @@ export default function Home() {
     }
   }
 
-  function toggleWatched(item) {
-    const normalized = { ...item, media_type: mediaType(item) };
-    const key = keyOf(normalized);
-    const normalizedWatched = normalizeTrackingCollection(watched);
-    const nextWatched = { ...normalizedWatched };
-    if (hasStoredItem(normalized, nextWatched)) {
-      const removed = removeMatchingItem(nextWatched, normalized);
-      setWatched(removed);
-      persist("moviegram.watched", removed);
-    } else {
-      nextWatched[key] = {
+  function knownEpisodeKeysForShow(show) {
+    const source = details?.id === show.id && mediaType(show) === "tv" ? details : show;
+    return normalSeasonsOf(source).flatMap((season) => (
+      Array.from({ length: season.episode_count || 0 }, (_, index) => episodeKey(show.id, season.season_number, index + 1))
+    ));
+  }
+
+  function watchedAtForChoice(choice, pickedDate) {
+    if (choice === "unknown") return undefined;
+    if (choice === "yesterday") {
+      const date = new Date();
+      date.setDate(date.getDate() - 1);
+      return date.toISOString();
+    }
+    if (choice === "picked" && pickedDate) return new Date(`${pickedDate}T20:00:00`).toISOString();
+    return new Date().toISOString();
+  }
+
+  function watchedPayload(normalized, watchedAt) {
+    const payload = {
       id: normalized.id,
       media_type: normalized.media_type,
       title: normalized.title,
@@ -2449,15 +2698,171 @@ export default function Home() {
       backdrop_path: normalized.backdrop_path,
       vote_average: normalized.vote_average,
       release_date: normalized.release_date,
-      first_air_date: normalized.first_air_date,
-      watchedAt: new Date().toISOString()
-      };
+      first_air_date: normalized.first_air_date
+    };
+    if (watchedAt) payload.watchedAt = watchedAt;
+    return payload;
+  }
+
+  function toggleWatched(item) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const normalizedWatched = normalizeTrackingCollection(watched);
+    if (hasStoredItem(normalized, normalizedWatched)) {
+      unmarkWatched(normalized);
+      return;
+    }
+    const knownEpisodeKeys = normalized.media_type === "tv" ? knownEpisodeKeysForShow(normalized) : [];
+    const source = details?.id === normalized.id ? details : normalized;
+    const knownEpisodeCount = knownEpisodeKeys.length || normalSeasonsOf(source).reduce((total, season) => total + (season.episode_count || 0), 0) || source.number_of_episodes || 0;
+    setWatchedAction({
+      type: "item",
+      item: normalized,
+      title: normalized.media_type === "tv" ? "Mark show watched" : "Mark watched",
+      message: normalized.media_type === "tv"
+        ? (knownEpisodeCount ? `Mark all ${knownEpisodeCount} episodes of ${titleOf(normalized)} as watched?` : `Mark all available episodes of ${titleOf(normalized)} as watched?`)
+        : `When did you watch ${titleOf(normalized)}?`
+    });
+  }
+
+  function unmarkWatched(item) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const nextWatched = normalizeTrackingCollection(watched);
+    if (hasStoredItem(normalized, nextWatched)) {
+      const removed = removeMatchingItem(nextWatched, normalized);
+      setWatched(removed);
+      persist("moviegram.watched", removed);
+      if (normalized.media_type === "tv") {
+        const keys = knownEpisodeKeysForShow(normalized);
+        if (keys.length) {
+          const nextEpisodes = { ...episodeProgress };
+          keys.forEach((episodeProgressKey) => delete nextEpisodes[episodeProgressKey]);
+          setEpisodeProgress(nextEpisodes);
+          persist("moviegram.episodeProgress", nextEpisodes);
+        }
+      }
+    }
+  }
+
+  function applyWatchedItem(item, watchedAt) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const key = keyOf(normalized);
+    const nextWatched = { ...normalizeTrackingCollection(watched), [key]: watchedPayload(normalized, watchedAt) };
+    const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
+    setWatched(nextWatched);
+    setWatchlist(nextWatchlist);
+    persist("moviegram.watched", nextWatched);
+    persist("moviegram.watchlist", nextWatchlist);
+    if (normalized.media_type === "tv") {
+      const keys = knownEpisodeKeysForShow(normalized);
+      if (keys.length) {
+        const nextEpisodes = { ...episodeProgress };
+        keys.forEach((episodeProgressKey) => {
+          nextEpisodes[episodeProgressKey] = { key: episodeProgressKey, showId: normalized.id, watchedAt };
+        });
+        setEpisodeProgress(nextEpisodes);
+        persist("moviegram.episodeProgress", nextEpisodes);
+      }
+    }
+  }
+
+  function seasonEpisodeKeys(show, season) {
+    return Array.from({ length: season?.episode_count || 0 }, (_, index) => episodeKey(show.id, season.season_number, index + 1));
+  }
+
+  function toggleSeasonWatched(show, season, showDetails) {
+    const normalized = { ...show, media_type: "tv" };
+    const keys = seasonEpisodeKeys(normalized, season);
+    const complete = keys.length > 0 && keys.every((keyName) => episodeProgress[keyName]);
+    if (complete) {
+      const nextEpisodes = { ...episodeProgress };
+      keys.forEach((keyName) => delete nextEpisodes[keyName]);
+      const source = showDetails?.id === normalized.id ? showDetails : details;
+      const allNormalKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => seasonEpisodeKeys(normalized, seasonItem));
+      const nextWatched = removeMatchingItem(normalizeTrackingCollection(watched), normalized);
+      setEpisodeProgress(nextEpisodes);
+      persist("moviegram.episodeProgress", nextEpisodes);
+      if (!allNormalKeys.every((keyName) => nextEpisodes[keyName])) {
+        setWatched(nextWatched);
+        persist("moviegram.watched", nextWatched);
+      }
+      return;
+    }
+    setWatchedAction({
+      type: "season",
+      item: normalized,
+      season,
+      showDetails,
+      title: "Mark season watched",
+      message: `Mark all ${season.episode_count || keys.length || "available"} episodes of ${season.name || `Season ${season.season_number}`} as watched?`
+    });
+  }
+
+  function applySeasonWatched(show, season, showDetails, watchedAt) {
+    const normalized = { ...show, media_type: "tv" };
+    const keys = seasonEpisodeKeys(normalized, season);
+    const nextEpisodes = { ...episodeProgress };
+    keys.forEach((keyName) => {
+      nextEpisodes[keyName] = { key: keyName, showId: normalized.id, seasonNumber: season.season_number, watchedAt };
+    });
+    const source = showDetails?.id === normalized.id ? showDetails : details;
+    const allNormalKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => seasonEpisodeKeys(normalized, seasonItem));
+    if (allNormalKeys.length > 0 && allNormalKeys.every((keyName) => nextEpisodes[keyName])) {
+      const nextWatched = { ...normalizeTrackingCollection(watched), [keyOf(normalized)]: watchedPayload(normalized, watchedAt) };
       const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
       setWatched(nextWatched);
       setWatchlist(nextWatchlist);
       persist("moviegram.watched", nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
     }
+    setEpisodeProgress(nextEpisodes);
+    persist("moviegram.episodeProgress", nextEpisodes);
+  }
+
+  function applyWatchedAction(choice, pickedDate) {
+    if (!watchedAction) return;
+    const watchedAt = watchedAtForChoice(choice, pickedDate);
+    if (watchedAction.type === "season") applySeasonWatched(watchedAction.item, watchedAction.season, watchedAction.showDetails, watchedAt);
+    else applyWatchedItem(watchedAction.item, watchedAt);
+    setWatchedAction(null);
+  }
+
+  function toggleEpisodeWatched(show, episode, season, showDetails) {
+    const normalized = { ...show, media_type: "tv" };
+    const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
+    const nextEpisodes = { ...episodeProgress };
+    if (nextEpisodes[progressKey]) delete nextEpisodes[progressKey];
+    else nextEpisodes[progressKey] = {
+      key: progressKey,
+      showId: normalized.id,
+      seasonNumber: episode.season_number,
+      episodeNumber: episode.episode_number,
+      watchedAt: new Date().toISOString()
+    };
+
+    const source = showDetails?.id === normalized.id ? showDetails : details;
+    const knownKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => (
+      Array.from({ length: seasonItem.episode_count || 0 }, (_, index) => episodeKey(normalized.id, seasonItem.season_number, index + 1))
+    ));
+    const nextWatched = normalizeTrackingCollection(watched);
+    const allKnownWatched = knownKeys.length > 0 && knownKeys.every((keyName) => Boolean(nextEpisodes[keyName]));
+    if (allKnownWatched) {
+      nextWatched[keyOf(normalized)] = watchedPayload(normalized);
+      const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
+      setWatchlist(nextWatchlist);
+      persist("moviegram.watchlist", nextWatchlist);
+    } else {
+      const cleaned = removeMatchingItem(nextWatched, normalized);
+      setWatched(cleaned);
+      persist("moviegram.watched", cleaned);
+      setEpisodeProgress(nextEpisodes);
+      persist("moviegram.episodeProgress", nextEpisodes);
+      return;
+    }
+
+    setWatched(nextWatched);
+    setEpisodeProgress(nextEpisodes);
+    persist("moviegram.watched", nextWatched);
+    persist("moviegram.episodeProgress", nextEpisodes);
   }
 
   function rateItem(item, value) {
@@ -2600,6 +3005,7 @@ export default function Home() {
         actors={popularActors}
         actorsLoading={actorsLoading}
         onOpen={openItem}
+        onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
         watchlist={watchlist}
         watched={watched}
         ratings={ratings}
@@ -2639,8 +3045,29 @@ export default function Home() {
           watchProviders={watchProviders}
           favorite={hasStoredItem(selected, favorites)}
           onFavorite={toggleFavorite}
+          apiFetch={apiFetch}
+          episodeProgress={episodeProgress}
+          onToggleEpisode={toggleEpisodeWatched}
+          onToggleSeason={toggleSeasonWatched}
         />
       )}
+      <WatchedDateSheet
+        action={watchedAction}
+        onChoose={applyWatchedAction}
+        onCancel={() => setWatchedAction(null)}
+      />
+      <QuickActionSheet
+        item={quickActionItem}
+        saved={quickActionItem ? hasStoredItem(quickActionItem, watchlist) : false}
+        watched={quickActionItem ? hasStoredItem(quickActionItem, watched) : false}
+        favorite={quickActionItem ? hasStoredItem(quickActionItem, favorites) : false}
+        onClose={() => setQuickActionItem(null)}
+        onWatched={toggleWatched}
+        onWatchlist={toggleWatchlist}
+        onFavorite={toggleFavorite}
+        onOpen={openItem}
+      />
     </PhoneShell>
   );
 }
+
