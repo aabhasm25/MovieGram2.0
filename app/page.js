@@ -492,6 +492,105 @@ function persistOwnedLocalState(owner, state = {}, { writeLegacy = false } = {})
   });
 }
 
+function sanitizeUsername(value = "") {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_.]/g, "")
+    .replace(/^[._]+|[._]+$/g, "")
+    .slice(0, 24);
+}
+
+function defaultProfileForUser(user = null) {
+  const emailPrefix = user?.email?.split("@")[0] || "moviegram";
+  const username = sanitizeUsername(emailPrefix) || "moviegram";
+  return {
+    id: user?.id || "guest",
+    email: user?.email || "",
+    username,
+    display_name: user?.user_metadata?.display_name || username,
+    bio: "Movies, TV shows and everything in between.",
+    avatar_url: "",
+    updated_at: new Date().toISOString()
+  };
+}
+
+function validateProfileIdentity(profile = {}) {
+  const username = sanitizeUsername(profile.username);
+  if (!username) return { error: "Username is required." };
+  if (username.length < 3 || username.length > 24) return { error: "Username must be 3-24 characters." };
+  if (!/^[a-z0-9_.]+$/.test(username)) return { error: "Use only lowercase letters, numbers, underscore, or dot." };
+  return {
+    value: {
+      username,
+      display_name: (profile.display_name || username).trim().slice(0, 48),
+      bio: (profile.bio || "").trim().slice(0, 180),
+      avatar_url: (profile.avatar_url || "").trim()
+    }
+  };
+}
+
+function guestProfileKey() {
+  return "moviegram.guest.profile";
+}
+
+function readGuestProfile() {
+  return { ...defaultProfileForUser(null), ...stored(guestProfileKey(), {}) };
+}
+
+function persistGuestProfile(profile) {
+  persist(guestProfileKey(), { ...readGuestProfile(), ...profile, updated_at: new Date().toISOString() });
+}
+
+async function loadOrCreateSupabaseProfile(user) {
+  if (!supabase || !user?.id) return defaultProfileForUser(user);
+  const defaults = defaultProfileForUser(user);
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error) throw error;
+  if (data) return { ...defaults, ...data, email: data.email || user.email || defaults.email };
+
+  const insertProfile = {
+    id: user.id,
+    email: user.email,
+    username: defaults.username,
+    display_name: defaults.display_name,
+    bio: defaults.bio,
+    avatar_url: defaults.avatar_url,
+    updated_at: new Date().toISOString()
+  };
+  const { data: created, error: createError } = await supabase
+    .from("profiles")
+    .upsert(insertProfile, { onConflict: "id" })
+    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .single();
+  if (createError) throw createError;
+  return { ...defaults, ...created };
+}
+
+async function saveSupabaseProfile(user, profile) {
+  if (!supabase || !user?.id) throw new Error("Sign in to sync profile changes.");
+  const validation = validateProfileIdentity(profile);
+  if (validation.error) throw new Error(validation.error);
+  const payload = {
+    id: user.id,
+    email: user.email,
+    ...validation.value,
+    updated_at: new Date().toISOString()
+  };
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert(payload, { onConflict: "id" })
+    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .single();
+  if (error) throw error;
+  return { ...defaultProfileForUser(user), ...data };
+}
+
 function Icon({ name }) {
   const paths = {
     home: "M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z",
@@ -1681,10 +1780,17 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, authLoading, syncStatus, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, profile, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onSaveProfile }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileDraft, setProfileDraft] = useState(() => profile || defaultProfileForUser(user));
+  const [profileError, setProfileError] = useState("");
+  useEffect(() => {
+    setProfileDraft(profile || defaultProfileForUser(user));
+    setProfileError("");
+  }, [profile, user?.id]);
   const saved = Object.values(watchlist);
   const watchedItems = Object.values(watched);
   const ratedKeys = Object.keys(ratings);
@@ -1723,11 +1829,13 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { label: "Stats", icon: "chart", action: onOpenStats },
     { label: "Diary", icon: "book", action: onOpenDiary }
   ];
-  const displayName = user?.user_metadata?.display_name || user?.email?.split("@")[0] || "Aabhas";
-  const handle = user?.email ? `@${user.email.split("@")[0]}` : "@aabhas_07";
-  const accountTitle = user?.email || (authLoading ? "Checking account" : "Guest mode");
+  const shownProfile = profile || profileDraft || defaultProfileForUser(user);
+  const displayName = shownProfile.display_name || shownProfile.username || user?.email?.split("@")[0] || "Aabhas";
+  const handle = `@${shownProfile.username || "aabhas_07"}`;
+  const bio = shownProfile.bio || "Movies, TV shows and everything in between.";
+  const accountTitle = user ? "Synced account" : (authLoading ? "Checking account" : "Guest mode");
   const accountSubtitle = user
-    ? (syncStatus === "syncing" ? "Syncing account" : "Synced account")
+    ? `${user.email || "Signed in"}${syncStatus === "syncing" ? " - syncing" : ""}`
     : authLoading
       ? "Restoring Supabase session"
       : "Local only - login to sync";
@@ -1781,18 +1889,59 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .slice(0, 12);
   const gridItems = profileTab === "activity" ? recent : profileTab === "watched" ? watchedGrid : watchlistGrid;
+  const submitProfile = async () => {
+    const validation = validateProfileIdentity(profileDraft);
+    if (validation.error) {
+      setProfileError(validation.error);
+      return;
+    }
+    const result = await onSaveProfile({ ...profileDraft, ...validation.value });
+    if (result?.error) {
+      setProfileError(result.error);
+      return;
+    }
+    setEditingProfile(false);
+    setProfileError("");
+  };
 
   return (
     <section className="mg2-profile">
       <div className="mg2-profile-head">
-        <Avatar friend={friends[0]} />
+        {shownProfile.avatar_url ? (
+          <img className="mg2-profile-avatar-img" src={shownProfile.avatar_url} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+        ) : <Avatar friend={friends[0]} />}
         <div className="mg2-profile-id">
           <h2>{displayName}</h2>
           <p>{handle}</p>
-          <span className="mg2-profile-bio">Movies, TV shows and everything in between. Coffee &gt; People</span>
+          <span className="mg2-profile-bio">{bio}</span>
         </div>
       </div>
-      <button className="mg2-profile-edit" type="button">Edit Profile</button>
+      <button className="mg2-profile-edit" type="button" onClick={() => setEditingProfile(true)}>Edit Profile</button>
+      {editingProfile && (
+        <div className="mg2-profile-editor">
+          <label>
+            <span>Display name</span>
+            <input value={profileDraft.display_name || ""} onChange={(event) => setProfileDraft((prev) => ({ ...prev, display_name: event.target.value }))} maxLength={48} />
+          </label>
+          <label>
+            <span>Username</span>
+            <input value={profileDraft.username || ""} onChange={(event) => setProfileDraft((prev) => ({ ...prev, username: sanitizeUsername(event.target.value) }))} maxLength={24} />
+          </label>
+          <label>
+            <span>Bio</span>
+            <textarea value={profileDraft.bio || ""} onChange={(event) => setProfileDraft((prev) => ({ ...prev, bio: event.target.value }))} maxLength={180} />
+          </label>
+          <label>
+            <span>Avatar URL</span>
+            <input value={profileDraft.avatar_url || ""} onChange={(event) => setProfileDraft((prev) => ({ ...prev, avatar_url: event.target.value }))} placeholder="https://..." />
+          </label>
+          {(profileError || profileMessage) && <p>{profileError || profileMessage}</p>}
+          <div>
+            <button type="button" onClick={submitProfile} disabled={profileSaving}>{profileSaving ? "Saving..." : "Save"}</button>
+            <button type="button" onClick={() => { setEditingProfile(false); setProfileDraft(shownProfile); setProfileError(""); }}>Cancel</button>
+          </div>
+        </div>
+      )}
       <button className="mg2-profile-account" type="button" onClick={onOpenAuth}>
         <span>{accountTitle}</span>
         <small>{accountSubtitle}</small>
@@ -2748,6 +2897,9 @@ export default function Home() {
   const [hiddenRecs, setHiddenRecs] = useState({});
   const [supabaseSession, setSupabaseSession] = useState(null);
   const [supabaseUser, setSupabaseUser] = useState(null);
+  const [profileIdentity, setProfileIdentity] = useState(readGuestProfile);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authMessage, setAuthMessage] = useState("");
@@ -2882,6 +3034,8 @@ export default function Home() {
         activeDataOwner.current = "guest";
         const guestState = readOwnedLocalState("guest", { fallbackToLegacy: false });
         applyLocalState(guestState, "guest");
+        setProfileIdentity(readGuestProfile());
+        setProfileMessage("");
         setRemoteReady(false);
         setSyncStatus("guest");
         setAuthLoading(false);
@@ -2897,8 +3051,17 @@ export default function Home() {
         if (event === "SIGNED_IN") console.info("Signed in");
         if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SESSION") console.info("Supabase session restored");
         const remote = await loadMovieGramRemoteState(user.id);
+        let loadedProfile = defaultProfileForUser(user);
+        let profileNotice = "";
+        try {
+          loadedProfile = await loadOrCreateSupabaseProfile(user);
+        } catch {
+          profileNotice = "Profile sync needs the profiles table migration.";
+        }
         if (!alive) return;
         applyRemoteState(remote, user.id);
+        setProfileIdentity(loadedProfile);
+        setProfileMessage(profileNotice);
         setRemoteReady(true);
         setSyncStatus("synced");
         setAuthLoading(false);
@@ -2907,6 +3070,12 @@ export default function Home() {
         activeDataOwner.current = user.id;
         const userState = readOwnedLocalState(user.id, { fallbackToLegacy: false });
         applyLocalState(userState, user.id);
+        try {
+          const loadedProfile = await loadOrCreateSupabaseProfile(user);
+          if (alive) setProfileIdentity(loadedProfile);
+        } catch {
+          if (alive) setProfileIdentity(defaultProfileForUser(user));
+        }
         setRemoteReady(true);
         setSyncStatus("local");
         setAuthLoading(false);
@@ -3284,12 +3453,48 @@ export default function Home() {
     activeDataOwner.current = "guest";
     const guestState = readOwnedLocalState("guest", { fallbackToLegacy: false });
     applyLocalState(guestState, "guest");
+    setProfileIdentity(readGuestProfile());
+    setProfileMessage("");
     setSupabaseSession(null);
     setSupabaseUser(null);
     setRemoteReady(false);
     setSyncStatus("guest");
     setAuthLoading(false);
     setAuthOpen(false);
+  }
+
+  async function handleProfileSave(nextProfile) {
+    const validation = validateProfileIdentity(nextProfile);
+    if (validation.error) return { error: validation.error };
+    setProfileSaving(true);
+    setProfileMessage("");
+    try {
+      if (supabaseUser) {
+        const savedProfile = await saveSupabaseProfile(supabaseUser, { ...profileIdentity, ...validation.value, avatar_url: nextProfile.avatar_url || "" });
+        setProfileIdentity(savedProfile);
+        setProfileMessage("Profile saved.");
+        return { profile: savedProfile };
+      }
+      const guestProfile = {
+        ...readGuestProfile(),
+        ...validation.value,
+        avatar_url: nextProfile.avatar_url || "",
+        email: "",
+        updated_at: new Date().toISOString()
+      };
+      persistGuestProfile(guestProfile);
+      setProfileIdentity(guestProfile);
+      setProfileMessage("Saved locally.");
+      return { profile: guestProfile };
+    } catch (error) {
+      const message = error.message?.includes("duplicate") || error.message?.includes("unique")
+        ? "That username is already taken."
+        : error.message || "Could not save profile.";
+      setProfileMessage(message);
+      return { error: message };
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   function logActivity(action, item, metadata = {}) {
@@ -3743,7 +3948,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} authLoading={authLoading} syncStatus={syncStatus} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => setAuthOpen(true)} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} profile={profileIdentity} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => setAuthOpen(true)} onSaveProfile={handleProfileSave} />;
   }
 
   return (

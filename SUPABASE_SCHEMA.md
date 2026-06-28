@@ -15,6 +15,7 @@ The app keeps localStorage as guest/offline fallback. When a user logs in, local
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
+  username text,
   display_name text,
   avatar_url text,
   bio text,
@@ -102,6 +103,22 @@ create table activity_events (
   created_at timestamptz default now(),
   primary key (user_id, event_key)
 );
+```
+
+## Profiles Migration
+
+If your `profiles` table already exists from an earlier MovieGram beta schema, run this safe migration:
+
+```sql
+alter table profiles add column if not exists username text;
+alter table profiles add column if not exists display_name text;
+alter table profiles add column if not exists bio text;
+alter table profiles add column if not exists avatar_url text;
+alter table profiles add column if not exists updated_at timestamptz default now();
+
+create unique index if not exists profiles_username_unique
+on profiles (lower(username))
+where username is not null;
 ```
 
 ## Row Level Security

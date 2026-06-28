@@ -7343,6 +7343,15 @@ body {
   line-height: 1.45;
 }
 
+.mg2-profile-avatar-img {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(169, 128, 255, .9);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+}
+
 .mg2-profile-edit {
   min-height: 36px;
   border: 1px solid rgba(255,255,255,.1);
@@ -7357,6 +7366,77 @@ body {
 .mg2-profile-edit:hover {
   transform: translateY(-1px);
   background: rgba(255,255,255,.11);
+}
+
+.mg2-profile-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 14px;
+  background: rgba(255,255,255,.045);
+}
+
+.mg2-profile-editor label {
+  display: grid;
+  gap: 6px;
+}
+
+.mg2-profile-editor label span {
+  color: #9ba5b5;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mg2-profile-editor input,
+.mg2-profile-editor textarea {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  padding: 10px 11px;
+  color: #fff;
+  background: rgba(0,0,0,.28);
+  font: inherit;
+  font-size: 13px;
+  outline: 0;
+}
+
+.mg2-profile-editor textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.mg2-profile-editor p {
+  margin: 0;
+  color: #c8c1ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.mg2-profile-editor > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mg2-profile-editor button {
+  min-height: 36px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-profile-editor button:first-child {
+  border-color: rgba(154, 123, 255, .38);
+  background: linear-gradient(135deg, rgba(154, 123, 255, .35), rgba(255, 92, 138, .18));
+}
+
+.mg2-profile-editor button:disabled {
+  opacity: .6;
 }
 
 .mg2-profile-account {
