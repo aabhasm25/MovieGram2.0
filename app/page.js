@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createActivityEvent,
+  isSupabaseConfigured,
+  loadMovieGramRemoteState,
+  saveMovieGramRemoteState,
+  supabase
+} from "../lib/supabaseClient";
 
 const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 const API_BASE = "https://api.themoviedb.org/3";
@@ -304,6 +311,22 @@ function normalizeTrackingCollection(collection = {}) {
     if (!item) return next;
     const normalized = normalizedTrackingItem(item);
     next[keyOf(normalized)] = normalized;
+    return next;
+  }, {});
+}
+
+function mergeTrackingCollections(local = {}, remote = {}) {
+  return normalizeTrackingCollection({ ...normalizeTrackingCollection(local), ...normalizeTrackingCollection(remote) });
+}
+
+function mergeRatingsCollections(local = {}, remote = {}) {
+  return normalizeRatingsCollection({ ...local, ...remote });
+}
+
+function enforceWatchExclusivity(watchlist = {}, watched = {}) {
+  const normalizedWatched = normalizeTrackingCollection(watched);
+  return Object.entries(normalizeTrackingCollection(watchlist)).reduce((next, [key, item]) => {
+    if (!hasStoredItem(item, normalizedWatched)) next[key] = item;
     return next;
   }, {});
 }
@@ -623,6 +646,46 @@ function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, 
         <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
         <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
         <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
+      </section>
+    </div>
+  );
+}
+
+function AuthSheet({ open, user, configured, loading, message, onClose, onSubmit, onLogout }) {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  if (!open) return null;
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg2-watch-sheet mg2-auth-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>{user ? "MovieGram Beta" : mode === "login" ? "Log in" : "Create account"}</h3>
+        {!configured ? (
+          <p>Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local to enable cloud sync. Guest mode still works locally.</p>
+        ) : user ? (
+          <>
+            <p>{user.email} is syncing supported tracking data with Supabase.</p>
+            <div className="mg2-sheet-actions">
+              <button type="button" onClick={onLogout} disabled={loading}>Logout</button>
+              <button type="button" onClick={onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p>Use email/password for the private beta. Your local data will merge into your account after login.</p>
+            <div className="mg2-auth-fields">
+              <input value={email} type="email" autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
+              <input value={password} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
+            </div>
+            {message && <em className="mg2-auth-message">{message}</em>}
+            <div className="mg2-sheet-actions">
+              <button type="button" disabled={loading || !email || !password} onClick={() => onSubmit(mode, email, password)}>{loading ? "Please wait..." : mode === "login" ? "Login" : "Sign up"}</button>
+              <button type="button" onClick={() => setMode((current) => current === "login" ? "signup" : "login")}>{mode === "login" ? "Need an account?" : "Have an account?"}</button>
+              <button type="button" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );
@@ -1520,7 +1583,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, onOpen, onOpenBlend, onOpenStats, onOpenDiary }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, syncStatus, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -1562,6 +1625,8 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { label: "Stats", icon: "chart", action: onOpenStats },
     { label: "Diary", icon: "book", action: onOpenDiary }
   ];
+  const displayName = user?.user_metadata?.display_name || user?.email?.split("@")[0] || "Aabhas";
+  const handle = user?.email ? `@${user.email.split("@")[0]}` : "@aabhas_07";
   const profileTabs = [
     { id: "activity", label: "Activity" },
     { id: "watched", label: "Watched" },
@@ -1618,12 +1683,16 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
       <div className="mg2-profile-head">
         <Avatar friend={friends[0]} />
         <div className="mg2-profile-id">
-          <h2>Aabhas</h2>
-          <p>@aabhas_07</p>
+          <h2>{displayName}</h2>
+          <p>{handle}</p>
           <span className="mg2-profile-bio">Movies, TV shows and everything in between. Coffee &gt; People</span>
         </div>
       </div>
       <button className="mg2-profile-edit" type="button">Edit Profile</button>
+      <button className="mg2-profile-account" type="button" onClick={onOpenAuth}>
+        <span>{user ? "Private beta account" : "Guest mode"}</span>
+        <small>{user ? `${user.email || "Signed in"}${syncStatus ? ` - ${syncStatus}` : ""}` : "Local only - login to sync"}</small>
+      </button>
 
       <div className="mg2-profile-stats">
         {statCards.map((stat) => (
@@ -2573,6 +2642,12 @@ export default function Home() {
   const [friendStates, setFriendStates] = useState({});
   const [savedBlendLists, setSavedBlendLists] = useState({});
   const [hiddenRecs, setHiddenRecs] = useState({});
+  const [supabaseUser, setSupabaseUser] = useState(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "" : "local");
+  const [remoteReady, setRemoteReady] = useState(false);
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -2607,6 +2682,32 @@ export default function Home() {
     return promise;
   }, []);
 
+  const applyRemoteState = useCallback((remote) => {
+    if (!remote) return;
+    const nextWatched = mergeTrackingCollections(stored("moviegram.watched", {}), remote.watched);
+    const nextWatchlist = enforceWatchExclusivity(mergeTrackingCollections(stored("moviegram.watchlist", {}), remote.watchlist), nextWatched);
+    const nextFavorites = mergeTrackingCollections(stored("moviegram.favorites", {}), remote.favorites);
+    const nextRatings = mergeRatingsCollections(stored("moviegram.ratings", {}), remote.ratings);
+    const nextReviews = { ...stored("moviegram.reviews", {}), ...(remote.reviews || {}) };
+    const nextEpisodes = { ...stored("moviegram.episodeProgress", {}), ...(remote.episodeProgress || {}) };
+    const nextLists = { ...stored("moviegram.customLists", {}), ...(remote.customLists || {}) };
+
+    setWatched(nextWatched);
+    setWatchlist(nextWatchlist);
+    setFavorites(nextFavorites);
+    setRatings(nextRatings);
+    setReviews(nextReviews);
+    setEpisodeProgress(nextEpisodes);
+    setCustomLists(nextLists);
+    persist("moviegram.watched", nextWatched);
+    persist("moviegram.watchlist", nextWatchlist);
+    persist("moviegram.favorites", nextFavorites);
+    persist("moviegram.ratings", nextRatings);
+    persist("moviegram.reviews", nextReviews);
+    persist("moviegram.episodeProgress", nextEpisodes);
+    persist("moviegram.customLists", nextLists);
+  }, []);
+
   useEffect(() => {
     const normalizedWatchlist = normalizeTrackingCollection(stored("moviegram.watchlist", {}));
     const normalizedWatched = normalizeTrackingCollection(stored("moviegram.watched", {}));
@@ -2637,9 +2738,86 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!supabase) {
+      setSyncStatus("local");
+      setRemoteReady(false);
+      return;
+    }
+    let alive = true;
+    async function hydrateSession() {
+      setSyncStatus("checking");
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user || null;
+      if (!alive) return;
+      setSupabaseUser(user);
+      if (!user) {
+        setSyncStatus("guest");
+        setRemoteReady(false);
+        return;
+      }
+      try {
+        setSyncStatus("syncing");
+        const remote = await loadMovieGramRemoteState(user.id);
+        if (!alive) return;
+        applyRemoteState(remote);
+        setRemoteReady(true);
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("local");
+        setRemoteReady(false);
+      }
+    }
+    hydrateSession();
+    const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const user = session?.user || null;
+      setSupabaseUser(user);
+      if (!user) {
+        setRemoteReady(false);
+        setSyncStatus("guest");
+        return;
+      }
+      try {
+        setSyncStatus("syncing");
+        const remote = await loadMovieGramRemoteState(user.id);
+        applyRemoteState(remote);
+        setRemoteReady(true);
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("local");
+      }
+    });
+    return () => {
+      alive = false;
+      subscription?.subscription?.unsubscribe();
+    };
+  }, [applyRemoteState]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    if (!supabaseUser || !remoteReady) return;
+    setSyncStatus("syncing");
+    const timer = window.setTimeout(async () => {
+      try {
+        await saveMovieGramRemoteState(supabaseUser.id, {
+          watchlist,
+          watched,
+          favorites,
+          ratings,
+          reviews,
+          episodeProgress,
+          customLists
+        });
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("local");
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [supabaseUser, remoteReady, watchlist, watched, favorites, ratings, reviews, episodeProgress, customLists]);
 
   useEffect(() => {
     async function loadRows() {
@@ -2913,6 +3091,43 @@ export default function Home() {
     setSelectedPerson({ ...person, media_type: "person" });
   }
 
+  async function handleAuthSubmit(mode, email, password) {
+    if (!supabase) {
+      setAuthMessage("Supabase env vars are missing. Guest mode is active.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthMessage("");
+    try {
+      const result = mode === "signup"
+        ? await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signInWithPassword({ email, password });
+      if (result.error) throw result.error;
+      setAuthMessage(mode === "signup" ? "Account created. Check your email if confirmation is enabled." : "Logged in.");
+      if (result.data.user) setSupabaseUser(result.data.user);
+    } catch (error) {
+      setAuthMessage(error.message || "Authentication failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    if (!supabase) return;
+    setAuthLoading(true);
+    await supabase.auth.signOut();
+    setSupabaseUser(null);
+    setRemoteReady(false);
+    setSyncStatus("guest");
+    setAuthLoading(false);
+    setAuthOpen(false);
+  }
+
+  function logActivity(action, item, metadata = {}) {
+    if (!supabaseUser) return;
+    createActivityEvent(supabaseUser.id, action, { ...item, media_type: mediaType(item) }, metadata).catch(() => {});
+  }
+
   function toggleWatchlist(item) {
     const normalized = { ...item, media_type: mediaType(item) };
     const key = keyOf(normalized);
@@ -2929,6 +3144,7 @@ export default function Home() {
       setWatched(nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
       persist("moviegram.watched", nextWatched);
+      logActivity("watchlist_add", normalized);
     }
   }
 
@@ -3025,6 +3241,7 @@ export default function Home() {
         persist("moviegram.episodeProgress", nextEpisodes);
       }
     }
+    logActivity("watched", normalized, { watchedAt, unknownDate: !watchedAt });
   }
 
   function seasonEpisodeKeys(show, season) {
@@ -3075,9 +3292,11 @@ export default function Home() {
       setWatchlist(nextWatchlist);
       persist("moviegram.watched", nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
+      logActivity("show_completed", normalized, { watchedAt, seasonNumber: season.season_number });
     }
     setEpisodeProgress(nextEpisodes);
     persist("moviegram.episodeProgress", nextEpisodes);
+    logActivity("season_completed", normalized, { watchedAt, seasonNumber: season.season_number });
   }
 
   function applyWatchedAction(choice, pickedDate) {
@@ -3123,6 +3342,7 @@ export default function Home() {
       }
     };
     syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt);
+    logActivity("episode_watched", normalized, { watchedAt, episodeKey: progressKey, seasonNumber: episode.season_number, episodeNumber: episode.episode_number });
   }
 
   function syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt) {
@@ -3160,6 +3380,7 @@ export default function Home() {
     else delete next[key];
     setRatings(next);
     persist("moviegram.ratings", next);
+    if (rating) logActivity("rated", item, { rating });
   }
 
   function reviewForItem(item) {
@@ -3176,6 +3397,7 @@ export default function Home() {
     else delete next[key];
     setReviews(next);
     persist("moviegram.reviews", next);
+    if (trimmed) logActivity("reviewed", normalized);
     setReviewItem(null);
   }
 
@@ -3197,6 +3419,7 @@ export default function Home() {
     };
     setCustomLists(next);
     persist("moviegram.customLists", next);
+    logActivity("custom_list_create", normalized, { listKey: id });
   }
 
   function toggleCustomListItem(listId, item) {
@@ -3208,6 +3431,7 @@ export default function Home() {
     const next = { ...customLists, [listId]: { ...list, items: nextItems, updatedAt: new Date().toISOString() } };
     setCustomLists(next);
     persist("moviegram.customLists", next);
+    logActivity(exists ? "custom_list_remove" : "custom_list_add", normalized, { listKey: listId });
   }
 
   function toggleFavorite(item) {
@@ -3223,6 +3447,7 @@ export default function Home() {
       next[key] = { ...normalized, likedAt: new Date().toISOString() };
       setFavorites(next);
       persist("moviegram.favorites", next);
+      logActivity("liked", normalized);
     }
   }
 
@@ -3349,7 +3574,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} syncStatus={syncStatus} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => setAuthOpen(true)} />;
   }
 
   return (
@@ -3431,6 +3656,16 @@ export default function Home() {
         onCreate={createCustomList}
         onToggleItem={toggleCustomListItem}
         onClose={() => setListItem(null)}
+      />
+      <AuthSheet
+        open={authOpen}
+        user={supabaseUser}
+        configured={isSupabaseConfigured}
+        loading={authLoading}
+        message={authMessage}
+        onClose={() => setAuthOpen(false)}
+        onSubmit={handleAuthSubmit}
+        onLogout={handleLogout}
       />
     </PhoneShell>
   );

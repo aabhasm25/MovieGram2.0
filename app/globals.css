@@ -7359,6 +7359,29 @@ body {
   background: rgba(255,255,255,.11);
 }
 
+.mg2-profile-account {
+  display: grid;
+  gap: 2px;
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 10px;
+  color: #d8deeb;
+  background: rgba(255,255,255,.035);
+  text-align: left;
+}
+
+.mg2-profile-account span {
+  color: #f5f7fb;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-profile-account small {
+  color: #8f98a7;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .mg2-profile-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -8373,6 +8396,28 @@ body {
   color: #fff;
   background: rgba(255, 255, 255, .08);
   font: inherit;
+}
+
+.mg2-auth-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.mg2-auth-fields input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+}
+
+.mg2-auth-message {
+  color: #cfc8ff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .mg2-list-create {
