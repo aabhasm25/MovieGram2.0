@@ -505,13 +505,15 @@ function sanitizeUsername(value = "") {
 function defaultProfileForUser(user = null) {
   const emailPrefix = user?.email?.split("@")[0] || "moviegram";
   const username = sanitizeUsername(emailPrefix) || "moviegram";
+  const metadata = user?.user_metadata || {};
   return {
     id: user?.id || "guest",
     email: user?.email || "",
     username,
-    display_name: user?.user_metadata?.display_name || username,
-    bio: "Movies, TV shows and everything in between.",
-    avatar_url: "",
+    display_name: metadata.display_name || metadata.full_name || metadata.name || username,
+    bio: "",
+    avatar_url: metadata.avatar_url || metadata.picture || "",
+    is_private: false,
     updated_at: new Date().toISOString()
   };
 }
@@ -526,7 +528,8 @@ function validateProfileIdentity(profile = {}) {
       username,
       display_name: (profile.display_name || username).trim().slice(0, 48),
       bio: (profile.bio || "").trim().slice(0, 180),
-      avatar_url: (profile.avatar_url || "").trim()
+      avatar_url: (profile.avatar_url || "").trim(),
+      is_private: Boolean(profile.is_private)
     }
   };
 }
@@ -548,7 +551,7 @@ async function loadOrCreateSupabaseProfile(user) {
   const defaults = defaultProfileForUser(user);
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
     .eq("id", user.id)
     .maybeSingle();
   if (error) throw error;
@@ -561,12 +564,13 @@ async function loadOrCreateSupabaseProfile(user) {
     display_name: defaults.display_name,
     bio: defaults.bio,
     avatar_url: defaults.avatar_url,
+    is_private: defaults.is_private,
     updated_at: new Date().toISOString()
   };
   const { data: created, error: createError } = await supabase
     .from("profiles")
     .upsert(insertProfile, { onConflict: "id" })
-    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
     .single();
   if (createError) throw createError;
   return { ...defaults, ...created };
@@ -585,10 +589,196 @@ async function saveSupabaseProfile(user, profile) {
   const { data, error } = await supabase
     .from("profiles")
     .upsert(payload, { onConflict: "id" })
-    .select("id,email,username,display_name,bio,avatar_url,updated_at")
+    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
     .single();
   if (error) throw error;
   return { ...defaultProfileForUser(user), ...data };
+}
+
+function publicProfileFromRow(row = {}) {
+  return {
+    id: row.id,
+    username: row.username || "moviegram",
+    display_name: row.display_name || row.username || "MovieGram user",
+    bio: row.bio || "",
+    avatar_url: row.avatar_url || "",
+    is_private: Boolean(row.is_private)
+  };
+}
+
+function publicProfileName(profile = {}) {
+  return profile.display_name || profile.username || "MovieGram user";
+}
+
+function socialActivityCopy(action = "") {
+  const labels = {
+    watched: "watched",
+    liked: "liked",
+    rated: "rated",
+    reviewed: "reviewed",
+    watchlist_add: "watchlisted",
+    season_completed: "completed a season of",
+    show_completed: "completed",
+    episode_watched: "watched an episode of"
+  };
+  return labels[action] || action.replaceAll("_", " ");
+}
+
+function publicActivityDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  const diff = Date.now() - date.getTime();
+  if (diff < 3600000) return `${Math.max(1, Math.round(diff / 60000))}m`;
+  if (diff < 86400000) return `${Math.round(diff / 3600000)}h`;
+  if (diff < 604800000) return `${Math.round(diff / 86400000)}d`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function normalizeSocialActivity(row = {}, profileMap = {}) {
+  const item = row.item_data || {};
+  const profile = profileMap[row.user_id] || { id: row.user_id, username: "moviegram", display_name: "MovieGram user" };
+  return {
+    id: row.event_key || `${row.user_id}-${row.created_at}`,
+    user_id: row.user_id,
+    profile,
+    action: row.action,
+    actionLabel: socialActivityCopy(row.action),
+    item: { ...item, media_type: mediaType(item) },
+    title: titleOf(item),
+    poster: item.poster_path,
+    metadata: row.metadata || {},
+    created_at: row.created_at,
+    time: publicActivityDate(row.created_at)
+  };
+}
+
+async function countRows(table, column, value) {
+  if (!supabase || !value) return 0;
+  const { count, error } = await supabase
+    .from(table)
+    .select("*", { count: "exact", head: true })
+    .eq(column, value);
+  if (error) throw error;
+  return count || 0;
+}
+
+async function countFollowRows(column, value, status = "approved") {
+  if (!supabase || !value) return 0;
+  const { count, error } = await supabase
+    .from("follows")
+    .select("*", { count: "exact", head: true })
+    .eq(column, value)
+    .eq("status", status);
+  if (error) throw error;
+  return count || 0;
+}
+
+async function searchPublicProfiles(query, currentUserId) {
+  if (!supabase) return [];
+  const safeQuery = query.trim().replace(/^@+/, "").replace(/[%(),]/g, "");
+  const selectColumns = "id,username,display_name,bio,avatar_url,is_private";
+  let request = supabase.schema("public").from("profiles").select(selectColumns).limit(20);
+  if (safeQuery) request = request.or(`username.ilike.%${safeQuery}%,display_name.ilike.%${safeQuery}%`);
+  let { data, error } = await request;
+  if (error) console.error("MovieGram user search error", error);
+  if (error && String(error.message || "").includes("is_private")) {
+    let fallback = supabase.schema("public").from("profiles").select("id,username,display_name,bio,avatar_url").limit(20);
+    if (safeQuery) fallback = fallback.or(`username.ilike.%${safeQuery}%,display_name.ilike.%${safeQuery}%`);
+    const fallbackResult = await fallback;
+    data = fallbackResult.data;
+    error = fallbackResult.error;
+    if (error) console.error("MovieGram user search fallback error", error);
+  }
+  if (error) throw error;
+  return (data || [])
+    .filter((row) => row.id !== currentUserId)
+    .map(publicProfileFromRow);
+}
+
+async function loadSocialFoundation(userId) {
+  if (!supabase || !userId) return { profiles: [], followingIds: [], pendingIds: [], followStatuses: {}, pendingRequests: [], activity: [], counts: { followers: 0, following: 0 } };
+  const [{ data: followingRows, error: followingError }, { data: requestRows, error: requestError }, followers, following] = await Promise.all([
+    supabase.from("follows").select("following_id,status").eq("follower_id", userId),
+    supabase.from("follows").select("follower_id,status").eq("following_id", userId).eq("status", "pending"),
+    countFollowRows("following_id", userId),
+    countFollowRows("follower_id", userId)
+  ]);
+  if (followingError) throw followingError;
+  if (requestError) throw requestError;
+  const followStatuses = Object.fromEntries((followingRows || []).map((row) => [row.following_id, row.status || "approved"]));
+  const followingIds = (followingRows || []).filter((row) => (row.status || "approved") === "approved").map((row) => row.following_id).filter(Boolean);
+  const pendingIds = (followingRows || []).filter((row) => row.status === "pending").map((row) => row.following_id).filter(Boolean);
+  const requesterIds = (requestRows || []).map((row) => row.follower_id).filter(Boolean);
+  const allProfileIds = [...new Set([...followingIds, ...pendingIds, ...requesterIds])];
+  if (!allProfileIds.length) return { profiles: [], followingIds, pendingIds, followStatuses, pendingRequests: [], activity: [], counts: { followers, following } };
+
+  const [{ data: profilesData, error: profilesError }, activityResult] = await Promise.all([
+    supabase.from("profiles").select("id,username,display_name,bio,avatar_url,is_private").in("id", allProfileIds),
+    followingIds.length
+      ? supabase.from("activity_events").select("user_id,event_key,action,item_key,item_data,metadata,created_at").in("user_id", followingIds).order("created_at", { ascending: false }).limit(60)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+  if (profilesError) throw profilesError;
+  if (activityResult.error) throw activityResult.error;
+  const profiles = (profilesData || []).map(publicProfileFromRow);
+  const profileMap = Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
+  const pendingRequests = requesterIds.map((id) => profileMap[id]).filter(Boolean);
+  return {
+    profiles: profiles.filter((profile) => followingIds.includes(profile.id) || pendingIds.includes(profile.id)),
+    followingIds,
+    pendingIds,
+    followStatuses,
+    pendingRequests,
+    activity: (activityResult.data || []).map((row) => normalizeSocialActivity(row, profileMap)),
+    counts: { followers, following }
+  };
+}
+
+async function loadPublicProfileBundle(profileId, viewerId) {
+  if (!supabase || !profileId) return null;
+  const [{ data: profileRow, error: profileError }, followers, following, relationResult] = await Promise.all([
+    supabase.from("profiles").select("id,username,display_name,bio,avatar_url,is_private").eq("id", profileId).maybeSingle(),
+    countFollowRows("following_id", profileId),
+    countFollowRows("follower_id", profileId),
+    viewerId
+      ? supabase.from("follows").select("status").eq("follower_id", viewerId).eq("following_id", profileId).maybeSingle()
+      : Promise.resolve({ data: null, error: null })
+  ]);
+  if (profileError) throw profileError;
+  if (relationResult.error) throw relationResult.error;
+  const profile = publicProfileFromRow(profileRow || { id: profileId });
+  const relationStatus = profileId === viewerId ? "owner" : relationResult.data?.status || "";
+  const canViewActivity = !profile.is_private || relationStatus === "owner" || relationStatus === "approved";
+  const { data: activityRows, error: activityError } = canViewActivity
+    ? await supabase.from("activity_events").select("user_id,event_key,action,item_key,item_data,metadata,created_at").eq("user_id", profileId).order("created_at", { ascending: false }).limit(30)
+    : { data: [], error: null };
+  if (activityError) throw activityError;
+  const profileMap = { [profile.id]: profile };
+  const activity = (activityRows || []).map((row) => normalizeSocialActivity(row, profileMap));
+  let tracking = { watchlist: {}, watched: {}, favorites: {}, ratings: {}, reviews: {}, customLists: {} };
+  if (canViewActivity) {
+    try {
+      const remote = await loadMovieGramRemoteState(profileId);
+      tracking = remote || tracking;
+    } catch (error) {
+      console.error("MovieGram public profile tracking load error", error);
+    }
+  }
+  const watchedCount = Object.keys(tracking.watched || {}).length || activity.filter((event) => ["watched", "episode_watched", "season_completed", "show_completed"].includes(event.action)).length;
+  return {
+    profile,
+    stats: {
+      followers,
+      following,
+      watched: canViewActivity ? watchedCount : 0,
+      watchlist: Object.keys(tracking.watchlist || {}).length,
+      reviews: Object.keys(tracking.reviews || {}).length
+    },
+    tracking,
+    activity,
+    relationStatus,
+    canViewActivity
+  };
 }
 
 function Icon({ name }) {
@@ -622,6 +812,14 @@ function Icon({ name }) {
 
 function Avatar({ friend, size = "" }) {
   return <span className={`mg2-avatar ${friend.avatar} ${size}`} aria-hidden="true" />;
+}
+
+function PublicAvatar({ profile, size = "" }) {
+  if (profile?.avatar_url) {
+    return <img className={`mg2-public-avatar ${size}`} src={profile.avatar_url} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }} />;
+  }
+  const initial = (publicProfileName(profile).trim()[0] || "M").toUpperCase();
+  return <span className={`mg2-public-avatar fallback ${size}`} aria-hidden="true">{initial}</span>;
 }
 
 function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, onOpenNotifications, socialActive, onCloseSocial }) {
@@ -778,6 +976,19 @@ function PersonCard({ person, onOpenPerson }) {
   );
 }
 
+function UserResultCard({ profile, onOpenPublicProfile }) {
+  const username = profile.username ? `@${profile.username}` : "@moviegram";
+  return (
+    <button className="mg2-person-result" type="button" onClick={() => onOpenPublicProfile?.(profile)}>
+      <PublicAvatar profile={profile} />
+      <span>
+        <strong>{publicProfileName(profile)}</strong>
+        <small>{username}{profile.is_private ? " - Private" : ""}{profile.bio ? ` - ${profile.bio}` : ""}</small>
+      </span>
+    </button>
+  );
+}
+
 function WatchedDateSheet({ action, onChoose, onCancel }) {
   const [picking, setPicking] = useState(false);
   const [pickedDate, setPickedDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -848,43 +1059,326 @@ function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, 
   );
 }
 
-function AuthSheet({ open, user, configured, loading, message, onClose, onSubmit, onLogout }) {
+function AuthSheet({ open, user, configured, loading, message, onClose, onSubmit, onLogout, onClearMessage }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const switchMode = (nextMode) => {
+    setMode(nextMode);
+    setPassword("");
+    onClearMessage?.();
+  };
   if (!open) return null;
+  const title = user ? "MovieGram Beta" : mode === "signup" ? "Create account" : mode === "reset" ? "Reset password" : "Log in";
+  const submitDisabled = loading || !email || (mode !== "reset" && !password);
   return (
     <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
       <section className="mg2-watch-sheet mg2-auth-sheet" onMouseDown={(event) => event.stopPropagation()}>
         <span />
-        <h3>{user ? "MovieGram Beta" : mode === "login" ? "Log in" : "Create account"}</h3>
+        <h3>{title}</h3>
         {!configured ? (
           <p>Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local to enable cloud sync. Guest mode still works locally.</p>
         ) : user ? (
           <>
             <p>{user.email} is syncing supported tracking data with Supabase.</p>
             <div className="mg2-sheet-actions">
-              <button type="button" onClick={onLogout} disabled={loading}>Logout</button>
-              <button type="button" onClick={onClose}>Done</button>
+              <button type="button" onClick={onLogout} disabled={loading}>{loading ? "Logging out..." : "Logout"}</button>
+              <button type="button" onClick={onClose} disabled={loading}>Done</button>
             </div>
           </>
         ) : (
           <>
-            <p>Use email/password for the private beta. Your local data will merge into your account after login.</p>
+            <p>{mode === "reset" ? "Enter your email and we will send a secure reset link." : "Use email/password for the private beta. Your local data will merge only after verified login."}</p>
             <div className="mg2-auth-fields">
-              <input value={email} type="email" autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
-              <input value={password} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
+              <input value={email} disabled={loading} type="email" autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
+              {mode !== "reset" && <input value={password} disabled={loading} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />}
             </div>
             {message && <em className="mg2-auth-message">{message}</em>}
             <div className="mg2-sheet-actions">
-              <button type="button" disabled={loading || !email || !password} onClick={() => onSubmit(mode, email, password)}>{loading ? "Please wait..." : mode === "login" ? "Login" : "Sign up"}</button>
-              <button type="button" onClick={() => setMode((current) => current === "login" ? "signup" : "login")}>{mode === "login" ? "Need an account?" : "Have an account?"}</button>
-              <button type="button" onClick={onClose}>Cancel</button>
+              <button type="button" disabled={submitDisabled} onClick={() => onSubmit(mode, email, password)}>{loading ? "Please wait..." : mode === "reset" ? "Send reset email" : mode === "login" ? "Login" : "Sign up"}</button>
+              {mode === "login" && <button type="button" disabled={loading} onClick={() => switchMode("reset")}>Forgot password?</button>}
+              <button type="button" disabled={loading} onClick={() => switchMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "Have an account?" : "Need an account?"}</button>
+              <button type="button" disabled={loading} onClick={onClose}>Cancel</button>
             </div>
           </>
         )}
       </section>
     </div>
+  );
+}
+
+function AuthOnboarding({ configured, loading, onGuest, onSession, onProfileSaved, onComplete }) {
+  const [screen, setScreen] = useState("welcome");
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [profileDraft, setProfileDraft] = useState({ username: "", display_name: "", bio: "" });
+  const [verifiedUser, setVerifiedUser] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const cleanEmail = email.trim().toLowerCase();
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail);
+  const cleanOtp = otp.trim();
+  const otpValid = /^[a-zA-Z0-9]{6,8}$/.test(cleanOtp);
+  const resetFeedback = () => {
+    setMessage("");
+    setError("");
+  };
+  const go = (next) => {
+    resetFeedback();
+    setScreen(next);
+  };
+  const authErrorMessage = (authError) => {
+    const raw = `${authError?.message || ""}`.toLowerCase();
+    if (raw.includes("email not confirmed") || raw.includes("not confirmed")) return "Please verify your email before logging in.";
+    if (raw.includes("invalid login") || raw.includes("invalid credentials") || raw.includes("user not found")) return "Incorrect email or password.";
+    if (raw.includes("domain") || raw.includes("recipient") || raw.includes("resend") || raw.includes("sender")) return "Email sending is in test mode. Use the verified test email or configure a verified sender domain.";
+    return authError?.message || "Authentication failed.";
+  };
+  const logAuthError = (action, authError) => {
+    console.error(`MovieGram auth ${action} error`, {
+      message: authError?.message,
+      code: authError?.code,
+      status: authError?.status,
+      details: authError?.details,
+      hint: authError?.hint,
+      error: authError
+    });
+  };
+  const readableAuthError = (authError, fallback = "Authentication failed.") => {
+    const message = authErrorMessage(authError);
+    return message === "Authentication failed." ? (authError?.message || fallback) : message;
+  };
+  const sendOtp = async () => {
+    if (!supabase || !emailValid) return;
+    setBusy(true);
+    resetFeedback();
+    try {
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: { shouldCreateUser: true }
+      });
+      if (otpError) throw otpError;
+      setMessage("We sent a code to your email.");
+      setScreen("verify");
+    } catch (sendError) {
+      logAuthError("send otp", sendError);
+      setError(readableAuthError(sendError, "Could not send code."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const continueWithGoogle = async () => {
+    if (!supabase || typeof window === "undefined") return;
+    setBusy(true);
+    resetFeedback();
+    try {
+      const { error: googleError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin }
+      });
+      if (googleError) throw googleError;
+    } catch (googleError) {
+      logAuthError("google oauth", googleError);
+      setError(readableAuthError(googleError, "Could not start Google sign-in."));
+      setBusy(false);
+    }
+  };
+  const verifyOtp = async () => {
+    if (!supabase || !emailValid || !otpValid) return;
+    setBusy(true);
+    resetFeedback();
+    try {
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({ email: cleanEmail, token: cleanOtp, type: "email" });
+      if (verifyError) throw verifyError;
+      if (!data?.session?.user) throw new Error("Could not verify email. Request a new code and try again.");
+      setVerifiedUser(data.session.user);
+      onSession(data.session);
+      const username = sanitizeUsername(cleanEmail.split("@")[0] || "moviegram");
+      setProfileDraft((current) => ({ ...current, username, display_name: username }));
+      setMessage("Email verified.");
+      setScreen("profile");
+    } catch (verifyError) {
+      logAuthError("verify otp", verifyError);
+      setError(readableAuthError(verifyError, "Invalid verification code."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveProfileStep = async () => {
+    const user = verifiedUser;
+    const validation = validateProfileIdentity(profileDraft);
+    if (!user) {
+      setError("Verify your email first.");
+      return;
+    }
+    if (validation.error) {
+      setError(validation.error);
+      return;
+    }
+    setBusy(true);
+    resetFeedback();
+    try {
+      const saved = await saveSupabaseProfile(user, validation.value);
+      onProfileSaved(saved);
+      setScreen("password");
+    } catch (profileError) {
+      setError(profileError.message?.includes("duplicate") || profileError.message?.includes("unique") ? "That username is already taken." : profileError.message || "Could not save profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const savePasswordStep = async () => {
+    if (!supabase) return;
+    resetFeedback();
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error: passwordError } = await supabase.auth.updateUser({ password });
+      if (passwordError) throw passwordError;
+      if (data?.user) setVerifiedUser(data.user);
+      setMessage("Account ready.");
+      onComplete();
+    } catch (passwordError) {
+      logAuthError("set password", passwordError);
+      setError(readableAuthError(passwordError, "Could not save password."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const login = async () => {
+    if (!supabase || !emailValid || !password) return;
+    setBusy(true);
+    resetFeedback();
+    try {
+      const { data, error: loginError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      if (loginError) throw loginError;
+      if (!data?.session?.user) throw new Error("Email verification is required before login.");
+      onSession(data.session);
+      onComplete();
+    } catch (loginError) {
+      logAuthError("login", loginError);
+      setError(authErrorMessage(loginError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const sendReset = async () => {
+    if (!supabase || !emailValid) return;
+    setBusy(true);
+    resetFeedback();
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+      if (resetError) throw resetError;
+      setMessage("If an account exists, reset instructions were sent.");
+    } catch (resetError) {
+      logAuthError("reset password", resetError);
+      setMessage("If an account exists, reset instructions were sent.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="mg2-auth-page">
+      <section className="mg2-auth-card">
+        <div className="mg2-auth-brand">
+          <span>Movie<span>Gram</span></span>
+          <small>Track, share, and discover what to watch next.</small>
+        </div>
+        {loading ? (
+          <div className="mg2-auth-state">Checking your account...</div>
+        ) : !configured ? (
+          <>
+            <div className="mg2-auth-state">Supabase is not configured. Guest mode is available locally.</div>
+            <button type="button" onClick={onGuest}>Continue as guest</button>
+          </>
+        ) : screen === "welcome" ? (
+          <>
+            <div className="mg2-auth-hero-copy">
+              <h1>Welcome to MovieGram</h1>
+              <p>Your private beta movie and TV social tracker.</p>
+            </div>
+            <div className="mg2-auth-actions">
+              <button className="mg2-google-auth" type="button" disabled={busy} onClick={continueWithGoogle}>Continue with Google</button>
+              <button type="button" onClick={() => go("signup")}>Create account</button>
+              <button type="button" onClick={() => go("login")}>Log in</button>
+              <button type="button" onClick={onGuest}>Continue as guest</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <button className="mg2-auth-back" type="button" disabled={busy} onClick={() => go(screen === "verify" ? "signup" : screen === "profile" || screen === "password" ? "welcome" : "welcome")}><Icon name="back" /> Back</button>
+            {screen === "signup" && (
+              <div className="mg2-auth-step">
+                <h1>Create account</h1>
+                <p>Enter your email. We will send a verification code.</p>
+                <button className="mg2-google-auth" type="button" disabled={busy} onClick={continueWithGoogle}>Continue with Google</button>
+                <input value={email} disabled={busy} type="email" placeholder="Email" onChange={(event) => setEmail(event.target.value)} />
+                <button type="button" disabled={busy || !emailValid} onClick={sendOtp}>{busy ? "Sending..." : "Send code"}</button>
+              </div>
+            )}
+            {screen === "verify" && (
+              <div className="mg2-auth-step">
+                <h1>Verify email</h1>
+                <p>We sent a code to {cleanEmail}.</p>
+                <input value={otp} disabled={busy} inputMode="text" autoCapitalize="none" placeholder="Enter code" onChange={(event) => setOtp(event.target.value.replace(/\s/g, "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 8))} />
+                <button type="button" disabled={busy || !otpValid} onClick={verifyOtp}>{busy ? "Verifying..." : "Verify code"}</button>
+                <button type="button" disabled={busy || !emailValid} onClick={sendOtp}>Resend code</button>
+              </div>
+            )}
+            {screen === "profile" && (
+              <div className="mg2-auth-step">
+                <h1>Create profile</h1>
+                <p>Pick the public identity people will see. Your email stays private.</p>
+                <input value={profileDraft.display_name || ""} disabled={busy} placeholder="Display name" onChange={(event) => setProfileDraft((current) => ({ ...current, display_name: event.target.value }))} />
+                <input value={profileDraft.username || ""} disabled={busy} placeholder="username" onChange={(event) => setProfileDraft((current) => ({ ...current, username: sanitizeUsername(event.target.value) }))} />
+                <textarea value={profileDraft.bio || ""} disabled={busy} placeholder="Bio (optional)" maxLength={180} onChange={(event) => setProfileDraft((current) => ({ ...current, bio: event.target.value }))} />
+                <button type="button" disabled={busy} onClick={saveProfileStep}>{busy ? "Saving..." : "Continue"}</button>
+              </div>
+            )}
+            {screen === "password" && (
+              <div className="mg2-auth-step">
+                <h1>Create password</h1>
+                <p>Use at least 8 characters. You will use this to log in next time.</p>
+                <input value={password} disabled={busy} type="password" placeholder="Password" onChange={(event) => setPassword(event.target.value)} />
+                <input value={confirmPassword} disabled={busy} type="password" placeholder="Confirm password" onChange={(event) => setConfirmPassword(event.target.value)} />
+                <button type="button" disabled={busy || password.length < 8 || password !== confirmPassword} onClick={savePasswordStep}>{busy ? "Finishing..." : "Enter MovieGram"}</button>
+              </div>
+            )}
+            {screen === "login" && (
+              <div className="mg2-auth-step">
+                <h1>Log in</h1>
+                <p>Use your verified email and password.</p>
+                <button className="mg2-google-auth" type="button" disabled={busy} onClick={continueWithGoogle}>Continue with Google</button>
+                <input value={email} disabled={busy} type="email" placeholder="Email" onChange={(event) => setEmail(event.target.value)} />
+                <input value={password} disabled={busy} type="password" placeholder="Password" onChange={(event) => setPassword(event.target.value)} />
+                <button type="button" disabled={busy || !emailValid || !password} onClick={login}>{busy ? "Logging in..." : "Log in"}</button>
+                <button type="button" disabled={busy} onClick={() => go("forgot")}>Forgot password?</button>
+              </div>
+            )}
+            {screen === "forgot" && (
+              <div className="mg2-auth-step">
+                <h1>Reset password</h1>
+                <p>Enter your email. We will send reset instructions if an account exists.</p>
+                <input value={email} disabled={busy} type="email" placeholder="Email" onChange={(event) => setEmail(event.target.value)} />
+                <button type="button" disabled={busy || !emailValid} onClick={sendReset}>{busy ? "Sending..." : "Send reset email"}</button>
+              </div>
+            )}
+          </>
+        )}
+        {(message || error) && <div className={`mg2-auth-banner ${error ? "error" : ""}`}>{error || message}</div>}
+      </section>
+    </main>
   );
 }
 
@@ -1028,6 +1522,230 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
         )}
       </section>
     </div>
+  );
+}
+
+function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}, onBack, onFollowToggle, onOpenItem }) {
+  const [profileTab, setProfileTab] = useState("activity");
+  const [selectedList, setSelectedList] = useState(null);
+  if (!profile) return null;
+  const shownProfile = bundle?.profile || profile;
+  const stats = bundle?.stats || { followers: shownProfile.follower_count || 0, following: shownProfile.following_count || 0, watched: 0 };
+  const activity = bundle?.activity || [];
+  const tracking = bundle?.tracking || { watchlist: {}, watched: {}, ratings: {}, reviews: {}, customLists: {} };
+  const relation = currentUser?.id === shownProfile.id ? "owner" : bundle?.relationStatus || followStatuses[shownProfile.id] || "";
+  const canViewActivity = bundle?.canViewActivity ?? (!shownProfile.is_private || relation === "owner" || relation === "approved");
+  const buttonLabel = relation === "approved" ? "Following" : relation === "pending" ? "Requested" : shownProfile.is_private ? "Follow" : "Follow";
+  const watchedItems = Object.values(tracking.watched || {});
+  const watchlistItems = Object.values(tracking.watchlist || {});
+  const ratings = tracking.ratings || {};
+  const reviews = tracking.reviews || {};
+  const favorites = tracking.favorites || {};
+  const allTrackedItems = dedupe([...watchedItems, ...watchlistItems, ...Object.values(favorites), ...Object.values(reviews).map((entry) => entry.item).filter(Boolean)]);
+  const itemForKey = (key) => allTrackedItems.find((item) => keyOf(item) === key) || reviews[key]?.item || null;
+  const reviewEntries = Object.entries({ ...ratings, ...reviews }).map(([key]) => {
+    const item = itemForKey(key);
+    if (!item) return null;
+    const review = reviews[key];
+    return {
+      key,
+      item,
+      text: review?.text || "",
+      rating: normalizeUserRating(ratings[key]) || null,
+      date: review?.reviewedAt || item.watchedAt || item.likedAt || ""
+    };
+  }).filter(Boolean);
+  const lists = [
+    { id: "watchlist", title: "Watchlist", items: watchlistItems, isDefault: true },
+    ...Object.values(tracking.customLists || {})
+  ];
+  const tabs = [
+    { id: "activity", label: "Activity" },
+    { id: "watched", label: "Watched" },
+    { id: "watchlist", label: "Watchlist" },
+    { id: "reviews", label: "Reviews" },
+    { id: "lists", label: "Lists" }
+  ];
+  const profileItems = profileTab === "watched" ? watchedItems : profileTab === "watchlist" ? watchlistItems : [];
+  const actionStatusFor = (action) => {
+    if (action === "watched" || action === "episode_watched" || action === "season_completed" || action === "show_completed") return "watched";
+    if (action === "watchlist_add") return "watchlisted";
+    if (action === "rated") return "rated";
+    if (action === "liked") return "liked";
+    if (action === "reviewed") return "reviewed";
+    return action;
+  };
+  const activityMap = new Map();
+  activity.forEach((event) => {
+    if (!event.item?.id) return;
+    const key = keyOf(event.item);
+    const existing = activityMap.get(key) || { item: event.item, statuses: [], timestamp: event.created_at, rating: null, title: event.title };
+    const status = actionStatusFor(event.action);
+    if (!existing.statuses.includes(status)) existing.statuses.push(status);
+    if (event.metadata?.rating) existing.rating = normalizeUserRating(event.metadata.rating);
+    if (new Date(event.created_at || 0) > new Date(existing.timestamp || 0)) existing.timestamp = event.created_at;
+    activityMap.set(key, existing);
+  });
+  watchedItems.forEach((item) => {
+    const key = keyOf(item);
+    if (!activityMap.has(key)) activityMap.set(key, { item, statuses: ["watched"], timestamp: item.watchedAt, rating: ratingForItem(item, ratings), title: titleOf(item) });
+  });
+  watchlistItems.forEach((item) => {
+    const key = keyOf(item);
+    const existing = activityMap.get(key) || { item, statuses: [], timestamp: item.savedAt || item.addedAt, rating: ratingForItem(item, ratings), title: titleOf(item) };
+    if (!existing.statuses.includes("watchlisted")) existing.statuses.push("watchlisted");
+    activityMap.set(key, existing);
+  });
+  Object.entries(favorites).forEach(([key, item]) => {
+    const existing = activityMap.get(key) || { item, statuses: [], timestamp: item.likedAt, rating: ratingForItem(item, ratings), title: titleOf(item) };
+    if (!existing.statuses.includes("liked")) existing.statuses.push("liked");
+    activityMap.set(key, existing);
+  });
+  Object.entries(ratings).forEach(([key, rating]) => {
+    const item = itemForKey(key);
+    if (!item) return;
+    const existing = activityMap.get(key) || { item, statuses: [], timestamp: item.watchedAt || item.likedAt, rating: null, title: titleOf(item) };
+    if (!existing.statuses.includes("rated")) existing.statuses.push("rated");
+    existing.rating = normalizeUserRating(rating);
+    activityMap.set(key, existing);
+  });
+  Object.entries(reviews).forEach(([key, review]) => {
+    const item = review.item || itemForKey(key);
+    if (!item) return;
+    const existing = activityMap.get(key) || { item, statuses: [], timestamp: review.reviewedAt, rating: ratingForItem(item, ratings), title: titleOf(item) };
+    if (review.text?.trim() && !existing.statuses.includes("reviewed")) existing.statuses.push("reviewed");
+    activityMap.set(key, existing);
+  });
+  const activityGridItems = Array.from(activityMap.values()).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+  const activityDateLabel = (timestamp) => timestamp ? new Date(timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  const badgeIcon = (status, rating) => {
+    if (status === "watched") return <Icon name="check" />;
+    if (status === "watchlisted") return <Icon name="bookmark" />;
+    if (status === "liked") return <Icon name="heart" />;
+    if (status === "reviewed") return <Icon name="feed" />;
+    if (status === "rated") return rating ? formatUserRating(rating) : "\u2605";
+    return status.slice(0, 1).toUpperCase();
+  };
+
+  const renderEmpty = (label) => <div className="mg2-empty">{label}</div>;
+
+  return (
+    <section className="mg2-public-profile-screen">
+      <div className="mg2-social-header">
+        <button className="mg2-social-back" type="button" onClick={onBack}><Icon name="back" /></button>
+        <h2>@{shownProfile.username}</h2>
+      </div>
+      <div className="mg2-public-profile-head">
+        <PublicAvatar profile={shownProfile} />
+        <div>
+          <h3>{publicProfileName(shownProfile)}{shownProfile.is_private && <span>Private</span>}</h3>
+          <p>@{shownProfile.username}</p>
+          {shownProfile.bio && <small>{shownProfile.bio}</small>}
+        </div>
+      </div>
+      <div className="mg2-public-profile-stats">
+        <strong>{stats.watched || 0}<small>Watched</small></strong>
+        <strong>{stats.followers || 0}<small>Followers</small></strong>
+        <strong>{stats.following || 0}<small>Following</small></strong>
+      </div>
+      {relation !== "owner" && currentUser && (
+        <button className={`mg2-public-follow ${relation || "follow"}`} type="button" onClick={() => onFollowToggle(shownProfile)}>
+          {buttonLabel}
+        </button>
+      )}
+      {!currentUser && relation !== "owner" && <div className="mg2-empty">Sign in to follow MovieGram profiles.</div>}
+      {!canViewActivity ? (
+        <div className="mg2-private-profile-state">
+          <Icon name="bookmark" />
+          <strong>This account is private</strong>
+          <small>Follow @{shownProfile.username} to see activity, lists, ratings, and reviews.</small>
+        </div>
+      ) : (
+        <>
+          <div className="mg2-profile-tabs public" aria-label="Public profile sections">
+            {tabs.map((tab) => (
+              <button key={tab.id} className={profileTab === tab.id ? "active" : ""} type="button" onClick={() => { setSelectedList(null); setProfileTab(tab.id); }}>{tab.label}</button>
+            ))}
+          </div>
+          {profileTab === "activity" && (
+            activityGridItems.length ? (
+              <div className="mg2-profile-activity-grid public">
+                {activityGridItems.map((event, index) => (
+                  <button key={`${keyOf(event.item)}-${index}`} type="button" onClick={() => onOpenItem(event.item)}>
+                    <img src={posterUrl(event.item.poster_path, "w185")} alt={titleOf(event.item)} loading="lazy" onError={(eventImage) => { eventImage.currentTarget.src = POSTER_FALLBACK; }} />
+                    <span className="mg2-activity-badges">
+                      {event.statuses.map((status) => (
+                        <i key={status} className={`mg2-activity-badge ${status}`}>
+                          {badgeIcon(status, event.rating)}
+                        </i>
+                      ))}
+                    </span>
+                    {activityDateLabel(event.timestamp) && <em>{activityDateLabel(event.timestamp)}</em>}
+                    <strong>{titleOf(event.item)}</strong>
+                  </button>
+                ))}
+              </div>
+            ) : renderEmpty("No public activity yet.")
+          )}
+          {(profileTab === "watched" || profileTab === "watchlist") && (
+            profileItems.length ? (
+              <div className="mg2-profile-poster-grid">
+                {profileItems.map((item) => <PosterCard key={keyOf(item)} item={item} onOpen={onOpenItem} saved={hasStoredItem(item, tracking.watchlist)} watched={hasStoredItem(item, tracking.watched)} rating={ratingForItem(item, ratings)} compact />)}
+              </div>
+            ) : renderEmpty(profileTab === "watched" ? "No watched titles visible yet." : "No watchlist titles visible yet.")
+          )}
+          {profileTab === "reviews" && (
+            reviewEntries.length ? (
+              <div className="mg2-profile-review-cards">
+                {reviewEntries.map((entry) => {
+                  const item = entry.item || {};
+                  return (
+                    <button key={entry.key || keyOf(item)} type="button" onClick={() => onOpenItem(item)}>
+                      <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(eventImage) => { eventImage.currentTarget.src = POSTER_FALLBACK; }} />
+                      <span>
+                        <strong>{titleOf(item)}</strong>
+                        <small>{entry.text || "Rating only"}</small>
+                      </span>
+                      {entry.rating && <em>{formatUserRating(entry.rating)}</em>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : renderEmpty("No public reviews yet.")
+          )}
+          {profileTab === "lists" && (
+            selectedList ? (
+              <div className="mg2-profile-list-detail public">
+                <button type="button" onClick={() => setSelectedList(null)}><Icon name="back" /> Lists</button>
+                <h3>{selectedList.title}</h3>
+                <small>{(selectedList.items || []).length} titles</small>
+                {(selectedList.items || []).length ? (
+                  <div className="mg2-profile-poster-grid">
+                    {(selectedList.items || []).map((item) => <PosterCard key={keyOf(item)} item={item} onOpen={onOpenItem} saved={hasStoredItem(item, tracking.watchlist)} watched={hasStoredItem(item, tracking.watched)} rating={ratingForItem(item, ratings)} compact />)}
+                  </div>
+                ) : renderEmpty("This list is empty.")}
+              </div>
+            ) : lists.length ? (
+              <div className="mg2-public-list-stack">
+                {lists.map((list) => (
+                  <button className="mg2-public-list-card" key={list.id || list.title} type="button" onClick={() => setSelectedList(list)}>
+                    <div>
+                      <strong>{list.title}</strong>
+                      <small>{list.isDefault ? "Default list" : "Custom list"} - {(list.items || []).length} titles</small>
+                    </div>
+                    <span>
+                      {(list.items || []).slice(0, 8).map((item) => (
+                        <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(eventImage) => { eventImage.currentTarget.src = POSTER_FALLBACK; }} />
+                      ))}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : renderEmpty("No public lists yet.")
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -1200,7 +1918,24 @@ function ContinueWatchingRow({ items, onOpen }) {
   );
 }
 
-function ActivityCard({ item }) {
+function ActivityCard({ item, onOpen, onOpenProfile }) {
+  if (item.profile) {
+    return (
+      <article className="mg2-activity-card">
+        <button className="mg2-public-avatar-button" type="button" onClick={() => onOpenProfile?.(item.profile)}>
+          <PublicAvatar profile={item.profile} size="sm" />
+        </button>
+        <div>
+          <p><strong>{publicProfileName(item.profile)}</strong> {item.actionLabel}</p>
+          <button type="button" onClick={() => onOpen?.(item.item)}><h3>{item.title}</h3></button>
+          {item.metadata?.rating && <small>Rated {formatUserRating(item.metadata.rating)}</small>}
+          <time>{item.time}</time>
+        </div>
+        {item.item?.poster_path && <img src={posterUrl(item.item.poster_path, "w342")} alt={item.title} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />}
+        <Icon name="dots" />
+      </article>
+    );
+  }
   const hasStars = item.rating || item.action === "rated" || item.action === "reviewed";
 
   return (
@@ -1219,6 +1954,25 @@ function ActivityCard({ item }) {
 }
 
 function SocialFeedCard({ item, liked, onLike }) {
+  if (item.profile) {
+    return (
+      <article className="mg2-social-card">
+        <div className="mg2-social-head">
+          <PublicAvatar profile={item.profile} size="sm" />
+          <div>
+            <strong>{publicProfileName(item.profile)}</strong>
+            <span>{item.actionLabel} {item.title}</span>
+          </div>
+          <time>{item.time}</time>
+        </div>
+        <div className="mg2-social-poster">
+          <img src={posterUrl(item.item?.poster_path, "w780")} alt={item.title} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+          {item.metadata?.rating && <em>{formatUserRating(item.metadata.rating)}</em>}
+        </div>
+        <p><strong>{publicProfileName(item.profile)}</strong> {item.actionLabel} {item.title}</p>
+      </article>
+    );
+  }
   return (
     <article className="mg2-social-card">
       <div className="mg2-social-head">
@@ -1252,17 +2006,18 @@ function SocialFeedCard({ item, liked, onLike }) {
   );
 }
 
-function SocialHomeFeed({ likedFeed, toggleFeedLike }) {
+function SocialHomeFeed({ likedFeed, toggleFeedLike, socialActivity = [], useMockFallback = true }) {
+  const items = socialActivity.length ? socialActivity.slice(0, 6) : (useMockFallback ? socialFeedSeeds : []);
   return (
     <section className="mg2-social-feed" aria-label="Social activity feed">
-      {socialFeedSeeds.map((item) => (
+      {items.length ? items.map((item) => (
         <SocialFeedCard key={item.id} item={item} liked={likedFeed[item.id]} onLike={toggleFeedLike} />
-      ))}
+      )) : <div className="mg2-empty">Follow people to see real MovieGram activity here.</div>}
     </section>
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
+function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
   const [searchFilter, setSearchFilter] = useState("all");
   const visibleResults = results.filter((item) => (
     searchFilter === "all" ||
@@ -1270,12 +2025,15 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
     (searchFilter === "tv" && item.media_type === "tv") ||
     (searchFilter === "person" && item.media_type === "person")
   ));
+  const visibleUserResults = (searchFilter === "all" || searchFilter === "user") ? userResults : [];
+  const displayedUserResults = searchFilter === "all" ? visibleUserResults.slice(0, 3) : visibleUserResults;
+  const hasVisibleResults = visibleResults.length > 0 || displayedUserResults.length > 0;
   return (
     <section className="mg2-search-panel">
       <div className="mg2-search">
         <Icon name="search" />
         <input value={query} onChange={(event) => setQuery(event.target.value)} onInput={(event) => setQuery(event.target.value)} placeholder="Search movies, shows, people..." />
-        {loading && <Spinner />}
+        {(loading || userLoading) && <Spinner />}
       </div>
       {query.trim() && (
         <>
@@ -1284,32 +2042,47 @@ function SearchPanel({ query, setQuery, loading, results, page, totalPages, load
               { id: "all", label: "All" },
               { id: "movie", label: "Movies" },
               { id: "tv", label: "TV Shows" },
-              { id: "person", label: "People" }
+              { id: "person", label: "People" },
+              { id: "user", label: "Users" }
             ].map((filter) => (
               <button key={filter.id} className={searchFilter === filter.id ? "active" : ""} type="button" onClick={() => setSearchFilter(filter.id)}>{filter.label}</button>
             ))}
           </div>
-          <div className="mg2-section-head"><h2>Search Results</h2><span>Page {page} / {totalPages}</span></div>
-          {!loading && visibleResults.length === 0 && <div className="mg2-empty">No matches yet. Try another title or filter.</div>}
-          <div className="mg2-grid">
-            {visibleResults.map((item) => {
-              if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
-              const userRating = ratingForItem(item, ratings);
-              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
-            })}
-          </div>
-          <div ref={sentinelRef} className="mg2-sentinel" />
-          <div className="mg2-page-controls">
-            <button type="button" disabled={page <= 1 || loading} onClick={loadPrevious}>Previous</button>
-            <button type="button" disabled={page >= totalPages || loading} onClick={loadNext}>Next</button>
-          </div>
+          {displayedUserResults.length > 0 && (
+            <>
+              <div className="mg2-section-head"><h2>{searchFilter === "all" ? "People / Users" : "Users"}</h2><span>{searchFilter === "all" ? "Top matches" : displayedUserResults.length}</span></div>
+              <div className="mg2-grid">
+                {displayedUserResults.map((profile) => (
+                  <UserResultCard key={`user:${profile.id}`} profile={profile} onOpenPublicProfile={onOpenPublicProfile} />
+                ))}
+              </div>
+            </>
+          )}
+          {searchFilter !== "user" && (
+            <>
+              <div className="mg2-section-head"><h2>Search Results</h2><span>Page {page} / {totalPages}</span></div>
+              <div className="mg2-grid">
+                {visibleResults.map((item) => {
+                  if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
+                  const userRating = ratingForItem(item, ratings);
+                  return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+                })}
+              </div>
+              <div ref={sentinelRef} className="mg2-sentinel" />
+              <div className="mg2-page-controls">
+                <button type="button" disabled={page <= 1 || loading} onClick={loadPrevious}>Previous</button>
+                <button type="button" disabled={page >= totalPages || loading} onClick={loadNext}>Next</button>
+              </div>
+            </>
+          )}
+          {!loading && !userLoading && !hasVisibleResults && <div className="mg2-empty">No matches yet. Try another title, username, or filter.</div>}
         </>
       )}
     </section>
   );
 }
 
-function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
+function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
   return (
     <>
       <div className="mg2-stories">
@@ -1321,11 +2094,11 @@ function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, f
         ))}
       </div>
 
-      <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} />
+      <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} useMockFallback={!user} />
 
       <section className="mg2-section mg2-activity-section">
         <div className="mg2-section-head"><h2>Friend Activity</h2><span>See All</span></div>
-        {feedItems.slice(0, 5).map((item) => <ActivityCard key={item.id} item={item} />)}
+        {feedItems.length ? feedItems.slice(0, 5).map((item) => <ActivityCard key={item.id} item={item} onOpen={onOpen} onOpenProfile={onOpenPublicProfile} />) : <div className="mg2-empty">No followed-user activity yet.</div>}
       </section>
 
       <ContinueWatchingRow items={continueWatching} onOpen={onOpen} />
@@ -1340,12 +2113,12 @@ function HomeScreen({ rows, loading, onOpen, watchlist, watched = {}, ratings, f
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -1780,7 +2553,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, profile, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onSaveProfile }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -1807,21 +2580,21 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], action: () => { setSelectedList({ title: "Blend List", subtitle: "Saved from Blend", items: list.items || [] }); setProfilePanel("list-detail"); } })),
     ...userLists.map((list) => ({ ...list, subtitle: "Custom list", action: () => { setSelectedList({ title: list.title, subtitle: "Custom list", items: list.items || [] }); setProfilePanel("list-detail"); } }))
   ];
-  const recent = (localItems.length ? localItems : fallbackItems).slice(0, 9);
+  const recent = localItems.slice(0, 9);
   const reviewItems = ratedKeys
     .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
     .filter(Boolean)
     .slice(0, 9);
-  const watchedGrid = (watchedItems.length ? watchedItems : dedupe([...fallbackRows.movies, ...fallbackRows.series])).slice(0, 12);
-  const watchlistGrid = (saved.length ? saved : dedupe([...fallbackRows.trending, ...fallbackRows.movies])).slice(0, 12);
+  const watchedGrid = watchedItems.slice(0, 12);
+  const watchlistGrid = saved.slice(0, 12);
   const reviewTextFor = (item) => reviews[keyOf(item)]?.text || item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
   const realReviewItems = localItems.filter((item) => reviewTextFor(item).trim());
   const statCards = [
-    { label: "Watched", value: watchedItems.length || 526 },
+    { label: "Watched", value: watchedItems.length },
     { label: "Watchlist", value: saved.length },
     { label: "Reviews", value: realReviewItems.length },
-    { label: "Followers", value: "1.8k" },
-    { label: "Following", value: 246 }
+    { label: "Followers", value: user ? (socialCounts.followers || 0) : "1.8k" },
+    { label: "Following", value: user ? (socialCounts.following || 0) : 246 }
   ];
   const shortcuts = [
     { label: "Favorites", icon: "heart", action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
@@ -1935,6 +2708,13 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
             <span>Avatar URL</span>
             <input value={profileDraft.avatar_url || ""} onChange={(event) => setProfileDraft((prev) => ({ ...prev, avatar_url: event.target.value }))} placeholder="https://..." />
           </label>
+          <label className="mg2-profile-privacy-toggle">
+            <span>Profile privacy</span>
+            <select value={profileDraft.is_private ? "private" : "public"} onChange={(event) => setProfileDraft((prev) => ({ ...prev, is_private: event.target.value === "private" }))}>
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select>
+          </label>
           {(profileError || profileMessage) && <p>{profileError || profileMessage}</p>}
           <div>
             <button type="button" onClick={submitProfile} disabled={profileSaving}>{profileSaving ? "Saving..." : "Save"}</button>
@@ -1944,8 +2724,21 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
       )}
       <button className="mg2-profile-account" type="button" onClick={onOpenAuth}>
         <span>{accountTitle}</span>
-        <small>{accountSubtitle}</small>
+        <small>{accountSubtitle}{shownProfile.is_private ? " - private profile" : ""}</small>
       </button>
+      {user && <button className="mg2-profile-edit" type="button" onClick={onLogout}>Logout</button>}
+      {user && pendingRequests.length > 0 && (
+        <div className="mg2-profile-editor">
+          <strong>Follow requests</strong>
+          {pendingRequests.map((request) => (
+            <div key={request.id}>
+              <span>{publicProfileName(request)} <small>@{request.username}</small></span>
+              <button type="button" onClick={() => onRespondFollowRequest(request.id, "approved")}>Accept</button>
+              <button type="button" onClick={() => onRespondFollowRequest(request.id, "declined")}>Decline</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="mg2-profile-stats">
         {statCards.map((stat) => (
@@ -2071,10 +2864,11 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   );
 }
 
-function FriendsScreen({ friendStates, onFriendAction, onOpenBlend }) {
+function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, socialProfiles = [], userResults = [], userSearch, setUserSearch, userSearchLoading, followingIds = [], followStatuses = {}, onFollowToggle, onOpenPublicProfile }) {
   const [friendQuery, setFriendQuery] = useState("");
   const [previewFriend, setPreviewFriend] = useState(null);
   const filteredFriends = socialFriendProfiles.filter((friend) => `${friend.name} ${friend.handle} ${friend.genres.join(" ")}`.toLowerCase().includes(friendQuery.trim().toLowerCase()));
+  const realProfiles = user ? (userResults.length ? userResults : socialProfiles) : socialProfiles;
 
   function actionLabel(friendId) {
     const state = friendStates[friendId] || "add";
@@ -2085,7 +2879,32 @@ function FriendsScreen({ friendStates, onFriendAction, onOpenBlend }) {
 
   return (
     <section className="mg2-friends-screen">
-      <div className="mg2-social-search"><Icon name="search" /><input value={friendQuery} onChange={(event) => setFriendQuery(event.target.value)} placeholder="Search people, genres, taste" /></div>
+      <div className="mg2-social-search"><Icon name="search" /><input value={user ? userSearch : friendQuery} onChange={(event) => user ? setUserSearch(event.target.value) : setFriendQuery(event.target.value)} placeholder={user ? "Search users by username or name" : "Search people, genres, taste"} /></div>
+      {user && (
+        <div className="mg2-friend-list">
+          {userSearchLoading && <div className="mg2-empty">Searching users...</div>}
+          {!userSearchLoading && realProfiles.length ? realProfiles.map((profile) => {
+            const following = followingIds.includes(profile.id);
+            const status = followStatuses[profile.id] || "";
+            const label = status === "approved" ? "Following" : status === "pending" ? "Requested" : profile.is_private ? "Request" : "Follow";
+            return (
+              <article key={profile.id}>
+                <button className="mg2-friend-main" type="button" onClick={() => onOpenPublicProfile(profile)}>
+                  <PublicAvatar profile={profile} size="sm" />
+                  <span>
+                    <strong>{publicProfileName(profile)}<small>@{profile.username}{profile.is_private ? " - Private" : ""}</small></strong>
+                    <em>{profile.bio || "MovieGram profile"}</em>
+                    <i>{profile.follower_count || 0} followers - {profile.following_count || 0} following</i>
+                  </span>
+                </button>
+                {profile.id !== user.id && <button className={following ? "friends" : status === "pending" ? "requested" : ""} type="button" onClick={() => onFollowToggle(profile)}>{label}</button>}
+              </article>
+            );
+          }) : !userSearchLoading && <div className="mg2-empty">{userSearch.trim() ? "No users found." : "Follow users to build your social graph."}</div>}
+        </div>
+      )}
+      {!user && (
+        <>
       <div className="mg2-blend-row">
         {socialFriendProfiles.slice(0, 3).map((friend) => (
           <button key={`blend-${friend.id}`} type="button" onClick={() => onOpenBlend(friend.id)}>
@@ -2129,6 +2948,8 @@ function FriendsScreen({ friendStates, onFriendAction, onOpenBlend }) {
             <small>Recent: {previewFriend.activity}</small>
           </article>
         </div>
+      )}
+        </>
       )}
     </section>
   );
@@ -2380,7 +3201,7 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
   );
 }
 
-function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onOpenBlend, onClose }) {
+function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onOpenBlend, onClose, user, socialProfiles, userResults, userSearch, setUserSearch, userSearchLoading, followingIds, followStatuses, onFollowToggle, onOpenPublicProfile }) {
   const [socialTab, setSocialTab] = useState("messages");
   const [chatId, setChatId] = useState(null);
   const conversation = conversations.find((item) => item.id === chatId) || conversations.find((item) => item.id === selectedConversation) || conversations[0];
@@ -2400,7 +3221,7 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
         </>
       )}
       {socialTab === "friends" ? (
-        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} onOpenBlend={onOpenBlend} />
+        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} onOpenBlend={onOpenBlend} user={user} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followStatuses={followStatuses} onFollowToggle={onFollowToggle} onOpenPublicProfile={onOpenPublicProfile} />
       ) : chatId ? (
         <div className="mg2-chat native">
           <div className="mg2-chat-head">
@@ -2513,7 +3334,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenPerson, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -2555,10 +3376,11 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     { id: "rent", label: "Rent", items: watchProviders?.rent || [] },
     { id: "buy", label: "Buy", items: watchProviders?.buy || [] }
   ].filter((group) => group.items.length > 0);
-  const watchedByFriends = feedSeeds
-    .filter((entry) => ["watched", "rated", "reviewed"].includes(entry.action) && titleOf(shown).toLowerCase().includes(entry.title.toLowerCase().split(":")[0]))
-    .slice(0, 4);
-  const friendReviews = feedSeeds.filter((entry) => entry.action === "reviewed" || entry.body).slice(0, 3);
+  const realSocialForTitle = socialActivity.filter((entry) => entry.item && itemMatches(entry.item, shown));
+  const realWatchedByFriends = realSocialForTitle.filter((entry) => ["watched", "rated", "reviewed", "watchlist_add", "liked"].includes(entry.action)).slice(0, 4);
+  const realFriendReviews = realSocialForTitle.filter((entry) => entry.action === "reviewed").slice(0, 4);
+  const watchedByFriends = realWatchedByFriends;
+  const friendReviews = realFriendReviews;
   const hasBackdrop = Boolean(shown.backdrop_path);
   const heroImage = hasBackdrop
     ? backdropUrl(shown.backdrop_path)
@@ -2797,8 +3619,8 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 <div className="mg2-detail-friends-row">
                   {watchedByFriends.map((entry) => (
                     <article key={entry.id}>
-                      <Avatar friend={entry.friend} size="sm" />
-                      <span><strong>{entry.friend.name}</strong><small>{entry.action} {entry.time}</small></span>
+                      {entry.profile ? <button type="button" onClick={() => onOpenPublicProfile?.(entry.profile)}><PublicAvatar profile={entry.profile} size="sm" /></button> : <Avatar friend={entry.friend} size="sm" />}
+                      <span><strong>{entry.profile ? publicProfileName(entry.profile) : entry.friend.name}</strong><small>{entry.actionLabel || entry.action} {entry.time}</small></span>
                     </article>
                   ))}
                 </div>
@@ -2826,9 +3648,9 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 <div className="mg2-detail-review-list">
                   {friendReviews.map((entry) => (
                     <article key={`review-${entry.id}`}>
-                      <Avatar friend={entry.friend} size="sm" />
-                      <span><strong>{entry.friend.name}</strong><small>{entry.body}</small></span>
-                      {entry.rating && <em>{entry.rating}/5</em>}
+                      {entry.profile ? <button type="button" onClick={() => onOpenPublicProfile?.(entry.profile)}><PublicAvatar profile={entry.profile} size="sm" /></button> : <Avatar friend={entry.friend} size="sm" />}
+                      <span><strong>{entry.profile ? publicProfileName(entry.profile) : entry.friend.name}</strong><small>{entry.metadata?.review || entry.body || `${entry.actionLabel} ${entry.title}`}</small></span>
+                      {(entry.metadata?.rating || entry.rating) && <em>{entry.metadata?.rating ? formatUserRating(entry.metadata.rating) : `${entry.rating}/5`}</em>}
                     </article>
                   ))}
                 </div>
@@ -2865,6 +3687,8 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  const [exploreUserResults, setExploreUserResults] = useState([]);
+  const [exploreUserLoading, setExploreUserLoading] = useState(false);
   const [searchPage, setSearchPage] = useState(1);
   const [searchTotalPages, setSearchTotalPages] = useState(1);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -2895,6 +3719,19 @@ export default function Home() {
   const [friendStates, setFriendStates] = useState({});
   const [savedBlendLists, setSavedBlendLists] = useState({});
   const [hiddenRecs, setHiddenRecs] = useState({});
+  const [socialProfiles, setSocialProfiles] = useState([]);
+  const [socialActivity, setSocialActivity] = useState([]);
+  const [followingIds, setFollowingIds] = useState([]);
+  const [pendingFollowIds, setPendingFollowIds] = useState([]);
+  const [followStatuses, setFollowStatuses] = useState({});
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [socialCounts, setSocialCounts] = useState({ followers: 0, following: 0 });
+  const [userSearch, setUserSearch] = useState("");
+  const [userResults, setUserResults] = useState([]);
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
+  const [selectedPublicProfile, setSelectedPublicProfile] = useState(null);
+  const [publicProfileBundle, setPublicProfileBundle] = useState(null);
+  const [socialError, setSocialError] = useState("");
   const [supabaseSession, setSupabaseSession] = useState(null);
   const [supabaseUser, setSupabaseUser] = useState(null);
   const [profileIdentity, setProfileIdentity] = useState(readGuestProfile);
@@ -2902,11 +3739,15 @@ export default function Home() {
   const [profileMessage, setProfileMessage] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [authActionLoading, setAuthActionLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [guestAccepted, setGuestAccepted] = useState(false);
+  const [authOnboardingActive, setAuthOnboardingActive] = useState(false);
   const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "" : "local");
   const [remoteReady, setRemoteReady] = useState(false);
   const activeDataOwner = useRef("guest");
   const localStateHydrated = useRef(false);
+  const remoteHydrating = useRef(false);
   const latestLocalState = useRef(DEFAULT_LOCAL_STATE);
 
   const apiFetch = useCallback(async (path, params = {}) => {
@@ -2963,7 +3804,8 @@ export default function Home() {
     latestLocalState.current = currentLocalState();
   }, [currentLocalState]);
 
-  const applyLocalState = useCallback((state, owner = activeDataOwner.current) => {
+  const applyLocalState = useCallback((state, owner = activeDataOwner.current, options = {}) => {
+    const { persistState = true } = options;
     const normalized = normalizeLocalState(state);
     setWatchlist(normalized.watchlist);
     setWatched(normalized.watched);
@@ -2979,19 +3821,19 @@ export default function Home() {
     setFriendStates(normalized.friendStates);
     setSavedBlendLists(normalized.blendLists);
     setHiddenRecs(normalized.hiddenRecommendations);
-    persistOwnedLocalState(owner, normalized, { writeLegacy: true });
+    if (persistState) persistOwnedLocalState(owner, normalized, { writeLegacy: true });
   }, []);
 
   const applyRemoteState = useCallback((remote, userId) => {
     if (!remote || !userId) return;
     const userCache = readOwnedLocalState(userId, { fallbackToLegacy: false });
-    const nextWatched = mergeTrackingCollections(userCache.watched, remote.watched);
-    const nextWatchlist = enforceWatchExclusivity(mergeTrackingCollections(userCache.watchlist, remote.watchlist), nextWatched);
-    const nextFavorites = mergeTrackingCollections(userCache.favorites, remote.favorites);
-    const nextRatings = mergeRatingsCollections(userCache.ratings, remote.ratings);
-    const nextReviews = { ...userCache.reviews, ...(remote.reviews || {}) };
-    const nextEpisodes = { ...userCache.episodeProgress, ...(remote.episodeProgress || {}) };
-    const nextLists = { ...userCache.customLists, ...(remote.customLists || {}) };
+    const nextWatched = normalizeTrackingCollection(remote.watched || {});
+    const nextWatchlist = enforceWatchExclusivity(normalizeTrackingCollection(remote.watchlist || {}), nextWatched);
+    const nextFavorites = normalizeTrackingCollection(remote.favorites || {});
+    const nextRatings = normalizeRatingsCollection(remote.ratings || {});
+    const nextReviews = remote.reviews || {};
+    const nextEpisodes = remote.episodeProgress || {};
+    const nextLists = remote.customLists || {};
     applyLocalState({
       ...userCache,
       watchlist: nextWatchlist,
@@ -3013,6 +3855,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!supabase) {
+      remoteHydrating.current = false;
       setSupabaseSession(null);
       setSupabaseUser(null);
       setAuthLoading(false);
@@ -3028,6 +3871,7 @@ export default function Home() {
       setSupabaseSession(session || null);
       setSupabaseUser(user);
       if (!user) {
+        remoteHydrating.current = false;
         if (activeDataOwner.current !== "guest") {
           persistOwnedLocalState(activeDataOwner.current, latestLocalState.current, { writeLegacy: false });
         }
@@ -3036,6 +3880,17 @@ export default function Home() {
         applyLocalState(guestState, "guest");
         setProfileIdentity(readGuestProfile());
         setProfileMessage("");
+        setSocialProfiles([]);
+        setSocialActivity([]);
+        setFollowingIds([]);
+        setPendingFollowIds([]);
+        setFollowStatuses({});
+        setPendingRequests([]);
+        setSocialCounts({ followers: 0, following: 0 });
+        setUserResults([]);
+        setUserSearch("");
+        setSelectedPublicProfile(null);
+        setPublicProfileBundle(null);
         setRemoteReady(false);
         setSyncStatus("guest");
         setAuthLoading(false);
@@ -3043,14 +3898,41 @@ export default function Home() {
         return;
       }
       try {
-        if (activeDataOwner.current === "guest" && localStateHydrated.current) {
-          persistOwnedLocalState("guest", latestLocalState.current, { writeLegacy: false });
+        remoteHydrating.current = true;
+        setRemoteReady(false);
+        if (localStateHydrated.current) {
+          const previousOwner = activeDataOwner.current || "guest";
+          if (previousOwner !== user.id) {
+            persistOwnedLocalState(previousOwner, latestLocalState.current, { writeLegacy: false });
+          }
         }
         activeDataOwner.current = user.id;
+        applyLocalState(DEFAULT_LOCAL_STATE, user.id, { persistState: false });
+        setProfileIdentity(defaultProfileForUser(user));
+        setProfileMessage("");
+        setSocialProfiles([]);
+        setSocialActivity([]);
+        setFollowingIds([]);
+        setPendingFollowIds([]);
+        setFollowStatuses({});
+        setPendingRequests([]);
+        setSocialCounts({ followers: 0, following: 0 });
+        setUserResults([]);
+        setUserSearch("");
+        setSelectedPublicProfile(null);
+        setPublicProfileBundle(null);
         setSyncStatus("syncing");
         if (event === "SIGNED_IN") console.info("Signed in");
         if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SESSION") console.info("Supabase session restored");
         const remote = await loadMovieGramRemoteState(user.id);
+        console.info("MovieGram own library restored", {
+          watched: Object.keys(remote?.watched || {}).length,
+          watchlist: Object.keys(remote?.watchlist || {}).length,
+          ratings: Object.keys(remote?.ratings || {}).length,
+          reviews: Object.keys(remote?.reviews || {}).length,
+          lists: Object.keys(remote?.customLists || {}).length,
+          episodes: Object.keys(remote?.episodeProgress || {}).length
+        });
         let loadedProfile = defaultProfileForUser(user);
         let profileNotice = "";
         try {
@@ -3065,7 +3947,9 @@ export default function Home() {
         setRemoteReady(true);
         setSyncStatus("synced");
         setAuthLoading(false);
-      } catch {
+        remoteHydrating.current = false;
+      } catch (error) {
+        console.error("MovieGram own library restore error", error);
         if (!alive) return;
         activeDataOwner.current = user.id;
         const userState = readOwnedLocalState(user.id, { fallbackToLegacy: false });
@@ -3079,6 +3963,7 @@ export default function Home() {
         setRemoteReady(true);
         setSyncStatus("local");
         setAuthLoading(false);
+        remoteHydrating.current = false;
       }
     }
 
@@ -3088,6 +3973,7 @@ export default function Home() {
       const { data, error } = await supabase.auth.getSession();
       if (!alive) return;
       if (error) {
+        console.error("MovieGram Supabase session restore error", error);
         setSupabaseSession(null);
         setSupabaseUser(null);
         setRemoteReady(false);
@@ -3116,11 +4002,78 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [query]);
 
+  const refreshSocialFoundation = useCallback(async () => {
+    if (!supabaseUser) {
+      setSocialProfiles([]);
+      setSocialActivity([]);
+      setFollowingIds([]);
+      setPendingFollowIds([]);
+      setFollowStatuses({});
+      setPendingRequests([]);
+      setSocialCounts({ followers: 0, following: 0 });
+      return;
+    }
+    try {
+      const social = await loadSocialFoundation(supabaseUser.id);
+      setSocialProfiles(social.profiles);
+      setSocialActivity(social.activity);
+      setFollowingIds(social.followingIds);
+      setPendingFollowIds(social.pendingIds || []);
+      setFollowStatuses(social.followStatuses || {});
+      setPendingRequests(social.pendingRequests || []);
+      setSocialCounts(social.counts);
+      setSocialError("");
+    } catch (error) {
+      console.error("MovieGram social foundation load error", error);
+      setSocialProfiles([]);
+      setSocialActivity([]);
+      setFollowingIds([]);
+      setPendingFollowIds([]);
+      setFollowStatuses({});
+      setPendingRequests([]);
+      setSocialCounts({ followers: 0, following: 0 });
+      setSocialError("Run the social foundation migration to enable real friends.");
+    }
+  }, [supabaseUser]);
+
+  useEffect(() => {
+    refreshSocialFoundation();
+  }, [refreshSocialFoundation]);
+
+  useEffect(() => {
+    if (!supabaseUser) {
+      setUserResults([]);
+      setUserSearchLoading(false);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      setUserSearchLoading(true);
+      try {
+        const results = await searchPublicProfiles(userSearch, supabaseUser.id);
+        if (alive) setUserResults(results);
+      } catch {
+        if (alive) {
+          setUserResults([]);
+          setSocialError("User search is unavailable until profiles RLS is updated.");
+        }
+      } finally {
+        if (alive) setUserSearchLoading(false);
+      }
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [supabaseUser, userSearch]);
+
   useEffect(() => {
     if (!supabaseUser || !remoteReady) return;
+    if (remoteHydrating.current) return;
     persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
     setSyncStatus("syncing");
     const timer = window.setTimeout(async () => {
+      if (remoteHydrating.current) return;
       try {
         await saveMovieGramRemoteState(supabaseUser.id, {
           watchlist,
@@ -3132,7 +4085,8 @@ export default function Home() {
           customLists
         });
         setSyncStatus("synced");
-      } catch {
+      } catch (error) {
+        console.error("MovieGram own library save error", error);
         setSyncStatus("local");
       }
     }, 900);
@@ -3243,6 +4197,31 @@ export default function Home() {
     search(1, false);
   }, [debouncedQuery]);
 
+  useEffect(() => {
+    if (!debouncedQuery) {
+      setExploreUserResults([]);
+      setExploreUserLoading(false);
+      return;
+    }
+    let alive = true;
+    async function loadExploreUsers() {
+      setExploreUserLoading(true);
+      try {
+        const results = await searchPublicProfiles(debouncedQuery, supabaseUser?.id || null);
+        if (alive) setExploreUserResults(results);
+      } catch (error) {
+        console.error("MovieGram Explore profile search error", error);
+        if (alive) setExploreUserResults([]);
+      } finally {
+        if (alive) setExploreUserLoading(false);
+      }
+    }
+    loadExploreUsers();
+    return () => {
+      alive = false;
+    };
+  }, [debouncedQuery, supabaseUser]);
+
   const loadNextSearch = useCallback(() => {
     if (!debouncedQuery || searchLoading || searchPage >= searchTotalPages) return;
     search(searchPage + 1, true);
@@ -3341,12 +4320,14 @@ export default function Home() {
   }, [details, selected]);
 
   const feedItems = useMemo(() => {
+    if (socialActivity.length) return socialActivity;
+    if (supabaseUser) return [];
     return Array.from({ length: feedPage }, (_, page) => feedSeeds.map((item, index) => ({
       ...item,
       id: `${item.id}-${page}`,
       time: page === 0 ? item.time : `${page + index + 1}d`
     }))).flat();
-  }, [feedPage]);
+  }, [feedPage, socialActivity, supabaseUser]);
 
   const recommended = useMemo(() => {
     const saved = Object.values(watchlist);
@@ -3416,51 +4397,87 @@ export default function Home() {
       setAuthMessage("Supabase env vars are missing. Guest mode is active.");
       return;
     }
-    setAuthLoading(true);
+    setAuthActionLoading(true);
     setAuthMessage("");
     try {
+      if (mode === "reset") {
+        const result = await supabase.auth.resetPasswordForEmail(email);
+        if (result.error) throw result.error;
+        setAuthMessage("Password reset email sent if account exists.");
+        return;
+      }
       const result = mode === "signup"
         ? await supabase.auth.signUp({ email, password })
         : await supabase.auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
       const session = result.data.session || null;
-      setSupabaseSession(session);
       if (session?.user) {
+        setSupabaseSession(session);
         setSupabaseUser(session.user);
         setSyncStatus("syncing");
         setAuthOpen(false);
         setAuthMessage("Logged in.");
         console.info("Signed in");
       } else {
+        setSupabaseSession(null);
         setSupabaseUser(null);
         setSyncStatus("guest");
-        setAuthMessage(mode === "signup" ? "Account created. Check your email if confirmation is enabled, then log in." : "Login did not return a Supabase session.");
+        setAuthMessage(mode === "signup" ? "Check your email to verify your account." : "Email verification is required before login.");
       }
     } catch (error) {
-      setAuthMessage(error.message || "Authentication failed.");
+      const raw = `${error.message || ""}`.toLowerCase();
+      if (raw.includes("email not confirmed") || raw.includes("not confirmed")) {
+        setAuthMessage("Please verify your email before logging in.");
+      } else if (raw.includes("invalid login") || raw.includes("invalid credentials")) {
+        setAuthMessage("Incorrect email or password.");
+      } else if (raw.includes("user not found")) {
+        setAuthMessage("Incorrect email or password.");
+      } else {
+        setAuthMessage(error.message || "Authentication failed.");
+      }
     } finally {
-      setAuthLoading(false);
+      setAuthActionLoading(false);
     }
   }
 
   async function handleLogout() {
     if (!supabase) return;
-    setAuthLoading(true);
-    if (supabaseUser) {
-      persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
+    setAuthActionLoading(true);
+    setAuthMessage("");
+    try {
+      if (supabaseUser) {
+        persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
+      }
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      activeDataOwner.current = "guest";
+      const guestState = readOwnedLocalState("guest", { fallbackToLegacy: false });
+      applyLocalState(guestState, "guest");
+      setProfileIdentity(readGuestProfile());
+      setProfileMessage("");
+      setSocialProfiles([]);
+      setSocialActivity([]);
+      setFollowingIds([]);
+      setPendingFollowIds([]);
+      setFollowStatuses({});
+      setPendingRequests([]);
+      setSocialCounts({ followers: 0, following: 0 });
+      setUserResults([]);
+      setUserSearch("");
+      setSelectedPublicProfile(null);
+      setPublicProfileBundle(null);
+      setSupabaseSession(null);
+      setSupabaseUser(null);
+      setRemoteReady(false);
+      setSyncStatus("guest");
+      setGuestAccepted(false);
+      setAuthOnboardingActive(false);
+      setAuthOpen(false);
+    } catch (error) {
+      setAuthMessage(error.message || "Could not log out.");
+    } finally {
+      setAuthActionLoading(false);
     }
-    await supabase.auth.signOut();
-    activeDataOwner.current = "guest";
-    const guestState = readOwnedLocalState("guest", { fallbackToLegacy: false });
-    applyLocalState(guestState, "guest");
-    setProfileIdentity(readGuestProfile());
-    setProfileMessage("");
-    setSupabaseSession(null);
-    setSupabaseUser(null);
-    setRemoteReady(false);
-    setSyncStatus("guest");
-    setAuthLoading(false);
-    setAuthOpen(false);
   }
 
   async function handleProfileSave(nextProfile) {
@@ -3470,7 +4487,7 @@ export default function Home() {
     setProfileMessage("");
     try {
       if (supabaseUser) {
-        const savedProfile = await saveSupabaseProfile(supabaseUser, { ...profileIdentity, ...validation.value, avatar_url: nextProfile.avatar_url || "" });
+        const savedProfile = await saveSupabaseProfile(supabaseUser, { ...profileIdentity, ...validation.value, avatar_url: nextProfile.avatar_url || "", is_private: Boolean(nextProfile.is_private) });
         setProfileIdentity(savedProfile);
         setProfileMessage("Profile saved.");
         return { profile: savedProfile };
@@ -3479,6 +4496,7 @@ export default function Home() {
         ...readGuestProfile(),
         ...validation.value,
         avatar_url: nextProfile.avatar_url || "",
+        is_private: Boolean(nextProfile.is_private),
         email: "",
         updated_at: new Date().toISOString()
       };
@@ -3497,9 +4515,116 @@ export default function Home() {
     }
   }
 
+  async function toggleFollow(profile) {
+    if (!supabase || !supabaseUser || !profile?.id || profile.id === supabaseUser.id) return;
+    const currentStatus = followStatuses[profile.id] || "";
+    const shouldRemove = currentStatus === "approved" || currentStatus === "pending";
+    try {
+      if (shouldRemove) {
+        const { error } = await supabase
+          .from("follows")
+          .delete()
+          .eq("follower_id", supabaseUser.id)
+          .eq("following_id", profile.id);
+        if (error) throw error;
+      } else {
+        const status = profile.is_private ? "pending" : "approved";
+        const { error } = await supabase
+          .from("follows")
+          .upsert({ follower_id: supabaseUser.id, following_id: profile.id, status }, { onConflict: "follower_id,following_id" });
+        if (error) throw error;
+      }
+      const nextStatus = shouldRemove ? "" : profile.is_private ? "pending" : "approved";
+      setFollowStatuses((current) => {
+        const next = { ...current };
+        if (shouldRemove) delete next[profile.id];
+        else next[profile.id] = nextStatus;
+        return next;
+      });
+      setFollowingIds((current) => shouldRemove ? current.filter((id) => id !== profile.id) : (profile.is_private ? current : [...new Set([...current, profile.id])]));
+      setPendingFollowIds((current) => shouldRemove ? current.filter((id) => id !== profile.id) : (profile.is_private ? [...new Set([...current, profile.id])] : current));
+      await refreshSocialFoundation();
+      if (selectedPublicProfile?.id === profile.id) {
+        await openPublicProfile(profile);
+      }
+    } catch (error) {
+      console.error("MovieGram follow action error", error);
+      setSocialError("Follow action is unavailable until the follows table/RLS is ready.");
+    }
+  }
+
+  async function respondFollowRequest(requesterId, status) {
+    if (!supabase || !supabaseUser || !requesterId) return;
+    try {
+      if (status === "approved") {
+        const { error } = await supabase
+          .from("follows")
+          .update({ status: "approved" })
+          .eq("follower_id", requesterId)
+          .eq("following_id", supabaseUser.id)
+          .eq("status", "pending");
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("follows")
+          .delete()
+          .eq("follower_id", requesterId)
+          .eq("following_id", supabaseUser.id)
+          .eq("status", "pending");
+        if (error) throw error;
+      }
+      await refreshSocialFoundation();
+    } catch (error) {
+      console.error("MovieGram follow request action error", error);
+      setSocialError("Follow request action is unavailable until follow request RLS is ready.");
+    }
+  }
+
+  async function openPublicProfile(profile) {
+    if (!profile?.id) return;
+    setActiveSocial("publicProfile");
+    setSelectedPublicProfile(profile);
+    setPublicProfileBundle({ profile, stats: { followers: profile.follower_count || 0, following: profile.following_count || 0, watched: 0 }, activity: [] });
+    if (!supabase) return;
+    try {
+      const bundle = await loadPublicProfileBundle(profile.id, supabaseUser?.id);
+      setPublicProfileBundle(bundle);
+      setSelectedPublicProfile(bundle.profile);
+      setSocialError("");
+    } catch (error) {
+      console.error("MovieGram public profile load error", error);
+      setSocialError("Public profile activity is unavailable until social RLS is ready.");
+    }
+  }
+
   function logActivity(action, item, metadata = {}) {
     if (!supabaseUser) return;
-    createActivityEvent(supabaseUser.id, action, { ...item, media_type: mediaType(item) }, metadata).catch(() => {});
+    createActivityEvent(supabaseUser.id, action, { ...item, media_type: mediaType(item) }, metadata)
+      .then(() => refreshSocialFoundation())
+      .catch((error) => console.error("MovieGram activity save error", { table: "activity_events", action, message: error?.message, error }));
+  }
+
+  function syncTrackingNow(actionName, overrides = {}) {
+    if (!supabaseUser?.id || !remoteReady || remoteHydrating.current) return;
+    const nextState = normalizeLocalState({
+      watchlist,
+      watched,
+      episodeProgress,
+      ratings,
+      reviews,
+      favorites,
+      customLists,
+      ...latestLocalState.current,
+      ...overrides
+    });
+    latestLocalState.current = nextState;
+    persistOwnedLocalState(supabaseUser.id, nextState, { writeLegacy: false });
+    saveMovieGramRemoteState(supabaseUser.id, nextState)
+      .then(() => setSyncStatus("synced"))
+      .catch((error) => {
+        console.error("MovieGram tracking action save error", { action: actionName, message: error?.message, table: error?.table, error });
+        setSyncStatus("local");
+      });
   }
 
   function toggleWatchlist(item) {
@@ -3511,6 +4636,7 @@ export default function Home() {
       const removed = removeMatchingItem(nextWatchlist, normalized);
       setWatchlist(removed);
       persist("moviegram.watchlist", removed);
+      syncTrackingNow("watchlist_remove", { watchlist: removed });
     } else {
       nextWatchlist[key] = normalized;
       const nextWatched = removeMatchingItem(normalizeTrackingCollection(watched), normalized);
@@ -3518,6 +4644,7 @@ export default function Home() {
       setWatched(nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
       persist("moviegram.watched", nextWatched);
+      syncTrackingNow("watchlist_add", { watchlist: nextWatchlist, watched: nextWatched });
       logActivity("watchlist_add", normalized);
     }
   }
@@ -3583,6 +4710,7 @@ export default function Home() {
       const removed = removeMatchingItem(nextWatched, normalized);
       setWatched(removed);
       persist("moviegram.watched", removed);
+      let nextEpisodesForSync = episodeProgress;
       if (normalized.media_type === "tv") {
         const keys = knownEpisodeKeysForShow(normalized);
         if (keys.length) {
@@ -3590,8 +4718,10 @@ export default function Home() {
           keys.forEach((episodeProgressKey) => delete nextEpisodes[episodeProgressKey]);
           setEpisodeProgress(nextEpisodes);
           persist("moviegram.episodeProgress", nextEpisodes);
+          nextEpisodesForSync = nextEpisodes;
         }
       }
+      syncTrackingNow("watched_remove", { watched: removed, episodeProgress: nextEpisodesForSync });
     }
   }
 
@@ -3604,6 +4734,7 @@ export default function Home() {
     setWatchlist(nextWatchlist);
     persist("moviegram.watched", nextWatched);
     persist("moviegram.watchlist", nextWatchlist);
+    let nextEpisodesForSync = episodeProgress;
     if (normalized.media_type === "tv") {
       const keys = knownEpisodeKeysForShow(normalized);
       if (keys.length) {
@@ -3613,8 +4744,10 @@ export default function Home() {
         });
         setEpisodeProgress(nextEpisodes);
         persist("moviegram.episodeProgress", nextEpisodes);
+        nextEpisodesForSync = nextEpisodes;
       }
     }
+    syncTrackingNow("watched_add", { watched: nextWatched, watchlist: nextWatchlist, episodeProgress: nextEpisodesForSync });
     logActivity("watched", normalized, { watchedAt, unknownDate: !watchedAt });
   }
 
@@ -3638,6 +4771,7 @@ export default function Home() {
         setWatched(nextWatched);
         persist("moviegram.watched", nextWatched);
       }
+      syncTrackingNow("season_unwatched", { episodeProgress: nextEpisodes, watched: nextWatched });
       return;
     }
     setWatchedAction({
@@ -3666,10 +4800,12 @@ export default function Home() {
       setWatchlist(nextWatchlist);
       persist("moviegram.watched", nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
+      syncTrackingNow("show_completed", { watched: nextWatched, watchlist: nextWatchlist, episodeProgress: nextEpisodes });
       logActivity("show_completed", normalized, { watchedAt, seasonNumber: season.season_number });
     }
     setEpisodeProgress(nextEpisodes);
     persist("moviegram.episodeProgress", nextEpisodes);
+    syncTrackingNow("season_completed", { episodeProgress: nextEpisodes });
     logActivity("season_completed", normalized, { watchedAt, seasonNumber: season.season_number });
   }
 
@@ -3737,6 +4873,7 @@ export default function Home() {
       persist("moviegram.watched", cleaned);
       setEpisodeProgress(nextEpisodes);
       persist("moviegram.episodeProgress", nextEpisodes);
+      syncTrackingNow("episode_progress", { watched: cleaned, episodeProgress: nextEpisodes });
       return;
     }
 
@@ -3744,6 +4881,7 @@ export default function Home() {
     setEpisodeProgress(nextEpisodes);
     persist("moviegram.watched", nextWatched);
     persist("moviegram.episodeProgress", nextEpisodes);
+    syncTrackingNow("episode_progress", { watched: nextWatched, episodeProgress: nextEpisodes });
   }
 
   function rateItem(item, value) {
@@ -3754,6 +4892,7 @@ export default function Home() {
     else delete next[key];
     setRatings(next);
     persist("moviegram.ratings", next);
+    syncTrackingNow(rating ? "rating_save" : "rating_clear", { ratings: next });
     if (rating) logActivity("rated", item, { rating });
   }
 
@@ -3771,7 +4910,8 @@ export default function Home() {
     else delete next[key];
     setReviews(next);
     persist("moviegram.reviews", next);
-    if (trimmed) logActivity("reviewed", normalized);
+    syncTrackingNow(trimmed ? "review_save" : "review_clear", { reviews: next });
+    if (trimmed) logActivity("reviewed", normalized, { review: trimmed, rating: ratingForItem(normalized, ratings) });
     setReviewItem(null);
   }
 
@@ -3781,6 +4921,7 @@ export default function Home() {
     delete next[key];
     setReviews(next);
     persist("moviegram.reviews", next);
+    syncTrackingNow("review_delete", { reviews: next });
     setReviewItem(null);
   }
 
@@ -3793,6 +4934,7 @@ export default function Home() {
     };
     setCustomLists(next);
     persist("moviegram.customLists", next);
+    syncTrackingNow("custom_list_create", { customLists: next });
     logActivity("custom_list_create", normalized, { listKey: id });
   }
 
@@ -3805,6 +4947,7 @@ export default function Home() {
     const next = { ...customLists, [listId]: { ...list, items: nextItems, updatedAt: new Date().toISOString() } };
     setCustomLists(next);
     persist("moviegram.customLists", next);
+    syncTrackingNow(exists ? "custom_list_remove" : "custom_list_add", { customLists: next });
     logActivity(exists ? "custom_list_remove" : "custom_list_add", normalized, { listKey: listId });
   }
 
@@ -3817,10 +4960,12 @@ export default function Home() {
       const removed = removeMatchingItem(next, normalized);
       setFavorites(removed);
       persist("moviegram.favorites", removed);
+      syncTrackingNow("favorite_remove", { favorites: removed });
     } else {
       next[key] = { ...normalized, likedAt: new Date().toISOString() };
       setFavorites(next);
       persist("moviegram.favorites", next);
+      syncTrackingNow("favorite_add", { favorites: next });
       logActivity("liked", normalized);
     }
   }
@@ -3858,7 +5003,7 @@ export default function Home() {
     persist("moviegram.hiddenRecommendations", next);
   }
 
-  const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : activeSocial === "blend" ? "Blend" : activeSocial === "stats" ? "Stats" : activeSocial === "diary" ? "Diary" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
+  const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : activeSocial === "publicProfile" ? "Profile" : activeSocial === "blend" ? "Blend" : activeSocial === "stats" ? "Stats" : activeSocial === "diary" ? "Diary" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
   const selectedKey = selected ? keyOf(selected) : "";
 
   const queryProps = {
@@ -3866,6 +5011,8 @@ export default function Home() {
     setQuery,
     loading: searchLoading,
     results: searchResults,
+    userResults: exploreUserResults,
+    userLoading: exploreUserLoading,
     page: searchPage,
     totalPages: searchTotalPages,
     loadNext: loadNextSearch,
@@ -3874,10 +5021,26 @@ export default function Home() {
   };
 
   let screen = null;
-  if (activeSocial === "messages") {
+  if (activeSocial === "publicProfile") {
+    screen = (
+      <section className="mg2-native-social">
+        <PublicProfileScreen
+          profile={selectedPublicProfile}
+          bundle={publicProfileBundle}
+          currentUser={supabaseUser}
+          followStatuses={followStatuses}
+          onBack={() => { setSelectedPublicProfile(null); setPublicProfileBundle(null); setActiveSocial(null); }}
+          onFollowToggle={toggleFollow}
+          onOpenItem={(item) => { setSelectedPublicProfile(null); setPublicProfileBundle(null); setActiveSocial(null); openItem(item); }}
+        />
+        {socialError && <div className="mg2-empty">{socialError}</div>}
+      </section>
+    );
+  } else if (activeSocial === "messages") {
     screen = (
       <section className="mg2-native-social messages">
-        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onOpenBlend={() => setActiveSocial("blend")} onClose={() => setActiveSocial(null)} />
+        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onOpenBlend={() => setActiveSocial("blend")} onClose={() => setActiveSocial(null)} user={supabaseUser} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followStatuses={followStatuses} onFollowToggle={toggleFollow} onOpenPublicProfile={openPublicProfile} />
+        {socialError && <div className="mg2-empty">{socialError}</div>}
       </section>
     );
   } else if (activeSocial === "notifications") {
@@ -3921,7 +5084,7 @@ export default function Home() {
       </section>
     );
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} onOpen={openItem} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
   } else if (activeTab === "log") {
@@ -3940,6 +5103,7 @@ export default function Home() {
         actorsLoading={actorsLoading}
         onOpen={openItem}
         onOpenPerson={openPerson}
+        onOpenPublicProfile={openPublicProfile}
         onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
         watchlist={watchlist}
         watched={watched}
@@ -3948,7 +5112,29 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} profile={profileIdentity} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => setAuthOpen(true)} onSaveProfile={handleProfileSave} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} />;
+  }
+
+  if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
+    return (
+      <AuthOnboarding
+        configured={isSupabaseConfigured}
+        loading={authLoading}
+        onGuest={() => { setGuestAccepted(true); setAuthOnboardingActive(false); }}
+        onSession={(session) => {
+          setAuthOnboardingActive(true);
+          setSupabaseSession(session || null);
+          setSupabaseUser(session?.user || null);
+          setSyncStatus(session?.user ? "syncing" : "guest");
+        }}
+        onProfileSaved={(profile) => setProfileIdentity(profile)}
+        onComplete={() => {
+          setAuthOnboardingActive(false);
+          setGuestAccepted(false);
+          setAuthMessage("");
+        }}
+      />
+    );
   }
 
   return (
@@ -3959,7 +5145,7 @@ export default function Home() {
       onOpenMessages={() => setActiveSocial("messages")}
       onOpenNotifications={() => setActiveSocial("notifications")}
       socialActive={Boolean(activeSocial)}
-      onCloseSocial={() => setActiveSocial(null)}
+      onCloseSocial={() => { setActiveSocial(null); setSelectedPublicProfile(null); setPublicProfileBundle(null); }}
     >
       {!API_KEY && <div className="mg2-empty">Add NEXT_PUBLIC_TMDB_API_KEY to .env.local.</div>}
       {screen}
@@ -3977,6 +5163,7 @@ export default function Home() {
           onRate={rateItem}
           onOpen={openItem}
           onOpenPerson={openPerson}
+          onOpenPublicProfile={(profile) => { setSelected(null); openPublicProfile(profile); }}
           externalRatings={externalRatings}
           watchProviders={watchProviders}
           favorite={hasStoredItem(selected, favorites)}
@@ -3989,6 +5176,7 @@ export default function Home() {
           onEditReview={(item) => setReviewItem({ ...item, media_type: mediaType(item) })}
           onDeleteReview={deleteReview}
           onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })}
+          socialActivity={socialActivity}
         />
       )}
       <PersonProfileModal
@@ -4030,16 +5218,6 @@ export default function Home() {
         onCreate={createCustomList}
         onToggleItem={toggleCustomListItem}
         onClose={() => setListItem(null)}
-      />
-      <AuthSheet
-        open={authOpen}
-        user={supabaseUser}
-        configured={isSupabaseConfigured}
-        loading={authLoading}
-        message={authMessage}
-        onClose={() => setAuthOpen(false)}
-        onSubmit={handleAuthSubmit}
-        onLogout={handleLogout}
       />
     </PhoneShell>
   );
