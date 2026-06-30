@@ -300,7 +300,14 @@ function stored(key, fallback) {
 
 function persist(key, value) {
   if (typeof window !== "undefined") {
-    localStorage.setItem(key, JSON.stringify(value));
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+      console.warn("MovieGram local cache write skipped; cleared oversized key.", { key, message: error?.message });
+    }
   }
 }
 
