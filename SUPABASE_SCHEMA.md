@@ -116,6 +116,82 @@ create table activity_events (
   created_at timestamptz default now(),
   primary key (user_id, event_key)
 );
+
+create table reel_cache (
+  id bigint generated always as identity primary key,
+  source text not null default 'youtube',
+  source_video_id text,
+  source_url text,
+  media_type text not null,
+  tmdb_id bigint,
+  item_key text not null,
+  title text not null,
+  video_title text,
+  channel_title text,
+  creator_username text,
+  thumbnail_url text,
+  embed_html text,
+  embed_url text,
+  oembed_json jsonb,
+  watch_url text,
+  label text,
+  reason text,
+  source_context text,
+  source_user_id uuid references auth.users(id) on delete set null,
+  approved boolean not null default false,
+  quality_score numeric default 0,
+  playable boolean not null default true,
+  embed_status text,
+  last_checked_at timestamptz,
+  last_embed_checked_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (source, source_video_id)
+);
+
+create index reel_cache_item_key_idx on reel_cache (item_key);
+create index reel_cache_item_context_idx on reel_cache (item_key, source_context, updated_at desc);
+create unique index reel_cache_source_item_video_unique on reel_cache (source, item_key, source_video_id);
+
+create table creator_sources (
+  id uuid primary key default gen_random_uuid(),
+  platform text not null,
+  source_name text not null,
+  source_url text not null,
+  source_id text,
+  source_type text,
+  genres text[],
+  keywords text[],
+  quality_score numeric default 0,
+  approved boolean not null default true,
+  last_checked_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (platform, source_url)
+);
+
+create index creator_sources_platform_idx on creator_sources (platform);
+create index creator_sources_approved_idx on creator_sources (approved);
+create index creator_sources_quality_idx on creator_sources (quality_score desc);
+
+create table discovery_jobs (
+  id uuid primary key default gen_random_uuid(),
+  job_type text,
+  status text,
+  provider text,
+  query text,
+  title text,
+  item_key text,
+  media_type text,
+  tmdb_id bigint,
+  source_context text,
+  results_found integer default 0,
+  playable_saved integer default 0,
+  error_message text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  last_run_at timestamptz
+);
 ```
 
 ## Profiles Migration
@@ -148,6 +224,9 @@ alter table custom_lists enable row level security;
 alter table custom_list_items enable row level security;
 alter table follows enable row level security;
 alter table activity_events enable row level security;
+alter table reel_cache enable row level security;
+alter table creator_sources enable row level security;
+alter table discovery_jobs enable row level security;
 
 create policy "Users can manage own profile" on profiles for all using (auth.uid() = id) with check (auth.uid() = id);
 create policy "Users can manage own items" on user_items for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -157,6 +236,10 @@ create policy "Users can manage own lists" on custom_lists for all using (auth.u
 create policy "Users can manage own list items" on custom_list_items for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users can manage own follows" on follows for all using (auth.uid() = follower_id) with check (auth.uid() = follower_id);
 create policy "Users can manage own activity" on activity_events for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Anyone can read cached reels" on reel_cache for select using (true);
+create policy "Authenticated users can add cached reels" on reel_cache for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can refresh cached reels" on reel_cache for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Anyone can read approved creator sources" on creator_sources for select using (approved = true);
 ```
 
 ## CP14 Social Foundation Migration
@@ -403,3 +486,177 @@ using (
 ```
 
 These are select-only visibility policies. Existing insert, update, and delete policies should remain user-owned so users can modify only their own tracking, reviews, lists, follows, requests, and activity.
+
+## CP15 / CP15.5 Reels Cache Migration
+
+Run this before publishing YouTube-powered Reels or accepting user-submitted Instagram/manual reel links. The app reads from `reel_cache` first so public users do not burn the shared YouTube Data API quota on every open, tab switch, or refresh. Only metadata and URLs are stored; MovieGram never stores video files and never scrapes Instagram.
+
+```sql
+create table if not exists reel_cache (
+  id bigint generated always as identity primary key,
+  source text not null default 'youtube',
+  source_video_id text,
+  source_url text,
+  media_type text not null,
+  tmdb_id bigint,
+  item_key text not null,
+  title text not null,
+  video_title text,
+  channel_title text,
+  creator_username text,
+  thumbnail_url text,
+  embed_html text,
+  embed_url text,
+  oembed_json jsonb,
+  watch_url text,
+  label text,
+  reason text,
+  source_context text,
+  source_user_id uuid references auth.users(id) on delete set null,
+  approved boolean not null default false,
+  quality_score numeric default 0,
+  playable boolean not null default true,
+  embed_status text,
+  last_checked_at timestamptz,
+  last_embed_checked_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table reel_cache add column if not exists source_url text;
+alter table reel_cache alter column source_video_id drop not null;
+alter table reel_cache add column if not exists creator_username text;
+alter table reel_cache add column if not exists embed_html text;
+alter table reel_cache add column if not exists embed_url text;
+alter table reel_cache add column if not exists oembed_json jsonb;
+alter table reel_cache add column if not exists approved boolean not null default false;
+alter table reel_cache add column if not exists quality_score numeric default 0;
+alter table reel_cache add column if not exists playable boolean not null default true;
+alter table reel_cache add column if not exists embed_status text;
+alter table reel_cache add column if not exists last_checked_at timestamptz;
+alter table reel_cache add column if not exists last_embed_checked_at timestamptz;
+update reel_cache set approved = true where source = 'youtube' and coalesce(approved, false) = false;
+update reel_cache set playable = true where (source_url is not null or watch_url is not null or embed_url is not null) and playable is distinct from true;
+
+create unique index if not exists reel_cache_source_video_unique
+on reel_cache (source, source_video_id);
+
+create unique index if not exists reel_cache_source_item_video_unique
+on reel_cache (source, item_key, source_video_id);
+
+create index if not exists reel_cache_item_key_idx
+on reel_cache (item_key);
+
+create index if not exists reel_cache_item_context_idx
+on reel_cache (item_key, source_context, updated_at desc);
+
+create index if not exists reel_cache_playable_idx
+on reel_cache (approved, playable, source);
+
+create table if not exists creator_sources (
+  id uuid primary key default gen_random_uuid(),
+  platform text not null,
+  source_name text not null,
+  source_url text not null,
+  source_id text,
+  source_type text,
+  genres text[],
+  keywords text[],
+  quality_score numeric default 0,
+  approved boolean not null default true,
+  last_checked_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create unique index if not exists creator_sources_platform_url_unique
+on creator_sources (platform, source_url);
+
+create index if not exists creator_sources_platform_idx
+on creator_sources (platform);
+
+create index if not exists creator_sources_approved_idx
+on creator_sources (approved);
+
+create index if not exists creator_sources_quality_idx
+on creator_sources (quality_score desc);
+
+create table if not exists discovery_jobs (
+  id uuid primary key default gen_random_uuid(),
+  job_type text,
+  status text,
+  provider text,
+  query text,
+  title text,
+  item_key text,
+  media_type text,
+  tmdb_id bigint,
+  source_context text,
+  results_found integer default 0,
+  playable_saved integer default 0,
+  error_message text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  last_run_at timestamptz
+);
+
+alter table reel_cache enable row level security;
+alter table creator_sources enable row level security;
+alter table discovery_jobs enable row level security;
+
+drop policy if exists "Anyone can read cached reels" on reel_cache;
+create policy "Anyone can read cached reels"
+on reel_cache for select
+using (true);
+
+drop policy if exists "Authenticated users can add cached reels" on reel_cache;
+create policy "Authenticated users can add cached reels"
+on reel_cache for insert
+with check (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated users can refresh cached reels" on reel_cache;
+create policy "Authenticated users can refresh cached reels"
+on reel_cache for update
+using (auth.role() = 'authenticated')
+with check (auth.role() = 'authenticated');
+
+drop policy if exists "Anyone can read approved creator sources" on creator_sources;
+create policy "Anyone can read approved creator sources"
+on creator_sources for select
+using (approved = true);
+
+-- Optional controlled seed foundation for future reel discovery jobs.
+-- These rows are source profiles only; they are not playable reels.
+-- Instagram/Facebook entries should remain approved=false until exact public profile/page
+-- URLs are verified and real reel/watch URLs are imported into reel_cache.
+insert into creator_sources
+  (platform, source_name, source_url, source_type, genres, keywords, quality_score, approved)
+values
+  ('youtube', 'Marvel Entertainment', 'https://www.youtube.com/@marvel', 'official_channel', array['superhero','action'], array['official','clip','trailer','short'], 95, true),
+  ('youtube', 'Max', 'https://www.youtube.com/@StreamOnMax', 'ott', array['drama','series'], array['official','clip','teaser'], 90, true),
+  ('youtube', 'Warner Bros. Pictures', 'https://www.youtube.com/@WarnerBrosPictures', 'studio', array['movie','trailer'], array['official','clip','trailer'], 92, true),
+  ('youtube', 'Sony Pictures Entertainment', 'https://www.youtube.com/@sonypictures', 'studio', array['movie'], array['official','clip','trailer'], 90, true),
+  ('youtube', 'Universal Pictures', 'https://www.youtube.com/@UniversalPictures', 'studio', array['movie'], array['official','clip','trailer'], 90, true),
+  ('youtube', 'Netflix', 'https://www.youtube.com/@Netflix', 'ott', array['movie','tv'], array['official','clip','teaser'], 92, true),
+  ('youtube', 'Prime Video', 'https://www.youtube.com/@PrimeVideo', 'ott', array['movie','tv'], array['official','clip','teaser'], 88, true),
+  ('youtube', 'Disney', 'https://www.youtube.com/@Disney', 'studio', array['family','adventure'], array['official','clip','short'], 88, true),
+  ('youtube', 'Pixar', 'https://www.youtube.com/@pixar', 'studio', array['animation','family'], array['official','clip','short'], 86, true),
+  ('youtube', 'A24', 'https://www.youtube.com/@A24', 'studio', array['indie','drama'], array['official','trailer','clip'], 86, true),
+  ('youtube', 'Rotten Tomatoes Trailers', 'https://www.youtube.com/@RottenTomatoesTRAILERS', 'creator', array['movie','tv'], array['trailer','official'], 78, true),
+  ('youtube', 'Movieclips', 'https://www.youtube.com/@MOVIECLIPS', 'creator', array['movie','clip'], array['clip','scene'], 84, true),
+  ('youtube', 'IGN', 'https://www.youtube.com/@IGN', 'creator', array['movie','tv','game'], array['clip','trailer'], 72, true),
+  ('youtube', 'KinoCheck', 'https://www.youtube.com/@KinoCheck.com', 'creator', array['movie','trailer'], array['trailer','clip'], 74, true),
+  ('instagram', 'Marvel Instagram TODO', 'todo:instagram:marvel', 'official_profile', array['superhero','action'], array['reel','clip','edit'], 0, false),
+  ('instagram', 'Netflix Instagram TODO', 'todo:instagram:netflix', 'ott', array['movie','tv'], array['reel','clip','teaser'], 0, false),
+  ('instagram', 'Prime Video Instagram TODO', 'todo:instagram:primevideo', 'ott', array['movie','tv'], array['reel','clip','teaser'], 0, false),
+  ('facebook', 'Marvel Facebook TODO', 'todo:facebook:marvel', 'official_profile', array['superhero','action'], array['reel','watch','clip'], 0, false),
+  ('facebook', 'Netflix Facebook TODO', 'todo:facebook:netflix', 'ott', array['movie','tv'], array['reel','watch','clip'], 0, false)
+on conflict (platform, source_url) do update set
+  source_name = excluded.source_name,
+  source_type = excluded.source_type,
+  genres = excluded.genres,
+  keywords = excluded.keywords,
+  quality_score = excluded.quality_score,
+  approved = excluded.approved,
+  updated_at = now();
+```

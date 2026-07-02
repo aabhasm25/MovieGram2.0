@@ -10,6 +10,7 @@ import {
 } from "../lib/supabaseClient";
 
 const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+const YOUTUBE_API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY;
 const API_BASE = "https://api.themoviedb.org/3";
 const IMAGE_BASE = "https://image.tmdb.org/t/p";
 const POSTER_FALLBACK =
@@ -194,6 +195,413 @@ const actorFallbacks = [
   { id: 4, name: "Anya Taylor-Joy", known_for_department: "Acting", profile_path: "/6bX3q6o7Qf9LhEDPH1v3cV6ZJYz.jpg" }
 ];
 
+const youtubeReelMemoryCache = new Map();
+let youtubeReelLimitReached = false;
+let youtubeQuotaErrorObserved = false;
+const YOUTUBE_QUOTA_SESSION_KEY = "youtubeQuotaExceeded";
+const YOUTUBE_REEL_REFRESH_PREFIX = "moviegram.youtubeReelRefresh.";
+const YOUTUBE_REEL_TAB_COUNT_PREFIX = "moviegram.youtubeReelTabSearches.";
+const REEL_LIGHT_DISCOVERY_SESSION_KEY = "moviegram.reelLightDiscovery.v1";
+const REEL_CACHE_LOG_SESSION_KEY = "moviegram.reelCacheFirstLog.v1";
+const TMDB_REEL_SEED_SESSION_KEY = "moviegram.tmdbReelSeedDone";
+const YOUTUBE_SEARCH_STOPPED_SESSION_KEY = "moviegram.youtubeSearchStoppedAfter429";
+const MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION = 2;
+const REEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MOVIEGRAM_REEL_ADMIN_IDS = (process.env.NEXT_PUBLIC_MOVIEGRAM_REEL_ADMIN_IDS || "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+const REEL_RUNTIME_SESSION_ID = Math.random().toString(36).slice(2, 10);
+
+function readYouTubeQuotaExceeded() {
+  if (youtubeReelLimitReached) return true;
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(YOUTUBE_QUOTA_SESSION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function markYouTubeQuotaExceeded() {
+  youtubeReelLimitReached = true;
+  youtubeQuotaErrorObserved = true;
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(YOUTUBE_QUOTA_SESSION_KEY, "true");
+    window.sessionStorage.setItem(YOUTUBE_SEARCH_STOPPED_SESSION_KEY, "true");
+  } catch {
+    // Session storage can be unavailable in private contexts; the in-memory flag still protects this page session.
+  }
+}
+
+function isYouTubeQuotaError(status, message = "") {
+  return status === 429 || /quota|rate limit|rate_limit|exceeded/i.test(message || "");
+}
+
+function youtubeTabSearchCount(tab, userId) {
+  if (typeof window === "undefined") return 0;
+  try {
+    return Number(window.sessionStorage.getItem(`${YOUTUBE_REEL_TAB_COUNT_PREFIX}${userId || "guest"}.${tab}`) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function incrementYouTubeTabSearchCount(tab, userId) {
+  if (typeof window === "undefined") return;
+  try {
+    const key = `${YOUTUBE_REEL_TAB_COUNT_PREFIX}${userId || "guest"}.${tab}`;
+    window.sessionStorage.setItem(key, String(Number(window.sessionStorage.getItem(key) || 0) + 1));
+  } catch {
+    // Non-critical quota guard metadata.
+  }
+}
+
+function recentYouTubeRefreshKey(tab, itemKey) {
+  return `${YOUTUBE_REEL_REFRESH_PREFIX}${tab}.${itemKey}`;
+}
+
+function wasYouTubeTitleRefreshedRecently(tab, itemKey) {
+  if (typeof window === "undefined") return false;
+  try {
+    const value = Number(window.localStorage.getItem(recentYouTubeRefreshKey(tab, itemKey)) || 0);
+    return value && Date.now() - value < REEL_CACHE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markYouTubeTitleRefreshed(tab, itemKey) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(recentYouTubeRefreshKey(tab, itemKey), String(Date.now()));
+  } catch {
+    // Non-critical quota guard metadata.
+  }
+}
+
+function readReelLightDiscoveryUsed() {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.sessionStorage.getItem(REEL_LIGHT_DISCOVERY_SESSION_KEY) === "true";
+  } catch {
+    return true;
+  }
+}
+
+function markReelLightDiscoveryUsed() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(REEL_LIGHT_DISCOVERY_SESSION_KEY, "true");
+  } catch {
+    // Non-critical guard metadata.
+  }
+}
+
+function logReelCacheFirstOnce({ cachedCount, fallbackCount, lightDiscoveryAllowed, youtubeCallsUsed }) {
+  if (typeof window === "undefined") return;
+  try {
+    if (window.sessionStorage.getItem(REEL_CACHE_LOG_SESSION_KEY) === "true") return;
+    window.sessionStorage.setItem(REEL_CACHE_LOG_SESSION_KEY, "true");
+  } catch {
+    // The log itself is non-critical.
+  }
+  console.info(`Reels cache-first: ${cachedCount} playable cached, ${fallbackCount} fallbacks, light discovery allowed: ${Boolean(lightDiscoveryAllowed)}, YouTube UI calls used: ${youtubeCallsUsed}.`);
+}
+
+function readTmdbReelSeedDone() {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.sessionStorage.getItem(TMDB_REEL_SEED_SESSION_KEY) === "true";
+  } catch {
+    return true;
+  }
+}
+
+function markTmdbReelSeedDone() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(TMDB_REEL_SEED_SESSION_KEY, "true");
+  } catch {
+    // Non-critical guard metadata.
+  }
+}
+
+function readReelsMutedPreference() {
+  if (typeof window === "undefined") return true;
+  try {
+    const value = window.localStorage.getItem("moviegram.reelsMuted");
+    return value === null ? true : value !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function saveReelsMutedPreference(muted) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem("moviegram.reelsMuted", muted ? "true" : "false");
+  } catch {
+    // Non-critical player preference.
+  }
+}
+
+function parseExternalReelUrl(value = "") {
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\./, "").toLowerCase();
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  if (host === "youtu.be" || host.endsWith("youtube.com")) {
+    const videoId = host === "youtu.be"
+      ? pathParts[0]
+      : url.searchParams.get("v") || (pathParts[0] === "shorts" ? pathParts[1] : pathParts.at(-1));
+    if (!videoId) return null;
+    return {
+      source: "youtube",
+      sourceVideoId: videoId,
+      sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&modestbranding=1&enablejsapi=1`,
+      watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      label: "Short"
+    };
+  }
+  if (host.endsWith("instagram.com")) {
+    const shortcode = pathParts.find((part, index) => ["reel", "p", "tv"].includes(pathParts[index - 1])) || pathParts[1] || pathParts[0];
+    const embedUrl = shortcode ? `https://www.instagram.com/reel/${shortcode}/embed` : "";
+    return {
+      source: "instagram",
+      sourceVideoId: shortcode || null,
+      sourceUrl: url.toString(),
+      embedUrl,
+      watchUrl: url.toString(),
+      label: "Instagram Reel"
+    };
+  }
+  if (host.endsWith("facebook.com") && (pathParts.includes("reel") || pathParts.includes("watch") || pathParts.includes("videos"))) {
+    return {
+      source: "facebook",
+      sourceVideoId: url.searchParams.get("v") || pathParts.at(-1) || null,
+      sourceUrl: url.toString(),
+      embedUrl: buildFacebookEmbedUrl(url.toString()),
+      watchUrl: url.toString(),
+      label: "Facebook Reel"
+    };
+  }
+  return {
+    source: "manual",
+    sourceVideoId: null,
+    sourceUrl: url.toString(),
+    embedUrl: "",
+    watchUrl: url.toString(),
+    label: "Edit"
+  };
+}
+
+function buildFacebookEmbedUrl(sourceUrl = "") {
+  if (!sourceUrl) return "";
+  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(sourceUrl)}&show_text=false&autoplay=true&mute=true&allowfullscreen=true`;
+}
+
+function reelSourceFromUrl(source = "", sourceUrl = "") {
+  const normalizedSource = String(source || "").toLowerCase();
+  if (normalizedSource === "fallback" || normalizedSource === "preview") return normalizedSource;
+  if (normalizedSource && !["manual", "web"].includes(normalizedSource)) return normalizedSource;
+  if (/youtu\.be|youtube(?:-nocookie)?\.com/i.test(sourceUrl)) return "youtube";
+  if (/instagram\.com/i.test(sourceUrl)) return "instagram";
+  if (/facebook\.com|fb\.watch/i.test(sourceUrl)) return "facebook";
+  const parsed = parseExternalReelUrl(sourceUrl);
+  return parsed?.source || normalizedSource || "manual";
+}
+
+function reelEmbedUrlForSource(source = "", sourceVideoId = "", sourceUrl = "", cachedEmbedUrl = "") {
+  if (cachedEmbedUrl) return cachedEmbedUrl;
+  if (source === "youtube" && sourceVideoId) {
+    return buildYouTubeEmbedUrl(sourceVideoId);
+  }
+  if (source === "facebook" && sourceUrl) return buildFacebookEmbedUrl(sourceUrl);
+  if (source === "instagram" && sourceUrl) return parseExternalReelUrl(sourceUrl)?.embedUrl || "";
+  return "";
+}
+
+function buildYouTubeEmbedUrl(videoId = "", muted = true) {
+  if (!videoId) return "";
+  const params = new URLSearchParams({
+    autoplay: "1",
+    mute: muted ? "1" : "0",
+    playsinline: "1",
+    rel: "0",
+    controls: "0",
+    modestbranding: "1",
+    enablejsapi: "1"
+  });
+  if (typeof window !== "undefined" && window.location?.origin) params.set("origin", window.location.origin);
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+}
+
+function getYouTubeVideoId(reel = {}) {
+  const direct = reel.sourceVideoId || reel.source_video_id || reel.video_id || reel.youtube_key || (reel.source === "youtube" ? reel.id : "");
+  if (direct && /^[A-Za-z0-9_-]{6,}$/.test(String(direct))) return String(direct).split(/[?&/#]/)[0];
+  const values = [reel.embedUrl, reel.embed_url, reel.watchUrl, reel.watch_url, reel.sourceUrl, reel.source_url].filter(Boolean);
+  for (const value of values) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.replace(/^www\./, "").toLowerCase();
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (host === "youtu.be" && parts[0]) return parts[0].split(/[?&/#]/)[0];
+      if (host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com")) {
+        const fromQuery = url.searchParams.get("v");
+        if (fromQuery) return fromQuery.split(/[?&/#]/)[0];
+        const embedIndex = parts.findIndex((part) => part === "embed" || part === "shorts");
+        if (embedIndex >= 0 && parts[embedIndex + 1]) return parts[embedIndex + 1].split(/[?&/#]/)[0];
+      }
+    } catch {
+      const match = String(value).match(/(?:embed\/|shorts\/|youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{6,})/);
+      if (match?.[1]) return match[1];
+    }
+  }
+  return null;
+}
+
+function isYouTubeReel(reel = {}) {
+  if ((reel.source || "").toLowerCase() === "youtube") return true;
+  return [reel.embedUrl, reel.watchUrl, reel.sourceUrl, reel.embed_url, reel.watch_url, reel.source_url]
+    .filter(Boolean)
+    .some((value) => /youtu\.be|youtube(?:-nocookie)?\.com/i.test(value));
+}
+
+function reelTypeLabel(reel = {}) {
+  const text = `${reel.label || ""} ${reel.kind || ""} ${reel.video_type || ""} ${reel.type || ""} ${reel.videoTitle || ""} ${reel.video_title || ""}`.toLowerCase();
+  if (text.includes("official trailer")) return "Official Trailer";
+  if (text.includes("trailer")) return "Trailer";
+  if (text.includes("behind the scenes")) return "Behind the Scenes";
+  if (text.includes("featurette")) return "Featurette";
+  if (text.includes("teaser")) return "Teaser";
+  if (text.includes("clip")) return "Clip";
+  if (text.includes("scene edit")) return "Scene Edit";
+  if (text.includes("instagram")) return "Instagram Reel";
+  if (text.includes("facebook")) return "Facebook Reel";
+  if (text.includes("short")) return "Short";
+  return reel.kind || "";
+}
+
+function reelTypeRank(reel = {}) {
+  const label = reelTypeLabel(reel).toLowerCase();
+  if (label.includes("clip")) return 70;
+  if (label.includes("scene edit")) return 66;
+  if (label.includes("short")) return 62;
+  if (label.includes("teaser")) return 58;
+  if (label.includes("featurette")) return 54;
+  if (label.includes("behind the scenes")) return 50;
+  if (label.includes("trailer")) return 28;
+  if (label.includes("instagram") || label.includes("facebook")) return 56;
+  return 44;
+}
+
+function rankReelsForFeed(reels = []) {
+  const titleTrailerCount = new Map();
+  return [...reels]
+    .map((reel) => {
+      const itemKey = reel.item ? keyOf(reel.item) : "";
+      const label = reelTypeLabel(reel).toLowerCase();
+      const isTrailer = label.includes("trailer");
+      const trailerCount = titleTrailerCount.get(itemKey) || 0;
+      if (isTrailer) titleTrailerCount.set(itemKey, trailerCount + 1);
+      return {
+        ...reel,
+        score: Number(reel.score || 0) + reelTypeRank(reel) - (isTrailer && trailerCount > 0 ? 120 : 0)
+      };
+    })
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+function reelIdentity(reel = {}) {
+  const source = reelSourceFromUrl(reel.source || "", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "");
+  return `${source}:${getYouTubeVideoId(reel) || reel.sourceVideoId || reel.id || reel.sourceUrl || reel.watchUrl || reel.embedUrl || keyOf(reel.item || {})}`;
+}
+
+function mergePlayableReels(primary = [], incoming = []) {
+  const seen = new Set();
+  return rankReelsForFeed([...primary, ...incoming].filter((reel) => {
+    if (!reel || reel.isFallbackPreview) return false;
+    const identity = reelIdentity(reel);
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  }));
+}
+
+function hasPlayableReels(list = []) {
+  return Array.isArray(list) && list.some((reel) => {
+    if (!reel || reel.isFallbackPreview) return false;
+    return Boolean(
+      reel.sourceVideoId
+      || reel.source_video_id
+      || reel.embedUrl
+      || reel.embed_url
+      || reel.watchUrl
+      || reel.watch_url
+      || reel.sourceUrl
+      || reel.source_url
+      || reel.id
+    );
+  });
+}
+
+function hashString(value = "") {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededUnit(seed, index) {
+  const value = hashString(`${seed}:${index}`);
+  return value / 4294967295;
+}
+
+function rotateAndDiversifyReels(reels = [], tab = "forYou", userId = "guest") {
+  const playable = mergePlayableReels([], reels);
+  if (playable.length <= 1) {
+    const first = playable[0] ? (getYouTubeVideoId(playable[0]) || playable[0].id || "none") : "none";
+    return { reels: playable, seedLabel: `${userId || "guest"}:${tab}:${REEL_RUNTIME_SESSION_ID}`, first, unique: playable.length };
+  }
+
+  const seedLabel = `${userId || "guest"}:${tab}:${new Date().toISOString().slice(0, 10)}:${REEL_RUNTIME_SESSION_ID}`;
+  const weighted = playable
+    .map((reel, index) => ({
+      reel,
+      index,
+      itemKey: keyOf(reel.item || {}),
+      score: Number(reel.score || 0),
+      sortValue: (Number(reel.score || 0) * 0.72) + (seededUnit(seedLabel, index) * 90)
+    }))
+    .sort((a, b) => b.sortValue - a.sortValue);
+
+  const output = [];
+  while (weighted.length) {
+    const lastItemKey = output.at(-1) ? keyOf(output.at(-1).item || {}) : "";
+    const nextIndex = weighted.findIndex((entry) => entry.itemKey && entry.itemKey !== lastItemKey);
+    const [picked] = weighted.splice(nextIndex >= 0 ? nextIndex : 0, 1);
+    output.push(picked.reel);
+  }
+
+  const offset = hashString(seedLabel) % output.length;
+  const rotated = [...output.slice(offset), ...output.slice(0, offset)];
+  return {
+    reels: rotated,
+    seedLabel,
+    first: getYouTubeVideoId(rotated[0]) || rotated[0]?.id || "none",
+    unique: new Set(rotated.map(reelIdentity)).size
+  };
+}
+
 function mediaType(item) {
   if (item.media_type) return item.media_type;
   return item.first_air_date || item.name ? "tv" : "movie";
@@ -268,6 +676,16 @@ function externalRatingCacheKey(item) {
 
 function episodeKey(showId, seasonNumber, episodeNumber) {
   return `tv:${showId}:s${seasonNumber}:e${episodeNumber}`;
+}
+
+function parseEpisodeProgressKey(value = "") {
+  const match = String(value).match(/^tv:(\d+):s(\d+):e(\d+)$/);
+  if (!match) return null;
+  return {
+    showId: Number(match[1]),
+    seasonNumber: Number(match[2]),
+    episodeNumber: Number(match[3])
+  };
 }
 
 function normalSeasonsOf(show = {}) {
@@ -884,6 +1302,9 @@ function Icon({ name }) {
     check: "m5 12 4 4L19 6",
     heart: "M12 21s-7-4.4-9-9a5 5 0 0 1 8-5 5 5 0 0 1 8 5c-2 4.6-9 9-9 9z",
     play: "m8 5 11 7-11 7z",
+    pause: "M7 5h4v14H7zM13 5h4v14h-4z",
+    volume: "M4 10v4h4l5 4V6l-5 4H4zM16 9a4 4 0 0 1 0 6",
+    muted: "M4 10v4h4l5 4V6l-5 4H4zM17 9l4 4m0-4-4 4",
     send: "m3 11 18-8-8 18-2-8z",
     dots: "M5 12h.01M12 12h.01M19 12h.01",
     back: "M15 18 9 12l6-6"
@@ -2266,70 +2687,1223 @@ function FeedScreen({ items, loadMore, likedFeed, savedFeed, toggleFeedLike, tog
   );
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, onOpen, onWatchlist }) {
+function youtubeQueriesForItem(item, tab) {
+  const title = titleOf(item);
+  const editQueries = [`${title} edit`, `${title} shorts`, `${title} scene edit`, `${title} cinematic edit`, `${title} fan edit`];
+  return tab === "watched" || tab === "friends" || tab === "forYou"
+    ? [...editQueries, `${title} official trailer`, `${title} trailer`]
+    : editQueries;
+}
+
+function videoKindFromTitle(videoTitle = "", query = "") {
+  const text = `${videoTitle} ${query}`.toLowerCase();
+  if (text.includes("official trailer")) return "Official Trailer";
+  if (text.includes("trailer")) return "Trailer";
+  if (text.includes("scene edit")) return "Scene Edit";
+  if (text.includes("short")) return "Short";
+  if (text.includes("edit")) return "Edit";
+  return "Edit";
+}
+
+function scoreYouTubeVideo(video, item, query, tab, used = {}) {
+  const title = titleOf(item).toLowerCase();
+  const text = `${video.videoTitle || ""} ${query}`.toLowerCase();
+  let score = 0;
+  if (video.thumbnailUrl) score += 20;
+  if (text.includes(title)) score += 22;
+  if (text.includes("edit")) score += 18;
+  if (text.includes("short")) score += 16;
+  if (text.includes("scene edit")) score += 14;
+  if (text.includes("cinematic")) score += 10;
+  if (text.includes("official trailer")) score += tab === "forYou" || tab === "friends" || tab === "watched" ? -20 : 8;
+  else if (text.includes("trailer")) score += -12;
+  if (used.videoIds?.has(video.id)) score -= 1000;
+  if ((used.itemKeys?.get(keyOf(item)) || 0) > 0) score -= 18;
+  if ((used.channels?.get(video.channelTitle) || 0) > 1) score -= 12;
+  const freshness = video.publishedAt ? Math.max(0, 8 - Math.floor((Date.now() - new Date(video.publishedAt).getTime()) / 31536000000)) : 0;
+  return score + freshness;
+}
+
+function reelCacheRowToVideo(row, item, fallbackReason) {
+  const sourceProbeUrl = row.source_url || row.watch_url || row.embed_url || "";
+  const parsed = parseExternalReelUrl(sourceProbeUrl);
+  const source = reelSourceFromUrl(row.source || "youtube", sourceProbeUrl);
+  const videoId = row.source_video_id || parsed?.sourceVideoId || getYouTubeVideoId(row) || row.id;
+  const watchUrl = row.watch_url || row.source_url || (source === "youtube" && row.source_video_id ? `https://www.youtube.com/watch?v=${row.source_video_id}` : "");
+  if (!videoId && !watchUrl) return null;
+  return {
+    id: videoId || watchUrl,
+    source,
+    sourceVideoId: videoId || "",
+    sourceUrl: row.source_url || "",
+    embedHtml: row.embed_html || "",
+    embedStatus: row.embed_status || "",
+    item: { ...item, media_type: mediaType(item) },
+    videoTitle: row.video_title || "",
+    channelTitle: row.channel_title || row.creator_username || "",
+    thumbnailUrl: row.thumbnail_url || "",
+    embedUrl: reelEmbedUrlForSource(source, videoId, row.source_url || watchUrl, row.embed_url || parsed?.embedUrl || ""),
+    watchUrl,
+    kind: row.label || (source === "instagram" ? "Instagram Reel" : source === "facebook" ? "Facebook Reel" : videoKindFromTitle(row.video_title || "")),
+    reason: row.reason || fallbackReason,
+    playable: row.playable !== false && Boolean(watchUrl || row.embed_url || row.embed_html),
+    score: Number(row.quality_score || 0),
+    updatedAt: row.updated_at || row.created_at || "",
+    lastEmbedCheckedAt: row.last_embed_checked_at || ""
+  };
+}
+
+function reelCacheRowIsFresh(row) {
+  const timestamp = new Date(row.updated_at || row.created_at || 0).getTime();
+  return timestamp && Date.now() - timestamp < REEL_CACHE_TTL_MS;
+}
+
+function reelRowHasPlayableSource(row = {}) {
+  return row.approved !== false && Boolean(row.playable || row.source_video_id || row.embed_url || row.watch_url || row.source_url);
+}
+
+const TMDB_REEL_VIDEO_SCORE = {
+  Clip: 90,
+  Teaser: 80,
+  Featurette: 75,
+  "Behind the Scenes": 70,
+  Trailer: 60
+};
+
+function scoreTmdbVideo(video = {}) {
+  return TMDB_REEL_VIDEO_SCORE[video.type] || 0;
+}
+
+function tmdbVideoLabel(video = {}) {
+  return TMDB_REEL_VIDEO_SCORE[video.type] ? video.type : "Preview";
+}
+
+let tmdbReelSeedErrorLogged = false;
+
+async function seedPlayableReelsFromTmdbVideos(seedItems = []) {
+  if (!API_KEY || !seedItems.length) return { reels: [], checked: 0, created: 0 };
+  const acceptedTypes = new Set(["Clip", "Teaser", "Trailer", "Featurette", "Behind the Scenes"]);
+  const seenVideoIds = new Set();
+  const rows = [];
+  let checked = 0;
+
+  for (const candidate of seedItems.slice(0, 15)) {
+    const item = candidate.item || {};
+    if (!item.id) continue;
+    checked += 1;
+    try {
+      const type = mediaType(item);
+      const response = await fetch(`${API_BASE}/${type}/${item.id}/videos?api_key=${API_KEY}`);
+      if (!response.ok) continue;
+      const data = await response.json();
+      const videos = (data.results || [])
+        .filter((video) => video.site === "YouTube" && video.key && acceptedTypes.has(video.type))
+        .sort((a, b) => {
+          const official = Number(Boolean(b.official)) - Number(Boolean(a.official));
+          if (official) return official;
+          return scoreTmdbVideo(b) - scoreTmdbVideo(a);
+        })
+        .slice(0, 3);
+      videos.forEach((video) => {
+        if (seenVideoIds.has(video.key)) return;
+        seenVideoIds.add(video.key);
+        const normalized = { ...item, media_type: type };
+        const now = new Date().toISOString();
+        rows.push({
+          source: "youtube",
+          source_video_id: video.key,
+          source_url: `https://www.youtube.com/watch?v=${video.key}`,
+          media_type: type,
+          tmdb_id: Number(item.id),
+          item_key: keyOf(normalized),
+          title: titleOf(normalized),
+          video_title: video.name || titleOf(normalized),
+          channel_title: "TMDB",
+          creator_username: "TMDB",
+          thumbnail_url: `https://img.youtube.com/vi/${video.key}/hqdefault.jpg`,
+          embed_url: `https://www.youtube.com/embed/${video.key}?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&modestbranding=1&enablejsapi=1`,
+          watch_url: `https://www.youtube.com/watch?v=${video.key}`,
+          label: tmdbVideoLabel(video),
+          reason: "Official video from TMDB",
+          source_context: "tmdb_videos",
+          approved: true,
+          playable: true,
+          quality_score: scoreTmdbVideo(video),
+          last_checked_at: now,
+          updated_at: now
+        });
+      });
+    } catch {
+      // A single title with unavailable TMDB videos should not block the rest of Reels.
+    }
+  }
+
+  if (rows.length && supabase) {
+    const { error } = await supabase.from("reel_cache").upsert(rows, { onConflict: "source,source_video_id" });
+    if (error && !tmdbReelSeedErrorLogged) {
+      tmdbReelSeedErrorLogged = true;
+      console.error("MovieGram TMDB reel seed upsert failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    }
+  }
+
+  const reels = rows
+    .map((row) => reelCacheRowToVideo(row, seedItems.find((candidate) => keyOf(candidate.item) === row.item_key)?.item || row, row.reason))
+    .filter(Boolean)
+    .map((reel) => ({ ...reel, score: Number(reel.score || 0) + 120 }));
+  return { reels: rankReelsForFeed(reels), checked, created: rows.length };
+}
+
+async function loadReelCacheForSeeds(seedItems, tab) {
+  if (!supabase || !seedItems.length) return { reels: [], freshKeys: new Set() };
+  const reelCacheSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,source_user_id,approved,quality_score,playable,last_checked_at,created_at,updated_at";
+  const candidatesByKey = new Map(seedItems.map((candidate) => [keyOf(candidate.item), candidate]));
+  const itemKeys = [...candidatesByKey.keys()];
+  const { data, error } = await supabase
+    .from("reel_cache")
+    .select(reelCacheSelect)
+    .in("item_key", itemKeys)
+    .order("updated_at", { ascending: false })
+    .limit(Math.max(30, itemKeys.length * 4));
+
+  if (error) {
+    console.error("MovieGram Supabase load failed for reel_cache", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
+    return { reels: [], freshKeys: new Set() };
+  }
+
+  const playableSeedRows = (data || []).filter(reelRowHasPlayableSource);
+  console.info(`Reel cache seed query: seedMatched=${playableSeedRows.length}`);
+
+  let globalData = [];
+  if (playableSeedRows.length < 10) {
+    const { data: fillData, error: fillError } = await supabase
+      .from("reel_cache")
+      .select(reelCacheSelect)
+      .or("source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null")
+      .order("quality_score", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(50);
+
+    if (fillError) {
+      console.error("MovieGram Supabase global fill failed for reel_cache", {
+        message: fillError.message,
+        code: fillError.code,
+        details: fillError.details,
+        hint: fillError.hint
+      });
+    } else {
+      globalData = (fillData || []).filter(reelRowHasPlayableSource);
+    }
+  }
+  console.info(`Reel cache global fill: loaded=${globalData.length}`);
+
+  const seenVideos = new Set();
+  const itemCounts = new Map();
+  const freshKeys = new Set();
+  const reels = [];
+  const rowItem = (row) => ({
+    id: row.tmdb_id || row.id,
+    media_type: row.media_type || "movie",
+    title: row.title || row.video_title || "Untitled",
+    name: row.media_type === "tv" ? row.title || row.video_title || "Untitled" : undefined
+  });
+  const rowsToMerge = [
+    ...(data || []).map((row) => ({ row, seedMatched: candidatesByKey.has(row.item_key), globalFill: false })),
+    ...globalData.map((row) => ({ row, seedMatched: candidatesByKey.has(row.item_key), globalFill: true }))
+  ];
+
+  const conversionStats = {
+    raw: rowsToMerge.length,
+    playable: 0,
+    converted: 0
+  };
+
+  rowsToMerge.forEach(({ row, seedMatched, globalFill }) => {
+    const candidate = candidatesByKey.get(row.item_key);
+    if (!reelRowHasPlayableSource(row)) return;
+    if (globalFill && tab !== "forYou" && !candidate) return;
+    conversionStats.playable += 1;
+    if (reelCacheRowIsFresh(row)) freshKeys.add(row.item_key);
+    const source = reelSourceFromUrl(row.source || "", row.source_url || row.watch_url || row.embed_url || "");
+    const dedupeKey = `${source}:${row.source_video_id || row.source_url || row.watch_url || row.embed_url || row.id}`;
+    if (seenVideos.has(dedupeKey)) return;
+    const itemKey = row.item_key || (candidate ? keyOf(candidate.item) : "");
+    const itemCount = itemCounts.get(itemKey) || 0;
+    if (itemKey && itemCount >= 3) return;
+    const video = reelCacheRowToVideo(row, candidate?.item || rowItem(row), candidate?.reason || row.reason || "From MovieGram reels");
+    if (!video) return;
+    conversionStats.converted += 1;
+    seenVideos.add(dedupeKey);
+    if (itemKey) itemCounts.set(itemKey, itemCount + 1);
+    const sourceBoost = ["youtube", "instagram", "facebook"].includes(video.source) ? 50 : 10;
+    reels.push({
+      ...video,
+      reason: row.source_context === tab ? video.reason : candidate?.reason || video.reason,
+      score: Number(candidate?.score || 0)
+        + (seedMatched ? 120 : 0)
+        + (globalFill ? 40 : 0)
+        + (row.source_context === tab ? 20 : 0)
+        + sourceBoost
+        + Number(row.quality_score || 0)
+    });
+  });
+
+  const rankedReels = rankReelsForFeed(reels);
+  console.info(`Reel cache conversion: raw=${conversionStats.raw}, playable=${conversionStats.playable}, converted=${conversionStats.converted}, final=${rankedReels.length}.`);
+  return { reels: rankedReels, freshKeys };
+}
+
+async function saveReelCacheRow({ item, video, tab, reason, userId }) {
+  if (!supabase || !item?.id || (!video?.id && !video?.watchUrl)) return;
+  const normalized = { ...item, media_type: mediaType(item) };
+  const itemKey = keyOf(normalized);
+  const now = new Date().toISOString();
+  const row = {
+    source: video.source || "youtube",
+    source_video_id: video.id || null,
+    source_url: video.sourceUrl || video.watchUrl || "",
+    media_type: mediaType(normalized),
+    tmdb_id: Number(normalized.id),
+    item_key: itemKey,
+    title: titleOf(normalized),
+    video_title: video.videoTitle || "",
+    channel_title: video.channelTitle || "",
+    creator_username: video.creatorUsername || video.channelTitle || "",
+    thumbnail_url: video.thumbnailUrl || "",
+    embed_html: video.embedHtml || "",
+    embed_url: reelEmbedUrlForSource(video.source || "youtube", video.id, video.sourceUrl || video.watchUrl || "", video.embedUrl || ""),
+    watch_url: video.watchUrl || `https://www.youtube.com/watch?v=${video.id}`,
+    label: video.kind || videoKindFromTitle(video.videoTitle || ""),
+    reason,
+    source_context: tab,
+    source_user_id: userId && userId !== "guest" ? userId : null,
+    approved: true,
+    playable: Boolean(video.watchUrl || video.embedUrl || video.sourceUrl),
+    quality_score: Number(video._score || video.score || 0),
+    last_checked_at: now,
+    updated_at: now
+  };
+  const { error } = await supabase
+    .from("reel_cache")
+    .upsert(row, { onConflict: "source,source_video_id" });
+  if (error) {
+    console.error("MovieGram Supabase upsert failed for reel_cache", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
+  }
+}
+
+async function submitExternalReelLink({ item, url, reason, userId, approved }) {
+  if (!supabase || !userId || userId === "guest" || !item?.id) {
+    return { error: "Sign in to submit a reel link." };
+  }
+  const parsed = parseExternalReelUrl(url);
+  if (!parsed) return { error: "Paste a valid Instagram, YouTube, or public reel URL." };
+  const normalized = { ...item, media_type: mediaType(item) };
+  const itemKey = keyOf(normalized);
+  const now = new Date().toISOString();
+  const sourceVideoId = parsed.sourceVideoId || `${parsed.source}:${itemKey}:${Date.now()}`;
+  const row = {
+    source: parsed.source,
+    source_video_id: sourceVideoId,
+    source_url: parsed.sourceUrl,
+    media_type: mediaType(normalized),
+    tmdb_id: Number(normalized.id),
+    item_key: itemKey,
+    title: titleOf(normalized),
+    video_title: titleOf(normalized),
+    channel_title: "",
+    creator_username: "",
+    thumbnail_url: "",
+    embed_html: "",
+    embed_url: parsed.embedUrl || "",
+    watch_url: parsed.watchUrl || parsed.sourceUrl,
+    label: parsed.source === "instagram" ? "Instagram Reel" : parsed.source === "facebook" ? "Facebook Reel" : parsed.label,
+    reason: reason?.trim() || `Submitted for ${titleOf(normalized)}`,
+    source_context: "manual_submission",
+    source_user_id: userId,
+    approved: Boolean(approved),
+    playable: Boolean(parsed.sourceUrl || parsed.watchUrl),
+    quality_score: parsed.source === "youtube" ? 50 : parsed.source === "instagram" || parsed.source === "facebook" ? 45 : 25,
+    last_checked_at: now,
+    updated_at: now
+  };
+  const { error } = await supabase
+    .from("reel_cache")
+    .upsert(row, { onConflict: "source,source_video_id" });
+  if (error) {
+    console.error("MovieGram Supabase submit failed for reel_cache", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
+    return { error: error.message || "Could not save this reel link." };
+  }
+  return { success: approved ? "Reel link saved and approved." : "Reel link submitted for review." };
+}
+
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite }) {
   const [reelTab, setReelTab] = useState("forYou");
-  const [likedReels, setLikedReels] = useState({});
-  const [savedReels, setSavedReels] = useState({});
-  const baseReels = dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]);
-  const watchedReels = Object.values(watched);
-  const friendReels = dedupe([...(rows.series || []), ...(rows.anime || []), ...fallbackRows.series, ...fallbackRows.trending]);
-  const reels = (reelTab === "watched" ? (watchedReels.length ? watchedReels : fallbackRows.movies) : reelTab === "friends" ? friendReels : baseReels).slice(0, 10);
+  const [reels, setReels] = useState([]);
+  const [loadingReels, setLoadingReels] = useState(true);
+  const [reelError, setReelError] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(7);
+  const [speeding, setSpeeding] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [isMuted, setIsMuted] = useState(() => readReelsMutedPreference());
+  const [loadedPlayers, setLoadedPlayers] = useState({});
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const [submitUrl, setSubmitUrl] = useState("");
+  const [submitQuery, setSubmitQuery] = useState("");
+  const [submitReason, setSubmitReason] = useState("");
+  const [submitItemKey, setSubmitItemKey] = useState("");
+  const [submitStatus, setSubmitStatus] = useState("");
+  const [submittingReel, setSubmittingReel] = useState(false);
+  const [failedEmbeds, setFailedEmbeds] = useState({});
+  const reelRefs = useRef([]);
+  const iframeRefs = useRef([]);
+  const lastLoadedKeyRef = useRef("");
+  const inFlightReelLoadsRef = useRef(new Set());
+  const youtubeBlockedRef = useRef(readYouTubeQuotaExceeded());
+  const embedEnrichmentRef = useRef(new Set());
+  const controlLogRef = useRef(new Set());
+  const activePlayerLogRef = useRef("");
+  const feedMixLogRef = useRef("");
+  const reelOrderLogRef = useRef("");
+  const seenReelIdsRef = useRef(new Set());
+  const failedYouTubeVideoIdsRef = useRef(new Set());
+  const baseReels = useMemo(() => dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]), [rows]);
+  const watchedReels = useMemo(() => Object.values(watched), [watched]);
+  const watchlistReels = useMemo(() => Object.values(watchlist), [watchlist]);
+  const favoriteReels = useMemo(() => Object.values(favorites), [favorites]);
+  const ratedKeys = useMemo(() => Object.entries(ratings || {}).filter(([, rating]) => normalizeUserRating(rating) >= 4).map(([key]) => key), [ratings]);
+  const friendActivityItems = useMemo(() => dedupe((socialActivity || []).map((event) => event.item).filter(Boolean)), [socialActivity]);
+  const isReelAdmin = userId && userId !== "guest" && MOVIEGRAM_REEL_ADMIN_IDS.includes(userId);
+  const canSubmitReels = isReelAdmin;
   const reelTabs = [
     { id: "forYou", label: "For You" },
     { id: "watched", label: "Watched" },
     { id: "friends", label: "Friends" }
   ];
 
-  function toggleLike(key) {
-    setLikedReels((current) => ({ ...current, [key]: !current[key] }));
+  const reelCandidates = useMemo(() => {
+    const watchedKeys = new Set(watchedReels.map(keyOf));
+    const watchlistKeys = new Set(watchlistReels.map(keyOf));
+    const favoriteKeys = new Set(favoriteReels.map(keyOf));
+    const ratedKeySet = new Set(ratedKeys);
+    const candidates = new Map();
+    const addCandidate = (item, score, reason, friendLabel = "") => {
+      if (!item?.id) return;
+      const normalized = { ...item, media_type: mediaType(item) };
+      const key = keyOf(normalized);
+      const existing = candidates.get(key);
+      const payload = { item: normalized, score, reason, friendLabel };
+      if (!existing || payload.score > existing.score) candidates.set(key, payload);
+    };
+
+    if (reelTab === "watched") {
+      watchedReels.forEach((item, index) => addCandidate(item, 200 - index, index % 2 ? "From your watched history" : "You watched this"));
+      return [...candidates.values()].sort((a, b) => b.score - a.score);
+    }
+
+    if (reelTab === "friends") {
+      (socialActivity || []).forEach((event, index) => {
+        if (!event.item) return;
+        const username = event.profile?.username || publicProfileName(event.profile || {}).replace(/\s+/g, "").toLowerCase() || "friend";
+        const action = event.action || "";
+        const rating = normalizeUserRating(event.metadata?.rating || event.rating);
+        const label = action === "watchlisted" ? `${username} added this to watchlist`
+          : action === "rated" && rating ? `${username} rated this ${formatUserRating(rating)}`
+            : action === "reviewed" ? `${username} reviewed this`
+              : action === "favorite" || action === "liked" ? `${username} liked this`
+                : `${username} watched this`;
+        addCandidate(event.item, 180 - index * 2 + (rating >= 4 ? 18 : 0), label, username);
+      });
+      if (socialActivity?.length) {
+        friendActivityItems.forEach((item, index) => addCandidate(item, 110 - index, "Recommended from your friends' taste"));
+      }
+      return [...candidates.values()].sort((a, b) => b.score - a.score);
+    }
+
+    watchlistReels.forEach((item, index) => addCandidate(item, 170 - index * 2, "Because this is in your watchlist"));
+    favoriteReels.forEach((item, index) => addCandidate(item, 160 - index * 2, "Based on your favorites"));
+    baseReels.forEach((item, index) => {
+      const key = keyOf(item);
+      if (watchedKeys.has(key)) return;
+      let score = 44 - index;
+      let reason = "Trending now";
+      if (watchlistKeys.has(key)) {
+        score += 90;
+        reason = "Because this is in your watchlist";
+      }
+      if (favoriteKeys.has(key) || ratedKeySet.has(key)) {
+        score += 70;
+        reason = "Based on your ratings";
+      }
+      const hasWatchedSameType = watchedReels.some((watchedItem) => mediaType(watchedItem) === mediaType(item));
+      if (hasWatchedSameType) {
+        score += 34;
+        reason = `Similar to your watched ${mediaType(item) === "tv" ? "shows" : "movies"}`;
+      }
+      if (item.poster_path || item.backdrop_path) score += 12;
+      addCandidate(item, score, reason);
+    });
+    return [...candidates.values()].sort((a, b) => b.score - a.score);
+  }, [baseReels, favoriteReels, friendActivityItems, ratedKeys, reelTab, socialActivity, watchedReels, watchlistReels]);
+
+  const seedItems = useMemo(() => reelCandidates.slice(0, pageSize), [pageSize, reelCandidates]);
+  const fallbackPreviewReels = useMemo(() => seedItems.slice(0, Math.min(pageSize, 10)).map((candidate, index) => ({
+    item: candidate.item,
+    id: `fallback-${keyOf(candidate.item)}-${index}`,
+    source: "fallback",
+    reason: candidate.reason,
+    isFallbackPreview: true,
+    kind: "Preview",
+    score: candidate.score || 0
+  })), [pageSize, seedItems]);
+  const submitMatches = useMemo(() => {
+    const source = dedupe([...watchlistReels, ...watchedReels, ...favoriteReels, ...baseReels]).slice(0, 80);
+    const needle = submitQuery.trim().toLowerCase();
+    return source
+      .filter((item) => !needle || `${titleOf(item)} ${yearOf(item)}`.toLowerCase().includes(needle))
+      .slice(0, 6);
+  }, [baseReels, favoriteReels, submitQuery, watchedReels, watchlistReels]);
+  const selectedSubmitItem = useMemo(() => submitMatches.find((item) => keyOf(item) === submitItemKey) || submitMatches[0] || null, [submitItemKey, submitMatches]);
+  const seedKey = useMemo(() => seedItems.map((candidate) => `${keyOf(candidate.item)}:${Math.round(candidate.score || 0)}:${candidate.reason}`).join("|"), [seedItems]);
+  const loadKey = `${userId || "guest"}:${reelTab}:${pageSize}:${seedKey}`;
+
+  useEffect(() => {
+    setPageSize(7);
+    setReels([]);
+    setLoadingReels(true);
+    setReelError("");
+    seenReelIdsRef.current = new Set();
+  }, [reelTab]);
+
+  function orderPlayableForDisplay(list = []) {
+    const ordered = rotateAndDiversifyReels(list, reelTab, userId);
+    const logKey = `${reelTab}:${ordered.seedLabel}:${ordered.first}:${ordered.reels.length}`;
+    if (reelOrderLogRef.current !== logKey) {
+      reelOrderLogRef.current = logKey;
+      console.info(`Reels order: total=${ordered.reels.length}, unique=${ordered.unique}, first=${ordered.first}, seed=${ordered.seedLabel}.`);
+    }
+    return ordered.reels;
   }
 
-  function toggleSave(key) {
-    setSavedReels((current) => ({ ...current, [key]: !current[key] }));
+  useEffect(() => {
+    const observers = reelRefs.current.filter(Boolean);
+    if (!observers.length) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible?.target?.dataset?.index) setActiveIndex(Number(visible.target.dataset.index));
+    }, { threshold: [0.55, 0.75] });
+    observers.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [reels]);
+
+  useEffect(() => {
+    let alive = true;
+    const stableSeeds = seedItems.slice(0, Math.min(pageSize, 10));
+    const fallbackReels = () => fallbackPreviewReels;
+
+    async function loadYouTubeReels() {
+      if (lastLoadedKeyRef.current === loadKey || inFlightReelLoadsRef.current.has(loadKey)) return;
+      lastLoadedKeyRef.current = loadKey;
+      inFlightReelLoadsRef.current.add(loadKey);
+      setActiveIndex(0);
+      setLoadingReels(true);
+      iframeRefs.current = [];
+
+      if (!stableSeeds.length) {
+        if (alive) {
+          setReels([]);
+          setReelError("");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
+
+      const cached = await loadReelCacheForSeeds(stableSeeds, reelTab);
+      const playableReels = Array.isArray(cached?.reels) ? cached.reels : [];
+      console.info(`Reel cache returned to effect: reels=${playableReels.length}.`);
+      if (alive && playableReels.length > 0) {
+        setReels(() => orderPlayableForDisplay(playableReels));
+        setReelError("");
+        setLoadingReels(false);
+      } else if (alive) {
+        setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+        setReelError("Finding playable reels. Showing previews for now.");
+      }
+      if (playableReels.length < 20 && !readTmdbReelSeedDone()) {
+        markTmdbReelSeedDone();
+        seedPlayableReelsFromTmdbVideos(reelCandidates.slice(0, 25)).then((tmdbSeed) => {
+          if (!alive) return;
+          const merged = mergePlayableReels(playableReels, tmdbSeed.reels);
+          if (merged.length) {
+            setReels((current) => orderPlayableForDisplay(mergePlayableReels(current.length ? current : playableReels, tmdbSeed.reels)));
+            setReelError("");
+          }
+          console.info(`TMDB reel seed: checked ${tmdbSeed.checked} titles, created ${tmdbSeed.created} playable rows, using ${merged.length} playable total.`);
+        });
+      }
+      const lightDiscoveryAllowed = !readReelLightDiscoveryUsed()
+        && !readYouTubeQuotaExceeded()
+        && playableReels.length < 20
+        && stableSeeds.length > 0;
+      logReelCacheFirstOnce({
+        cachedCount: cached.reels.length,
+        fallbackCount: fallbackReels().length,
+        lightDiscoveryAllowed,
+        youtubeCallsUsed: youtubeTabSearchCount(reelTab, userId)
+      });
+
+      if (!isReelAdmin && lightDiscoveryAllowed) {
+        markReelLightDiscoveryUsed();
+        fetch("/api/reel-light-discovery", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tab: reelTab,
+            user_id: userId || "guest",
+            youtube_blocked: readYouTubeQuotaExceeded(),
+            youtube_calls_used: youtubeTabSearchCount(reelTab, userId),
+            candidates: stableSeeds.slice(0, 2).map((candidate) => ({
+              item: {
+                id: candidate.item.id,
+                media_type: mediaType(candidate.item),
+                title: candidate.item.title || candidate.item.name || "",
+                name: candidate.item.name || "",
+                poster_path: candidate.item.poster_path || "",
+                backdrop_path: candidate.item.backdrop_path || "",
+                release_date: candidate.item.release_date || "",
+                first_air_date: candidate.item.first_air_date || "",
+                vote_average: candidate.item.vote_average || null
+              },
+              reason: candidate.reason,
+              score: candidate.score || 0
+            }))
+          })
+        })
+          .then((response) => response.ok ? response.json() : null)
+          .then((result) => {
+            if (result?.youtubeCalls) {
+              Array.from({ length: Number(result.youtubeCalls || 0) }).forEach(() => incrementYouTubeTabSearchCount(reelTab, userId));
+            }
+            if (result) console.info(`YouTube light fill: callsUsed=${youtubeTabSearchCount(reelTab, userId)}, saved=${result.saved || 0}, stoppedForQuota=${Boolean(result.youtubeQuota)}.`);
+            if (alive && result?.saved) {
+              loadReelCacheForSeeds(stableSeeds, reelTab).then((latest) => {
+                if (alive && latest.reels.length) setReels((current) => orderPlayableForDisplay(mergePlayableReels(current, latest.reels)));
+              });
+            }
+            if (result?.youtubeQuota) {
+              youtubeBlockedRef.current = true;
+              markYouTubeQuotaExceeded();
+              if (alive && !cached.reels.length) setReelError("YouTube limit reached. Showing title previews for now.");
+            }
+          })
+          .catch(() => {
+            // Light fill is opportunistic; cache/fallback reels remain usable.
+          });
+      }
+      const refreshableSeeds = stableSeeds
+        .filter((candidate) => !cached.freshKeys.has(keyOf(candidate.item)))
+        .filter((candidate) => !wasYouTubeTitleRefreshedRecently(reelTab, keyOf(candidate.item)));
+
+      if (!isReelAdmin) {
+        if (alive) {
+          if (!playableReels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+          setReelError(playableReels.length ? "" : "Finding playable reels. Showing previews for now.");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
+
+      if (!YOUTUBE_API_KEY) {
+        if (alive) {
+          if (!cached.reels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+          setReelError(playableReels.length ? "" : "YouTube discovery unavailable.");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
+
+      if (youtubeBlockedRef.current || readYouTubeQuotaExceeded()) {
+        youtubeBlockedRef.current = true;
+        if (alive) {
+          if (!cached.reels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+          setReelError(youtubeQuotaErrorObserved && !playableReels.length ? "YouTube limit reached. Showing title previews for now." : "");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
+
+      if (!refreshableSeeds.length || youtubeTabSearchCount(reelTab, userId) >= MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION) {
+        if (alive) {
+          if (!playableReels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+          setReelError("");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
+
+      setLoadingReels(true);
+      setReelError("");
+      try {
+        const seenVideos = new Set();
+        const next = [...playableReels];
+        const used = { videoIds: seenVideos, itemKeys: new Map(), channels: new Map() };
+        cached.reels.forEach((video) => {
+          if (video.id) seenVideos.add(video.id);
+          if (video.item) used.itemKeys.set(keyOf(video.item), (used.itemKeys.get(keyOf(video.item)) || 0) + 1);
+          if (video.channelTitle) used.channels.set(video.channelTitle, (used.channels.get(video.channelTitle) || 0) + 1);
+        });
+        const youtubeOrigin = typeof window !== "undefined" ? `&origin=${encodeURIComponent(window.location.origin)}` : "";
+        for (const candidate of refreshableSeeds) {
+          if (youtubeBlockedRef.current || readYouTubeQuotaExceeded()) break;
+          const item = candidate.item;
+          const queries = youtubeQueriesForItem(item, reelTab);
+          markYouTubeTitleRefreshed(reelTab, keyOf(item));
+          for (const query of queries) {
+            if (youtubeBlockedRef.current || readYouTubeQuotaExceeded()) break;
+            if (youtubeTabSearchCount(reelTab, userId) >= MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION) break;
+            const queryType = query.toLowerCase().includes("trailer") ? "trailer" : "edit";
+            const cacheKey = `${reelTab}:${userId || "guest"}:${keyOf(item)}:${queryType}:${query}`;
+            let videos = youtubeReelMemoryCache.get(cacheKey);
+            if (!videos) {
+              incrementYouTubeTabSearchCount(reelTab, userId);
+              const params = new URLSearchParams({
+                key: YOUTUBE_API_KEY,
+                part: "snippet",
+                q: query,
+                type: "video",
+                videoEmbeddable: "true",
+                safeSearch: "moderate",
+                maxResults: "4"
+              });
+              if (queryType !== "trailer") params.set("videoDuration", "short");
+              const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+              if (!response.ok) {
+                let details = null;
+                try {
+                  details = await response.json();
+                } catch {
+                  details = null;
+                }
+                const error = new Error(`YouTube ${response.status}`);
+                error.status = response.status;
+                error.details = details?.error?.message || "";
+                if (isYouTubeQuotaError(response.status, error.details)) {
+                  youtubeBlockedRef.current = true;
+                  markYouTubeQuotaExceeded();
+                }
+                throw error;
+              }
+              const data = await response.json();
+              videos = (data.items || [])
+                .map((video) => ({
+                  id: video.id?.videoId,
+                  videoTitle: video.snippet?.title || "",
+                  channelTitle: video.snippet?.channelTitle || "",
+                  thumbnailUrl: video.snippet?.thumbnails?.maxres?.url || video.snippet?.thumbnails?.high?.url || video.snippet?.thumbnails?.medium?.url || "",
+                  publishedAt: video.snippet?.publishedAt || ""
+                }))
+                .filter((video) => video.id && video.thumbnailUrl);
+              youtubeReelMemoryCache.set(cacheKey, videos);
+            }
+            const video = [...videos]
+              .map((entry) => ({ ...entry, _score: scoreYouTubeVideo(entry, item, query, reelTab, used), kind: videoKindFromTitle(entry.videoTitle, query) }))
+              .sort((a, b) => b._score - a._score)[0];
+            if (video) {
+              seenVideos.add(video.id);
+              used.itemKeys.set(keyOf(item), (used.itemKeys.get(keyOf(item)) || 0) + 1);
+              used.channels.set(video.channelTitle, (used.channels.get(video.channelTitle) || 0) + 1);
+              const reel = {
+                ...video,
+                item: { ...item, media_type: mediaType(item) },
+                id: video.id,
+                embedUrl: `https://www.youtube.com/embed/${video.id}?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&modestbranding=1&enablejsapi=1${youtubeOrigin}`,
+                watchUrl: `https://www.youtube.com/watch?v=${video.id}`,
+                reason: candidate.reason,
+                score: candidate.score + video._score
+              };
+              next.push(reel);
+              saveReelCacheRow({ item, video: reel, tab: reelTab, reason: candidate.reason, userId });
+              break;
+            }
+          }
+        }
+        if (!alive) return;
+        const mergedNext = mergePlayableReels(playableReels, next);
+        setReels((current) => current.length ? orderPlayableForDisplay(mergePlayableReels(current, mergedNext)) : (mergedNext.length ? orderPlayableForDisplay(mergedNext) : fallbackReels()));
+        setReelError(mergedNext.length ? "" : "Could not load YouTube reels right now. Showing title previews.");
+      } catch (error) {
+        if (!isYouTubeQuotaError(error?.status, error?.details || error?.message)) {
+          console.error("MovieGram YouTube reels load error", {
+            message: error?.message,
+            status: error?.status,
+            details: error?.details
+          });
+        }
+        if (alive) {
+          setReels((current) => playableReels.length ? playableReels : (hasPlayableReels(current) ? current : fallbackReels()));
+          setReelError(isYouTubeQuotaError(error?.status, error?.details || error?.message) ? "YouTube limit reached. Showing title previews for now." : "Could not load YouTube reels right now. Showing title previews.");
+        }
+      } finally {
+        inFlightReelLoadsRef.current.delete(loadKey);
+        if (alive) setLoadingReels(false);
+      }
+    }
+    loadYouTubeReels();
+    return () => { alive = false; };
+  }, [isReelAdmin, loadKey, pageSize, reelTab, userId]);
+
+  function sendYouTubeCommand(index, func, args = []) {
+    const frame = iframeRefs.current[index];
+    if (!frame?.contentWindow) return;
+    frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+  }
+
+  function reelEmptyMessage() {
+    if (reelTab === "watched") return "Mark movies or shows watched to see edits here.";
+    if (reelTab === "friends") return "Follow friends to see friend reels.";
+    return "Reels will appear when MovieGram has titles to show.";
+  }
+
+  const visibleReels = reels.length ? reels : (loadingReels ? [] : fallbackPreviewReels);
+  const sourceWatermarkLabel = (source = "") => source === "instagram" ? "Instagram"
+    : source === "facebook" ? "Facebook"
+      : source === "web" ? "Web"
+        : source === "manual" ? "Open"
+          : "YouTube";
+
+  useEffect(() => {
+    const activeReel = visibleReels[activeIndex];
+    if (activeReel && !activeReel.isFallbackPreview) {
+      seenReelIdsRef.current.add(reelIdentity(activeReel));
+      if (seenReelIdsRef.current.size >= visibleReels.filter((reel) => !reel.isFallbackPreview).length) {
+        seenReelIdsRef.current = new Set([reelIdentity(activeReel)]);
+      }
+    }
+    if (visibleReels.length && activeIndex >= visibleReels.length - 2 && reelCandidates.length > pageSize) {
+      setPageSize((current) => Math.min(current + 5, reelCandidates.length));
+    }
+  }, [activeIndex, pageSize, reelCandidates.length, visibleReels]);
+
+  useEffect(() => {
+    if (loadingReels && visibleReels.length === 0) return;
+    const mix = visibleReels.reduce((acc, reel) => {
+      const source = reel.isFallbackPreview
+        ? "fallback"
+        : reelSourceFromUrl(reel.source || "", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "");
+      if (source === "instagram") acc.instagram += 1;
+      else if (source === "facebook") acc.facebook += 1;
+      else if (source === "fallback" || source === "preview") acc.fallback += 1;
+      else if (source === "web" || source === "manual") acc.web += 1;
+      else if (source === "youtube") acc.youtube += 1;
+      const isTrailer = reelTypeLabel(reel).toLowerCase().includes("trailer");
+      if (isTrailer) acc.trailers += 1;
+      else acc.nonTrailers += 1;
+      return acc;
+    }, { youtube: 0, instagram: 0, facebook: 0, web: 0, fallback: 0, trailers: 0, nonTrailers: 0 });
+    const signature = JSON.stringify(mix);
+    if (feedMixLogRef.current === signature) return;
+    feedMixLogRef.current = signature;
+    console.info(`Reels feed mix: youtube=${mix.youtube}, instagram=${mix.instagram}, facebook=${mix.facebook}, web=${mix.web}, fallback=${mix.fallback}, trailers=${mix.trailers}, nonTrailers=${mix.nonTrailers}.`);
+  }, [visibleReels]);
+
+  useEffect(() => {
+    reels.forEach((reel, index) => {
+      if (!isYouTubeReel(reel)) return;
+      sendYouTubeCommand(index, index === activeIndex && isPlaying ? "playVideo" : "pauseVideo");
+      if (index !== activeIndex) sendYouTubeCommand(index, "setPlaybackRate", [1]);
+      if (index === activeIndex) sendYouTubeCommand(index, isMuted ? "mute" : "unMute");
+    });
+    setSpeeding(false);
+  }, [activeIndex, isMuted, isPlaying, reels]);
+
+  useEffect(() => {
+    setIsPlaying(true);
+    const preferredMuted = readReelsMutedPreference();
+    setIsMuted(preferredMuted);
+    setSpeeding(false);
+    sendYouTubeCommand(activeIndex, "setPlaybackRate", [1]);
+    sendYouTubeCommand(activeIndex, preferredMuted ? "mute" : "unMute");
+  }, [activeIndex]);
+
+  useEffect(() => {
+    function handleYouTubeMessage(event) {
+      if (!/youtube(?:-nocookie)?\.com$/.test(String(event.origin || "").replace(/^https?:\/\/(www\.)?/, ""))) return;
+      let payload = event.data;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          return;
+        }
+      }
+      if (payload?.event !== "onError") return;
+      const reel = visibleReels[activeIndex];
+      const videoId = getYouTubeVideoId(reel);
+      if (!videoId) return;
+      markYouTubeEmbedFailed(videoId, reelFailureKey(reel));
+    }
+    window.addEventListener("message", handleYouTubeMessage);
+    return () => window.removeEventListener("message", handleYouTubeMessage);
+  }, [activeIndex, visibleReels]);
+
+  useEffect(() => {
+    const reel = visibleReels[activeIndex];
+    const source = reelSourceFromUrl(reel?.source || "", reel?.sourceUrl || reel?.watchUrl || reel?.embedUrl || "");
+    const sourceUrl = reel?.sourceUrl || reel?.watchUrl || "";
+    if (!reel || !["instagram", "facebook"].includes(source) || !sourceUrl) return;
+    if (reel.embedUrl || reel.embedHtml || ["failed", "unsupported", "token_missing"].includes(reel.embedStatus)) return;
+    const requestKey = `${source}:${sourceUrl}`;
+    if (embedEnrichmentRef.current.has(requestKey)) return;
+    embedEnrichmentRef.current.add(requestKey);
+
+    let alive = true;
+    fetch("/api/reel-oembed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, source_url: sourceUrl })
+    })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!alive || !data || (!data.embed_url && !data.embed_html && !data.thumbnail_url)) return;
+        setReels((current) => current.map((entry) => {
+          const sameSource = (entry.sourceUrl || entry.watchUrl) === sourceUrl;
+          if (!sameSource) return entry;
+          return {
+            ...entry,
+            embedUrl: data.embed_url || entry.embedUrl,
+            embedHtml: data.embed_html || entry.embedHtml,
+            thumbnailUrl: data.thumbnail_url || entry.thumbnailUrl,
+            videoTitle: data.title || entry.videoTitle,
+            channelTitle: data.author_name || entry.channelTitle,
+            embedStatus: data.embed_status || entry.embedStatus
+          };
+        }));
+      })
+      .catch(() => {
+        // The existing poster/source preview remains the fallback when oEmbed is unavailable.
+      });
+    return () => { alive = false; };
+  }, [activeIndex, visibleReels]);
+
+  useEffect(() => {
+    const reel = visibleReels[activeIndex];
+    if (reel?.source !== "instagram" || !reel.embedHtml || typeof window === "undefined") return;
+    if (window.instgrm?.Embeds?.process) {
+      window.instgrm.Embeds.process();
+      return;
+    }
+    if (document.querySelector("script[data-moviegram-instagram-embed]")) return;
+    const script = document.createElement("script");
+    script.src = "https://www.instagram.com/embed.js";
+    script.async = true;
+    script.dataset.moviegramInstagramEmbed = "true";
+    document.body.appendChild(script);
+  }, [activeIndex, visibleReels]);
+
+  function logPlayerControl(action, muted = isMuted) {
+    if (controlLogRef.current.has(action)) return;
+    controlLogRef.current.add(action);
+    console.info(`Player control: action=${action}, globalMuted=${Boolean(muted)}.`);
+  }
+
+  function stopPlayerEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function togglePlayPause(event, index) {
+    if (event?.target?.closest?.(".mg2-reel-actions, .mg2-youtube-watermark, .mg2-reel-controls, .mg2-reel-head, .mg2-bottom")) return;
+    if (index !== activeIndex) return;
+    setIsPlaying((current) => {
+      const next = !current;
+      sendYouTubeCommand(index, next ? "playVideo" : "pauseVideo");
+      logPlayerControl(next ? "play" : "pause");
+      return next;
+    });
+  }
+
+  function toggleMute(event, index) {
+    stopPlayerEvent(event);
+    if (index !== activeIndex) return;
+    setIsMuted((current) => {
+      const next = !current;
+      sendYouTubeCommand(index, next ? "mute" : "unMute");
+      saveReelsMutedPreference(next);
+      logPlayerControl(next ? "mute" : "unmute", next);
+      return next;
+    });
+  }
+
+  function togglePlayButton(event, index) {
+    stopPlayerEvent(event);
+    if (index !== activeIndex) return;
+    togglePlayPause(null, index);
+  }
+
+  function beginFastPlayback(event, index) {
+    stopPlayerEvent(event);
+    if (index !== activeIndex) return;
+    setSpeeding(true);
+    sendYouTubeCommand(index, "setPlaybackRate", [2]);
+    logPlayerControl("2x-start");
+  }
+
+  function endFastPlayback(event, index) {
+    if (event) stopPlayerEvent(event);
+    if (index !== activeIndex) return;
+    setSpeeding(false);
+    sendYouTubeCommand(index, "setPlaybackRate", [1]);
+    logPlayerControl("2x-end");
+  }
+
+  function markYouTubeEmbedFailed(videoId, failureKey) {
+    if (!videoId || failedYouTubeVideoIdsRef.current.has(videoId)) return;
+    failedYouTubeVideoIdsRef.current.add(videoId);
+    console.warn(`YouTube embed failed/unavailable: videoId=${videoId}, skipping.`);
+    setFailedEmbeds((current) => ({ ...current, [failureKey]: true }));
+    setReels((current) => current.filter((entry) => getYouTubeVideoId(entry) !== videoId));
+    setActiveIndex((current) => Math.max(0, Math.min(current, Math.max(0, visibleReels.length - 2))));
+  }
+
+  function reelFailureKey(reel = {}) {
+    const source = reelSourceFromUrl(reel.source || "", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "");
+    return `${source}:${reel.sourceUrl || reel.watchUrl || reel.embedUrl || reel.id}`;
+  }
+
+  function renderReelMedia(reel, item, index, active) {
+    const source = reelSourceFromUrl(reel.source || "", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "");
+    const youtubeVideoId = getYouTubeVideoId(reel);
+    const isYouTube = isYouTubeReel(reel) && youtubeVideoId;
+    const failureKey = reelFailureKey(reel);
+    const thumbnail = isYouTube
+      ? (reel.thumbnailUrl || `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
+      : (reel.thumbnailUrl || backdropUrl(item.backdrop_path || item.poster_path));
+    const preview = (
+      <img
+        className="mg2-reel-bg"
+        src={thumbnail}
+        alt=""
+        loading={index <= activeIndex + 2 ? "eager" : "lazy"}
+        onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }}
+      />
+    );
+    if (!active || reel.isFallbackPreview || failedEmbeds[failureKey] || (youtubeVideoId && failedYouTubeVideoIdsRef.current.has(youtubeVideoId))) return preview;
+
+    if (isYouTube) {
+      const src = buildYouTubeEmbedUrl(youtubeVideoId, isMuted);
+      const playerKey = `youtube-${youtubeVideoId}-${activeIndex}`;
+      const loaded = Boolean(loadedPlayers[playerKey]);
+      const logKey = `${source}:${youtubeVideoId}:${loaded ? "YOUTUBE" : "FALLBACK"}`;
+      if (activePlayerLogRef.current !== logKey) {
+        activePlayerLogRef.current = logKey;
+        console.info(`Active reel player: source=youtube, videoId=${youtubeVideoId}, rendering=${loaded ? "YOUTUBE" : "FALLBACK"}.`);
+      }
+      return (
+        <>
+          {preview}
+          <iframe
+            key={playerKey}
+            ref={(node) => { iframeRefs.current[index] = node; }}
+            className={`mg2-reel-player mg2-reel-player-youtube${loaded ? " loaded" : ""}`}
+            src={src}
+            title={reel.videoTitle || titleOf(item)}
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+            loading={index === 0 ? "eager" : "lazy"}
+            onLoad={() => {
+              setLoadedPlayers((current) => ({ ...current, [playerKey]: true }));
+              sendYouTubeCommand(index, isPlaying ? "playVideo" : "pauseVideo");
+              sendYouTubeCommand(index, isMuted ? "mute" : "unMute");
+              sendYouTubeCommand(index, "setPlaybackRate", [speeding ? 2 : 1]);
+            }}
+            onError={() => markYouTubeEmbedFailed(youtubeVideoId, failureKey)}
+          />
+        </>
+      );
+    }
+
+    if ((source === "facebook" || source === "instagram") && reel.embedUrl) {
+      return (
+        <iframe
+          className={`mg2-reel-player mg2-reel-player-${source}`}
+          src={reel.embedUrl}
+          title={reel.videoTitle || titleOf(item)}
+          allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+          allowFullScreen
+          loading={index === 0 ? "eager" : "lazy"}
+          onError={() => setFailedEmbeds((current) => ({ ...current, [failureKey]: true }))}
+        />
+      );
+    }
+
+    if (source === "instagram" && reel.embedHtml) {
+      return <div className="mg2-reel-embed-html" dangerouslySetInnerHTML={{ __html: reel.embedHtml }} />;
+    }
+
+    return preview;
+  }
+
+  async function handleSubmitReelLink(event) {
+    event.preventDefault();
+    if (!canSubmitReels) {
+      setSubmitStatus("Sign in to submit a reel link.");
+      return;
+    }
+    if (!selectedSubmitItem) {
+      setSubmitStatus("Select a movie or show for this reel.");
+      return;
+    }
+    setSubmittingReel(true);
+    setSubmitStatus("");
+    const result = await submitExternalReelLink({
+      item: selectedSubmitItem,
+      url: submitUrl,
+      reason: submitReason,
+      userId,
+      approved: isReelAdmin
+    });
+    setSubmittingReel(false);
+    setSubmitStatus(result.error || result.success || "Saved.");
+    if (!result.error) {
+      setSubmitUrl("");
+      setSubmitReason("");
+      setSubmitQuery("");
+      setSubmitItemKey("");
+    }
   }
 
   return (
     <section className="mg2-reel-screen">
-      <div className="mg2-reel-tabs" aria-label="Reel feed filters">
-        {reelTabs.map((tab) => <button key={tab.id} className={reelTab === tab.id ? "active" : ""} type="button" onClick={() => setReelTab(tab.id)}>{tab.label}</button>)}
+      <div className={`mg2-reel-head${activeIndex > 0 ? " hidden" : ""}`}>
+        <h2>Reels</h2>
+        <div className="mg2-reel-tabs" aria-label="Reel feed filters">
+          {reelTabs.map((tab) => <button key={tab.id} className={reelTab === tab.id ? "active" : ""} type="button" onClick={() => setReelTab(tab.id)}>{tab.label}</button>)}
+        </div>
       </div>
-      {reels.length === 0 ? (
-        <div className="mg2-reel-empty">Reels will appear after MovieGram loads trending titles.</div>
+      {isReelAdmin && <button className="mg2-reel-add-link" type="button" onClick={() => setSubmitOpen(true)}>Add Reel Link</button>}
+      {reelError && <div className="mg2-reel-notice">{reelError}</div>}
+      {loadingReels && visibleReels.length === 0 ? (
+        <div className="mg2-reel-empty">Loading reels...</div>
+      ) : visibleReels.length === 0 ? (
+        <div className="mg2-reel-empty">{reelEmptyMessage()}</div>
       ) : (
         <div className="mg2-reel-stack">
-          {reels.map((reel, index) => {
-            const key = keyOf(reel);
-            const type = mediaType(reel);
-            const saved = Boolean(watchlist[key]);
-            const liked = Boolean(likedReels[key]);
-            const reelGenres = type === "tv" ? ["Series", "Drama", "Binge"] : ["Movie", "Cinematic", "Popular"];
+          {visibleReels.map((reel, index) => {
+            const item = { ...reel.item, media_type: mediaType(reel.item) };
+            const itemKey = keyOf(item);
+            const saved = Boolean(watchlist[itemKey]);
+            const watchedTitle = Boolean(watched[itemKey]);
+            const favorite = Boolean(favorites[itemKey]);
+            const active = activeIndex === index;
+            const youtubeVideoId = getYouTubeVideoId(reel);
+            const isPlayableYouTube = Boolean(active && isYouTubeReel(reel) && youtubeVideoId && !reel.isFallbackPreview);
+            const typeCapsule = reelTypeLabel(reel);
             return (
-              <article key={key} className="mg2-reel-card">
-                <img className="mg2-reel-bg" src={backdropUrl(reel.backdrop_path || reel.poster_path)} alt="" loading={index === 0 ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-                <img className="mg2-reel-poster" src={posterUrl(reel.poster_path, "w342")} alt={titleOf(reel)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
-                <div className="mg2-reel-actions">
-                  <button className={liked ? "active" : ""} type="button" onClick={() => toggleLike(key)} aria-label="Like reel"><Icon name="heart" /></button><span>{liked ? "1.3k" : "1.2k"}</span>
-                  <button type="button" aria-label="Comment on reel"><Icon name="chat" /></button><span>{32 + index}</span>
-                  <button type="button" aria-label="Share reel"><Icon name="send" /></button><span>{78 + index}</span>
-                  <button className="mg2-reel-details-button" type="button" onClick={() => onOpen({ ...reel, media_type: type })} aria-label={`Open details for ${titleOf(reel)}`}><Icon name="play" /></button><span>Details</span>
-                  <button className={savedReels[key] ? "active" : ""} type="button" onClick={() => toggleSave(key)} aria-label="Save reel"><Icon name="bookmark" /></button><span>Save</span>
-                  <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(reel)} aria-label="Add to watchlist"><Icon name="check" /></button><span>{saved ? "Added" : "List"}</span>
-                </div>
-                <div className="mg2-reel-copy">
-                  <button type="button" onClick={() => onOpen(reel)}><Icon name="play" /> Open</button>
-                  <h2>{titleOf(reel)}</h2>
-                  <p><Avatar friend={friends[index % friends.length]} size="sm" /> <strong>{reelTab === "friends" ? friends[index % friends.length].handle.replace("@", "") : "moviegram"}</strong></p>
-                  <div className="mg2-reel-meta">
-                    <span>{type === "tv" ? "TV Show" : "Movie"}</span>
-                    <span>{reel.vote_average ? reel.vote_average.toFixed(1) : "NR"}/10</span>
-                    <span>{yearOf(reel)}</span>
+              <article
+                key={`${reel.id}-${itemKey}`}
+                className="mg2-reel-card"
+                data-index={index}
+                ref={(node) => { reelRefs.current[index] = node; }}
+                onClick={(event) => togglePlayPause(event, index)}
+              >
+                {renderReelMedia(reel, item, index, active)}
+                {speeding && index === activeIndex && <span className="mg2-reel-speed">2x</span>}
+                {isPlayableYouTube && (
+                  <div className={`mg2-reel-controls ${isPlaying ? "playing" : "paused"}`} onClick={(event) => event.stopPropagation()}>
+                    <button type="button" onClick={(event) => toggleMute(event, index)} aria-label={isMuted ? "Unmute reel" : "Mute reel"}><Icon name={isMuted ? "muted" : "volume"} /></button>
+                    <button type="button" onClick={(event) => togglePlayButton(event, index)} aria-label={isPlaying ? "Pause reel" : "Play reel"}><Icon name={isPlaying ? "pause" : "play"} /></button>
+                    <button
+                      type="button"
+                      className={`mg2-reel-speed-hold${speeding ? " active" : ""}`}
+                      onPointerDown={(event) => beginFastPlayback(event, index)}
+                      onPointerUp={(event) => endFastPlayback(event, index)}
+                      onPointerCancel={(event) => endFastPlayback(event, index)}
+                      onPointerLeave={(event) => endFastPlayback(event, index)}
+                      onTouchStart={(event) => beginFastPlayback(event, index)}
+                      onTouchEnd={(event) => endFastPlayback(event, index)}
+                      onTouchCancel={(event) => endFastPlayback(event, index)}
+                      aria-label="Hold for 2x playback"
+                    >2x</button>
                   </div>
-                  <div className="mg2-reel-genres">{reelGenres.map((genre) => <span key={genre}>{genre}</span>)}</div>
-                  <small>{reel.overview || "A spoiler-free edit from the MovieGram queue."}</small>
+                )}
+                <div className="mg2-reel-actions">
+                  <button className={favorite ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onFavorite?.(item); }} aria-label={favorite ? "Unlike title" : "Like title"}><Icon name="heart" /></button><span>{favorite ? "Liked" : "Like"}</span>
+                  <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
+                  <button className={watchedTitle ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : "Mark watched"}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : "Watch"}</span>
+                  <button className="mg2-reel-details-button" type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
+                  <button type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open reviews and details for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
+                  <button type="button" onClick={stopPlayerEvent} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
+                </div>
+                {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
+                <div className="mg2-reel-copy">
+                  <b>{reel.reason}</b>
+                  {typeCapsule && <em className={typeCapsule.toLowerCase().includes("trailer") ? "trailer" : ""}>{typeCapsule}</em>}
+                  <h2>{titleOf(item)}</h2>
+                  <p><Avatar friend={friends[index % friends.length]} size="sm" /> <strong>{reel.channelTitle || sourceWatermarkLabel(reel.source)}</strong></p>
+                  <div className="mg2-reel-meta">
+                    <span>{mediaType(item) === "tv" ? "TV Show" : "Movie"}</span>
+                    <span>{item.vote_average ? item.vote_average.toFixed(1) : "NR"}/10</span>
+                    <span>{yearOf(item)}</span>
+                  </div>
+                  <small>{reel.videoTitle || (reel.isFallbackPreview ? (reelError || "Title preview from MovieGram.") : "Title preview from MovieGram.")}</small>
                 </div>
               </article>
             );
           })}
+          {reelCandidates.length > pageSize && (
+            <article className="mg2-reel-card mg2-reel-load-more">
+              <button type="button" onClick={() => setPageSize((current) => current + 5)}>Load more reels</button>
+            </article>
+          )}
+        </div>
+      )}
+      {submitOpen && (
+        <div className="mg2-reel-submit" role="dialog" aria-modal="true" aria-label="Add reel link">
+          <form onSubmit={handleSubmitReelLink}>
+            <div>
+              <strong>Add Reel Link</strong>
+              <button type="button" onClick={() => setSubmitOpen(false)} aria-label="Close add reel link">Close</button>
+            </div>
+            <input value={submitUrl} onChange={(event) => setSubmitUrl(event.target.value)} placeholder="Paste Instagram or YouTube URL" />
+            <input value={submitQuery} onChange={(event) => { setSubmitQuery(event.target.value); setSubmitItemKey(""); }} placeholder="Search linked movie or show" />
+            <div className="mg2-reel-submit-results">
+              {submitMatches.map((item) => (
+                <button key={keyOf(item)} className={keyOf(item) === keyOf(selectedSubmitItem || {}) ? "active" : ""} type="button" onClick={() => setSubmitItemKey(keyOf(item))}>
+                  <img src={posterUrl(item.poster_path, "w92")} alt="" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                  <span><b>{titleOf(item)}</b><small>{mediaType(item) === "tv" ? "TV" : "Movie"} · {yearOf(item)}</small></span>
+                </button>
+              ))}
+            </div>
+            <input value={submitReason} onChange={(event) => setSubmitReason(event.target.value)} placeholder="Optional reason or label" />
+            {submitStatus && <p>{submitStatus}</p>}
+            <button type="submit" disabled={submittingReel}>{submittingReel ? "Saving..." : isReelAdmin ? "Save Approved" : "Submit for Review"}</button>
+          </form>
         </div>
       )}
     </section>
@@ -4927,7 +6501,9 @@ export default function Home() {
       if (keys.length) {
         const nextEpisodes = { ...episodeProgress };
         keys.forEach((episodeProgressKey) => {
-          nextEpisodes[episodeProgressKey] = { key: episodeProgressKey, showId: normalized.id, watchedAt };
+          const parts = parseEpisodeProgressKey(episodeProgressKey);
+          if (!parts) return;
+          nextEpisodes[episodeProgressKey] = { key: episodeProgressKey, showId: parts.showId, seasonNumber: parts.seasonNumber, episodeNumber: parts.episodeNumber, watchedAt };
         });
         setEpisodeProgress(nextEpisodes);
         persist("moviegram.episodeProgress", nextEpisodes);
@@ -4976,7 +6552,9 @@ export default function Home() {
     const keys = seasonEpisodeKeys(normalized, season);
     const nextEpisodes = { ...episodeProgress };
     keys.forEach((keyName) => {
-      nextEpisodes[keyName] = { key: keyName, showId: normalized.id, seasonNumber: season.season_number, watchedAt };
+      const parts = parseEpisodeProgressKey(keyName);
+      if (!parts) return;
+      nextEpisodes[keyName] = { key: keyName, showId: parts.showId, seasonNumber: parts.seasonNumber, episodeNumber: parts.episodeNumber, watchedAt };
     });
     const source = showDetails?.id === normalized.id ? showDetails : details;
     const allNormalKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => seasonEpisodeKeys(normalized, seasonItem));
@@ -5289,7 +6867,7 @@ export default function Home() {
   } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} onOpen={openItem} onWatchlist={toggleWatchlist} />;
+    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} />;
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {
