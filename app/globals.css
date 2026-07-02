@@ -8185,7 +8185,9 @@ body {
   font-weight: 900;
 }
 
-.mg2-reel-submit input {
+.mg2-reel-submit input,
+.mg2-reel-submit select,
+.mg2-reel-submit textarea {
   width: 100%;
   min-height: 40px;
   border: 1px solid rgba(255,255,255,.1);
@@ -8194,6 +8196,82 @@ body {
   color: #fff;
   background: rgba(255,255,255,.07);
   outline: none;
+}
+
+.mg2-reel-submit textarea {
+  min-height: 92px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.mg2-reel-submit label {
+  display: grid;
+  gap: 6px;
+  color: #b8c0cf;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.mg2-reel-submit select option {
+  color: #111827;
+}
+
+.mg2-reel-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mg2-reel-admin-actions button,
+.mg2-reel-admin-result button {
+  min-height: 32px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 0 11px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-reel-admin-result {
+  display: grid;
+  max-height: 240px;
+  overflow-y: auto;
+  gap: 8px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  padding-top: 10px;
+}
+
+.mg2-reel-admin-result article {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 13px;
+  padding: 8px;
+  color: #fff;
+  background: rgba(255,255,255,.045);
+}
+
+.mg2-reel-admin-result article span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mg2-reel-admin-result article b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-reel-admin-result article div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
 }
 
 .mg2-reel-submit-results {
