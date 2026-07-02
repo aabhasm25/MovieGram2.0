@@ -867,6 +867,14 @@ function compactForStorage(key, value) {
   if (baseKey === "moviegram.continueWatching") {
     return (Array.isArray(value) ? value : []).map((entry) => ({ ...entry, item: compactStoredItem(entry.item || entry) }));
   }
+  if (baseKey === "moviegram.profileActivity") {
+    return Object.fromEntries(Object.entries(value || {}).map(([eventKey, event]) => [eventKey, {
+      type: event?.type || "opened",
+      item: compactStoredItem(event?.item),
+      timestamp: event?.timestamp,
+      source: event?.source || "app"
+    }]).filter(([, event]) => event.item));
+  }
   if (baseKey === "moviegram.blendLists") {
     return Object.fromEntries(Object.entries(value || {}).map(([listKey, list]) => [listKey, {
       ...list,
@@ -905,7 +913,8 @@ const MOVIEGRAM_LOCAL_KEYS = {
   feedSaves: "moviegram.feedSaves",
   friendStates: "moviegram.friendStates",
   blendLists: "moviegram.blendLists",
-  hiddenRecommendations: "moviegram.hiddenRecommendations"
+  hiddenRecommendations: "moviegram.hiddenRecommendations",
+  profileActivity: "moviegram.profileActivity"
 };
 
 const DEFAULT_LOCAL_STATE = {
@@ -922,7 +931,8 @@ const DEFAULT_LOCAL_STATE = {
   feedSaves: {},
   friendStates: { shruti: "friends", rohan: "friends" },
   blendLists: {},
-  hiddenRecommendations: {}
+  hiddenRecommendations: {},
+  profileActivity: {}
 };
 
 function ownerStorageKey(owner, legacyKey) {
@@ -968,7 +978,8 @@ function normalizeLocalState(raw = {}) {
     feedSaves: raw.feedSaves || {},
     friendStates: raw.friendStates || DEFAULT_LOCAL_STATE.friendStates,
     blendLists: raw.blendLists || {},
-    hiddenRecommendations: raw.hiddenRecommendations || {}
+    hiddenRecommendations: raw.hiddenRecommendations || {},
+    profileActivity: raw.profileActivity || {}
   };
 }
 
@@ -2884,14 +2895,14 @@ async function loadReelCacheForSeeds(seedItems, tab) {
   console.info(`Reel cache seed query: seedMatched=${playableSeedRows.length}`);
 
   let globalData = [];
-  if (playableSeedRows.length < 10) {
+  if (tab === "forYou" || playableSeedRows.length < 10) {
     const { data: fillData, error: fillError } = await supabase
       .from("reel_cache")
       .select(reelCacheSelect)
       .or("source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null")
       .order("quality_score", { ascending: false })
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .limit(tab === "forYou" ? 80 : 50);
 
     if (fillError) {
       console.error("MovieGram Supabase global fill failed for reel_cache", {
@@ -2958,8 +2969,9 @@ async function loadReelCacheForSeeds(seedItems, tab) {
   });
 
   const rankedReels = rankReelsForFeed(reels);
-  console.info(`Reel cache conversion: raw=${conversionStats.raw}, playable=${conversionStats.playable}, converted=${conversionStats.converted}, final=${rankedReels.length}.`);
-  return { reels: rankedReels, freshKeys };
+  const finalReels = tab === "forYou" ? rankedReels.slice(0, 50) : rankedReels;
+  console.info(`Reel cache conversion: raw=${conversionStats.raw}, playable=${conversionStats.playable}, converted=${conversionStats.converted}, final=${finalReels.length}.`);
+  return { reels: finalReels, freshKeys };
 }
 
 async function saveReelCacheRow({ item, video, tab, reason, userId }) {
@@ -4263,7 +4275,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -4290,7 +4302,6 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], action: () => { setSelectedList({ title: "Blend List", subtitle: "Saved from Blend", items: list.items || [] }); setProfilePanel("list-detail"); } })),
     ...userLists.map((list) => ({ ...list, subtitle: "Custom list", action: () => { setSelectedList({ title: list.title, subtitle: "Custom list", items: list.items || [] }); setProfilePanel("list-detail"); } }))
   ];
-  const recent = localItems.slice(0, 9);
   const reviewItems = ratedKeys
     .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
     .filter(Boolean);
@@ -4367,15 +4378,15 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   };
   watchedItems.forEach((item, index) => addProfileStatus({ type: "watched", item, timestamp: item.watchedAt || fallbackTimestamp(index) }));
   saved.forEach((item, index) => addProfileStatus({ type: "watchlisted", item, timestamp: item.savedAt || fallbackTimestamp(index + watchedItems.length) }));
+  Object.values(profileActivity || {}).forEach((event, index) => addProfileStatus({ type: event.type || "opened", item: event.item, timestamp: event.timestamp || fallbackTimestamp(index + watchedItems.length + saved.length), rating: event.rating || null }));
   ratedKeys.forEach((key, index) => {
       const item = localItems.find((entry) => keyOf(entry) === key) || fallbackItems.find((entry) => keyOf(entry) === key);
       if (item) addProfileStatus({ type: "rated", item, timestamp: item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length), rating: normalizeUserRating(ratings[key]) });
     });
   realReviewItems.forEach((item, index) => addProfileStatus({ type: "reviewed", item, timestamp: item.reviewedAt || item.reviewAt || item.updatedAt || item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length + ratedKeys.length), rating: ratingForItem(item, ratings), review: reviewTextFor(item) }));
   const activityEvents = Array.from(statusMap.values())
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    .slice(0, 12);
-  const gridItems = profileTab === "activity" ? recent : profileTab === "watched" ? watchedGrid : watchlistGrid;
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const gridItems = profileTab === "activity" ? activityEvents.map((event) => event.item) : profileTab === "watched" ? watchedGrid : watchlistGrid;
   const relationshipProfiles = profilePanel === "followers" ? followerProfiles : followingProfiles;
   const filteredRelationshipProfiles = relationshipProfiles.filter((entry) => {
     const search = peopleQuery.trim().toLowerCase();
@@ -4501,7 +4512,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
         ))}
       </div>
 
-      {loading && recent.length === 0 ? (
+      {loading && activityEvents.length === 0 ? (
         <div className="mg2-profile-skeleton" aria-label="Loading profile">
           <span /><span /><span />
         </div>
@@ -4600,7 +4611,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
                     <span className="mg2-activity-badges">
                       {event.statuses.map((status) => (
                         <i key={status} className={`mg2-activity-badge ${status}`}>
-                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
+                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
                         </i>
                       ))}
                     </span>
@@ -5481,6 +5492,7 @@ export default function Home() {
   const [customLists, setCustomLists] = useState({});
   const [continueWatching, setContinueWatching] = useState([]);
   const [clickSignals, setClickSignals] = useState({});
+  const [profileActivity, setProfileActivity] = useState({});
   const [selected, setSelected] = useState(null);
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -5575,12 +5587,13 @@ export default function Home() {
     customLists,
     continueWatching,
     clickSignals,
+    profileActivity,
     feedLikes: likedFeed,
     feedSaves: savedFeed,
     friendStates,
     blendLists: savedBlendLists,
     hiddenRecommendations: hiddenRecs
-  }), [watchlist, watched, episodeProgress, ratings, reviews, favorites, customLists, continueWatching, clickSignals, likedFeed, savedFeed, friendStates, savedBlendLists, hiddenRecs]);
+  }), [watchlist, watched, episodeProgress, ratings, reviews, favorites, customLists, continueWatching, clickSignals, profileActivity, likedFeed, savedFeed, friendStates, savedBlendLists, hiddenRecs]);
 
   useEffect(() => {
     latestLocalState.current = currentLocalState();
@@ -5598,6 +5611,7 @@ export default function Home() {
     setCustomLists(normalized.customLists);
     setContinueWatching(normalized.continueWatching);
     setClickSignals(normalized.clickSignals);
+    setProfileActivity(normalized.profileActivity);
     setLikedFeed(normalized.feedLikes);
     setSavedFeed(normalized.feedSaves);
     setFriendStates(normalized.friendStates);
@@ -6176,6 +6190,7 @@ export default function Home() {
     setSelected(normalized);
     setClickSignals(nextSignals);
     setContinueWatching(nextContinue);
+    recordProfileActivity("opened", normalized, "details");
     persist("moviegram.clickSignals", nextSignals);
     persist("moviegram.continueWatching", nextContinue);
   }
@@ -6412,6 +6427,29 @@ export default function Home() {
     createActivityEvent(supabaseUser.id, action, { ...item, media_type: mediaType(item) }, metadata)
       .then(() => refreshSocialFoundation())
       .catch((error) => console.error("MovieGram activity save error", { table: "activity_events", action, message: error?.message, error }));
+  }
+
+  function recordProfileActivity(type, item, source = "app") {
+    if (!item?.id || item?.media_type === "person") return;
+    const normalized = compactStoredItem({ ...item, media_type: mediaType(item) });
+    if (!normalized) return;
+    const eventKey = `${type}:${keyOf(normalized)}`;
+    const now = new Date().toISOString();
+    const next = {
+      ...profileActivity,
+      [eventKey]: {
+        type,
+        item: normalized,
+        timestamp: now,
+        source
+      }
+    };
+    const trimmed = Object.fromEntries(Object.entries(next)
+      .sort(([, a], [, b]) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+      .slice(0, 250));
+    setProfileActivity(trimmed);
+    persist("moviegram.profileActivity", trimmed);
+    persist(ownerStorageKey(activeDataOwner.current || "guest", MOVIEGRAM_LOCAL_KEYS.profileActivity), trimmed);
   }
 
   function syncTrackingNow(actionName, overrides = {}) {
@@ -6942,7 +6980,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} />;
   }
 
   if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
