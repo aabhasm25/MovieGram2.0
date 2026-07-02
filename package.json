@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "backfill:reels": "node scripts/backfill-reel-cache.js",
     "lint": "next lint"
   },
   "dependencies": {

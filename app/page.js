@@ -3055,7 +3055,7 @@ async function submitExternalReelLink({ item, url, reason, userId, approved }) {
   return { success: approved ? "Reel link saved and approved." : "Reel link submitted for review." };
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite }) {
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite }) {
   const [reelTab, setReelTab] = useState("forYou");
   const [reels, setReels] = useState([]);
   const [loadingReels, setLoadingReels] = useState(true);
@@ -3066,6 +3066,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(() => readReelsMutedPreference());
   const [loadedPlayers, setLoadedPlayers] = useState({});
+  const [reelAspectModes, setReelAspectModes] = useState({});
   const [submitOpen, setSubmitOpen] = useState(false);
   const [submitUrl, setSubmitUrl] = useState("");
   const [submitQuery, setSubmitQuery] = useState("");
@@ -3082,6 +3083,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
   const embedEnrichmentRef = useRef(new Set());
   const controlLogRef = useRef(new Set());
   const activePlayerLogRef = useRef("");
+  const reelLayoutLogRef = useRef("");
   const feedMixLogRef = useRef("");
   const reelOrderLogRef = useRef("");
   const seenReelIdsRef = useRef(new Set());
@@ -3091,6 +3093,16 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
   const watchlistReels = useMemo(() => Object.values(watchlist), [watchlist]);
   const favoriteReels = useMemo(() => Object.values(favorites), [favorites]);
   const ratedKeys = useMemo(() => Object.entries(ratings || {}).filter(([, rating]) => normalizeUserRating(rating) >= 4).map(([key]) => key), [ratings]);
+  const reelsLibraryVersion = useMemo(() => {
+    const parts = [
+      `w:${Object.keys(watched || {}).sort().join(",")}`,
+      `l:${Object.keys(watchlist || {}).sort().join(",")}`,
+      `f:${Object.keys(favorites || {}).sort().join(",")}`,
+      `r:${Object.keys(ratings || {}).filter((key) => normalizeUserRating(ratings[key]) >= 4).sort().join(",")}`,
+      `v:${Object.keys(reviews || {}).sort().join(",")}`
+    ];
+    return String(hashString(parts.join("|")));
+  }, [favorites, ratings, reviews, watched, watchlist]);
   const friendActivityItems = useMemo(() => dedupe((socialActivity || []).map((event) => event.item).filter(Boolean)), [socialActivity]);
   const isReelAdmin = userId && userId !== "guest" && MOVIEGRAM_REEL_ADMIN_IDS.includes(userId);
   const canSubmitReels = isReelAdmin;
@@ -3166,6 +3178,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
   }, [baseReels, favoriteReels, friendActivityItems, ratedKeys, reelTab, socialActivity, watchedReels, watchlistReels]);
 
   const seedItems = useMemo(() => reelCandidates.slice(0, pageSize), [pageSize, reelCandidates]);
+  const currentReelCandidateKeys = useMemo(() => new Set(reelCandidates.map((candidate) => keyOf(candidate.item))), [reelCandidates]);
   const fallbackPreviewReels = useMemo(() => seedItems.slice(0, Math.min(pageSize, 10)).map((candidate, index) => ({
     item: candidate.item,
     id: `fallback-${keyOf(candidate.item)}-${index}`,
@@ -3184,15 +3197,22 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
   }, [baseReels, favoriteReels, submitQuery, watchedReels, watchlistReels]);
   const selectedSubmitItem = useMemo(() => submitMatches.find((item) => keyOf(item) === submitItemKey) || submitMatches[0] || null, [submitItemKey, submitMatches]);
   const seedKey = useMemo(() => seedItems.map((candidate) => `${keyOf(candidate.item)}:${Math.round(candidate.score || 0)}:${candidate.reason}`).join("|"), [seedItems]);
-  const loadKey = `${userId || "guest"}:${reelTab}:${pageSize}:${seedKey}`;
+  const loadKey = `${userId || "guest"}:${reelTab}:${pageSize}:${reelsLibraryVersion}:${seedKey}`;
 
   useEffect(() => {
+    lastLoadedKeyRef.current = "";
+    inFlightReelLoadsRef.current.clear();
     setPageSize(7);
+    setActiveIndex(0);
     setReels([]);
     setLoadingReels(true);
     setReelError("");
     seenReelIdsRef.current = new Set();
-  }, [reelTab]);
+  }, [reelTab, reelsLibraryVersion]);
+
+  useEffect(() => {
+    console.info(`Reels library sync: tab=${reelTab}, libraryVersion=${reelsLibraryVersion}, seedItems=${seedItems.length}, currentReels=${reels.length}.`);
+  }, [loadKey]);
 
   function orderPlayableForDisplay(list = []) {
     const ordered = rotateAndDiversifyReels(list, reelTab, userId);
@@ -3490,7 +3510,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
     return "Reels will appear when MovieGram has titles to show.";
   }
 
-  const visibleReels = reels.length ? reels : (loadingReels ? [] : fallbackPreviewReels);
+  const eligibleReels = useMemo(() => {
+    if (!reels.length || reelTab === "forYou") return reels;
+    return reels.filter((reel) => currentReelCandidateKeys.has(keyOf(reel.item || {})));
+  }, [currentReelCandidateKeys, reelTab, reels]);
+  const visibleReels = eligibleReels.length ? eligibleReels : (loadingReels ? [] : fallbackPreviewReels);
   const sourceWatermarkLabel = (source = "") => source === "instagram" ? "Instagram"
     : source === "facebook" ? "Facebook"
       : source === "web" ? "Web"
@@ -3696,20 +3720,44 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
     return `${source}:${reel.sourceUrl || reel.watchUrl || reel.embedUrl || reel.id}`;
   }
 
+  function estimateReelAspectMode(reel = {}, videoId = "") {
+    if (reelAspectModes[videoId]) return reelAspectModes[videoId];
+    const text = `${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""}`.toLowerCase();
+    if (text.includes("short") || text.includes("/shorts/") || text.includes("reel")) return "vertical-cover";
+    if (reel.source === "youtube") return "horizontal-contain";
+    return "unknown";
+  }
+
+  function rememberThumbnailAspect(videoId, event) {
+    if (!videoId || reelAspectModes[videoId]) return;
+    const image = event.currentTarget;
+    const nextMode = image.naturalHeight > image.naturalWidth ? "vertical-cover" : "horizontal-contain";
+    setReelAspectModes((current) => current[videoId] ? current : { ...current, [videoId]: nextMode });
+  }
+
   function renderReelMedia(reel, item, index, active) {
     const source = reelSourceFromUrl(reel.source || "", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "");
     const youtubeVideoId = getYouTubeVideoId(reel);
     const isYouTube = isYouTubeReel(reel) && youtubeVideoId;
     const failureKey = reelFailureKey(reel);
+    const aspectMode = isYouTube ? estimateReelAspectMode(reel, youtubeVideoId) : "vertical-cover";
     const thumbnail = isYouTube
       ? (reel.thumbnailUrl || `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
       : (reel.thumbnailUrl || backdropUrl(item.backdrop_path || item.poster_path));
+    if (active && isYouTube) {
+      const layoutLogKey = `${youtubeVideoId}:${aspectMode}`;
+      if (reelLayoutLogRef.current !== layoutLogKey) {
+        reelLayoutLogRef.current = layoutLogKey;
+        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}.`);
+      }
+    }
     const preview = (
       <img
-        className="mg2-reel-bg"
+        className={`mg2-reel-bg${aspectMode === "horizontal-contain" ? " blurred" : ""}`}
         src={thumbnail}
         alt=""
         loading={index <= activeIndex + 2 ? "eager" : "lazy"}
+        onLoad={(event) => { if (isYouTube) rememberThumbnailAspect(youtubeVideoId, event); }}
         onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }}
       />
     );
@@ -3727,23 +3775,25 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, favorit
       return (
         <>
           {preview}
-          <iframe
-            key={playerKey}
-            ref={(node) => { iframeRefs.current[index] = node; }}
-            className={`mg2-reel-player mg2-reel-player-youtube${loaded ? " loaded" : ""}`}
-            src={src}
-            title={reel.videoTitle || titleOf(item)}
-            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-            allowFullScreen
-            loading={index === 0 ? "eager" : "lazy"}
-            onLoad={() => {
-              setLoadedPlayers((current) => ({ ...current, [playerKey]: true }));
-              sendYouTubeCommand(index, isPlaying ? "playVideo" : "pauseVideo");
-              sendYouTubeCommand(index, isMuted ? "mute" : "unMute");
-              sendYouTubeCommand(index, "setPlaybackRate", [speeding ? 2 : 1]);
-            }}
-            onError={() => markYouTubeEmbedFailed(youtubeVideoId, failureKey)}
-          />
+          <div className={`mg2-reel-player-frame ${aspectMode}`}>
+            <iframe
+              key={playerKey}
+              ref={(node) => { iframeRefs.current[index] = node; }}
+              className={`mg2-reel-player mg2-reel-player-youtube${loaded ? " loaded" : ""}`}
+              src={src}
+              title={reel.videoTitle || titleOf(item)}
+              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+              allowFullScreen
+              loading={index === 0 ? "eager" : "lazy"}
+              onLoad={() => {
+                setLoadedPlayers((current) => ({ ...current, [playerKey]: true }));
+                sendYouTubeCommand(index, isPlaying ? "playVideo" : "pauseVideo");
+                sendYouTubeCommand(index, isMuted ? "mute" : "unMute");
+                sendYouTubeCommand(index, "setPlaybackRate", [speeding ? 2 : 1]);
+              }}
+              onError={() => markYouTubeEmbedFailed(youtubeVideoId, failureKey)}
+            />
+          </div>
         </>
       );
     }
@@ -4243,10 +4293,9 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   const recent = localItems.slice(0, 9);
   const reviewItems = ratedKeys
     .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
-    .filter(Boolean)
-    .slice(0, 9);
-  const watchedGrid = watchedItems.slice(0, 12);
-  const watchlistGrid = saved.slice(0, 12);
+    .filter(Boolean);
+  const watchedGrid = watchedItems;
+  const watchlistGrid = saved;
   const reviewTextFor = (item) => reviews[keyOf(item)]?.text || item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
   const realReviewItems = localItems.filter((item) => reviewTextFor(item).trim());
   const ratingReviewItems = dedupe([
@@ -6867,7 +6916,7 @@ export default function Home() {
   } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} />;
+    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} />;
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {

@@ -6906,6 +6906,33 @@ body {
   transform: scale(1.01);
 }
 
+.mg2-reel-bg.blurred {
+  filter: blur(22px) brightness(.52) saturate(1.18);
+  transform: scale(1.16);
+}
+
+.mg2-reel-player-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.mg2-reel-player-frame.horizontal-contain {
+  top: 50%;
+  bottom: auto;
+  left: 0;
+  right: 0;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100% - var(--reel-content-bottom) - 96px);
+  transform: translateY(-50%);
+}
+
+.mg2-reel-player-frame.vertical-cover {
+  inset: 0;
+}
+
 .mg2-reel-player {
   border: 0;
   background: #000;
@@ -6921,6 +6948,21 @@ body {
 }
 
 .mg2-reel-player-youtube {
+  left: 50%;
+  right: auto;
+  width: max(100%, calc(100svh * 16 / 9));
+  min-width: 100%;
+  transform: translateX(-50%);
+}
+
+.mg2-reel-player-frame.horizontal-contain .mg2-reel-player-youtube {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  transform: none;
+}
+
+.mg2-reel-player-frame.vertical-cover .mg2-reel-player-youtube {
   left: 50%;
   right: auto;
   width: max(100%, calc(100svh * 16 / 9));
