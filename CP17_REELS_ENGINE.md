@@ -38,6 +38,15 @@ It creates:
 
 The app does not execute this SQL automatically.
 
+After running it, verify:
+
+```sql
+select count(*) from public.creator_sources;
+select count(*) from public.reel_candidates;
+select count(*) from public.discovery_jobs;
+select count(*) from public.reel_failures;
+```
+
 ## Admin Discovery Route
 
 Protected route:
@@ -57,11 +66,10 @@ Optional server env:
 ```text
 SUPABASE_SERVICE_ROLE_KEY
 YOUTUBE_API_KEY
-GOOGLE_SEARCH_API_KEY
-GOOGLE_SEARCH_ENGINE_ID
-BING_SEARCH_API_KEY
-BRAVE_SEARCH_API_KEY
+TMDB_API_KEY
 ```
+
+The route may also read existing public-name app variables on the server, but service role and admin secrets must never be imported into client code.
 
 TMDB dry run:
 
@@ -81,7 +89,46 @@ curl -X POST http://localhost:3000/api/admin/reel-discovery \
   -d "{\"source\":\"manual\",\"dryRun\":true,\"urls\":[\"https://www.youtube.com/watch?v=VIDEO_ID\"]}"
 ```
 
-Use `dryRun:false` only after the SQL foundation exists. Use `promote:true` only for trusted reviewed candidates.
+Use `dryRun:false` only after the SQL foundation exists. Candidates do not appear in the public Reels feed until promoted into `reel_cache`.
+
+List pending candidates:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"list\",\"status\":\"pending\",\"target\":50}"
+```
+
+Approve or reject:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"approve\",\"candidateId\":\"CANDIDATE_UUID\"}"
+```
+
+Promote approved candidate to `reel_cache`:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"promote\",\"candidateId\":\"CANDIDATE_UUID\"}"
+```
+
+## Reels Admin Panel
+
+Admin-gated Reels UI includes a `Reels Admin` panel. It sends the admin secret only in the request header and does not store it in localStorage.
+
+Panel modes:
+
+- `Manual URLs`: accepts one URL per line, optionally `url | title`.
+- `TMDB official videos`: collects safe TMDB video metadata.
+- `YouTube Search candidates`: server-only YouTube Search with a hard cap of 5 queries/request and 5 results/query.
+
+Dry run is enabled by default.
 
 ## Promotion
 
@@ -92,6 +139,8 @@ Candidates should be promoted to `reel_cache` only when:
 - it matches the linked MovieGram title well enough,
 - it is not already known failed,
 - it does not look like spam/piracy/full-movie content.
+
+The user-facing Reels feed reads only approved/playable `reel_cache` rows plus local poster fallbacks. It does not read `reel_candidates`.
 
 ## Verification Queries
 
@@ -138,3 +187,14 @@ npm run backfill:reels -- --target=300 --pages=20
 ```
 
 This uses TMDB videos metadata and stores YouTube embed/source URLs. It does not call YouTube Search.
+
+## Test Checklist
+
+- `npm.cmd run build`
+- Open Reels and confirm `final=50`, `youtube=50`, `fallback=0` when cache exists.
+- Active YouTube log should be `YOUTUBE_LOADING` then `YOUTUBE`, not `FALLBACK`.
+- Far-away reels should show thumbnails, not mount dozens of iframes.
+- Admin route without secret returns `401`.
+- Admin dry run returns candidates without writing.
+- If discovery tables are missing, response says to run `supabase/reels_discovery_engine.sql`.
+- Manual URL candidates do not appear in Reels until promoted into `reel_cache`.

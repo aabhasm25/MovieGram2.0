@@ -491,15 +491,21 @@ function reelTypeLabel(reel = {}) {
 
 function reelTypeRank(reel = {}) {
   const label = reelTypeLabel(reel).toLowerCase();
-  if (label.includes("clip")) return 70;
-  if (label.includes("scene edit")) return 66;
-  if (label.includes("short")) return 62;
-  if (label.includes("teaser")) return 58;
-  if (label.includes("featurette")) return 54;
-  if (label.includes("behind the scenes")) return 50;
+  if (label.includes("short") || label.includes("instagram") || label.includes("facebook")) return 90;
+  if (label.includes("clip")) return 82;
+  if (label.includes("scene edit")) return 78;
+  if (label.includes("teaser")) return 68;
+  if (label.includes("featurette")) return 58;
+  if (label.includes("behind the scenes")) return 54;
   if (label.includes("trailer")) return 28;
-  if (label.includes("instagram") || label.includes("facebook")) return 56;
   return 44;
+}
+
+function reelAspectRank(reel = {}) {
+  const text = `${reel.aspectMode || ""} ${reel.aspect_mode || ""} ${reel.content_format || ""} ${reel.label || ""} ${reel.kind || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""} ${reel.embedUrl || ""}`.toLowerCase();
+  if (text.includes("vertical") || text.includes("/shorts/") || text.includes("reel")) return 32;
+  if (text.includes("horizontal")) return -4;
+  return 0;
 }
 
 function rankReelsForFeed(reels = []) {
@@ -513,7 +519,7 @@ function rankReelsForFeed(reels = []) {
       if (isTrailer) titleTrailerCount.set(itemKey, trailerCount + 1);
       return {
         ...reel,
-        score: Number(reel.score || 0) + reelTypeRank(reel) - (isTrailer && trailerCount > 0 ? 120 : 0)
+        score: Number(reel.score || 0) + reelTypeRank(reel) + reelAspectRank(reel) - (isTrailer && trailerCount > 0 ? 120 : 0)
       };
     })
     .sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -3086,6 +3092,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [submitItemKey, setSubmitItemKey] = useState("");
   const [submitStatus, setSubmitStatus] = useState("");
   const [submittingReel, setSubmittingReel] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminSecret, setAdminSecret] = useState("");
+  const [adminSource, setAdminSource] = useState("manual");
+  const [adminInput, setAdminInput] = useState("");
+  const [adminTarget, setAdminTarget] = useState(25);
+  const [adminDryRun, setAdminDryRun] = useState(true);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminResult, setAdminResult] = useState(null);
   const [failedEmbeds, setFailedEmbeds] = useState({});
   const reelRefs = useRef([]);
   const iframeRefs = useRef([]);
@@ -3516,6 +3530,10 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
   }
 
+  function youtubePlayerKey(videoId = "") {
+    return `youtube-${videoId}`;
+  }
+
   function reelEmptyMessage() {
     if (reelTab === "watched") return "Mark movies or shows watched to see edits here.";
     if (reelTab === "friends") return "Follow friends to see friend reels.";
@@ -3560,12 +3578,17 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       const isTrailer = reelTypeLabel(reel).toLowerCase().includes("trailer");
       if (isTrailer) acc.trailers += 1;
       else acc.nonTrailers += 1;
+      const youtubeVideoId = getYouTubeVideoId(reel);
+      const aspectMode = youtubeVideoId ? estimateReelAspectMode(reel, youtubeVideoId) : "unknown";
+      if (aspectMode.includes("vertical")) acc.vertical += 1;
+      else if (aspectMode.includes("horizontal")) acc.horizontal += 1;
+      else acc.unknown += 1;
       return acc;
-    }, { youtube: 0, instagram: 0, facebook: 0, web: 0, fallback: 0, trailers: 0, nonTrailers: 0 });
+    }, { youtube: 0, instagram: 0, facebook: 0, web: 0, fallback: 0, vertical: 0, horizontal: 0, unknown: 0, trailers: 0, nonTrailers: 0 });
     const signature = JSON.stringify(mix);
     if (feedMixLogRef.current === signature) return;
     feedMixLogRef.current = signature;
-    console.info(`Reels feed mix: youtube=${mix.youtube}, instagram=${mix.instagram}, facebook=${mix.facebook}, web=${mix.web}, fallback=${mix.fallback}, trailers=${mix.trailers}, nonTrailers=${mix.nonTrailers}.`);
+    console.info(`Reels feed mix: youtube=${mix.youtube}, instagram=${mix.instagram}, facebook=${mix.facebook}, web=${mix.web}, fallback=${mix.fallback}, vertical=${mix.vertical}, horizontal=${mix.horizontal}, unknown=${mix.unknown}, trailers=${mix.trailers}, nonTrailers=${mix.nonTrailers}.`);
   }, [visibleReels]);
 
   useEffect(() => {
@@ -3777,12 +3800,13 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
     if (isYouTube) {
       const src = buildYouTubeEmbedUrl(youtubeVideoId, isMuted);
-      const playerKey = `youtube-${youtubeVideoId}-${activeIndex}`;
+      const playerKey = youtubePlayerKey(youtubeVideoId);
       const loaded = Boolean(loadedPlayers[playerKey]);
-      const logKey = `${source}:${youtubeVideoId}:${loaded ? "YOUTUBE" : "FALLBACK"}`;
+      const rendering = loaded ? "YOUTUBE" : "YOUTUBE_LOADING";
+      const logKey = `${source}:${youtubeVideoId}:${rendering}`;
       if (activePlayerLogRef.current !== logKey) {
         activePlayerLogRef.current = logKey;
-        console.info(`Active reel player: source=youtube, videoId=${youtubeVideoId}, rendering=${loaded ? "YOUTUBE" : "FALLBACK"}.`);
+        console.info(`Active reel player: source=youtube, videoId=${youtubeVideoId}, rendering=${rendering}.`);
       }
       return (
         <>
@@ -3860,6 +3884,67 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     }
   }
 
+  async function runAdminDiscovery(action = "discover", candidateId = "") {
+    if (!isReelAdmin) return;
+    setAdminLoading(true);
+    setAdminResult(null);
+    const lines = adminInput.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const body = {
+      action,
+      source: adminSource,
+      target: Number(adminTarget) || 25,
+      dryRun: adminDryRun
+    };
+    if (candidateId) body.candidateId = candidateId;
+    if (adminSource === "manual") body.urls = lines.map((line) => {
+      const [url, title] = line.split("|").map((part) => part.trim());
+      return title ? { url, title } : url;
+    });
+    if (adminSource === "youtube") body.queries = lines;
+    try {
+      const response = await fetch("/api/admin/reel-discovery", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret
+        },
+        body: JSON.stringify(body)
+      });
+      const result = await response.json().catch(() => ({}));
+      setAdminResult({
+        ...result,
+        ok: response.ok,
+        status: response.status,
+        message: response.ok ? "" : result.error || "Admin discovery request failed."
+      });
+    } catch (error) {
+      setAdminResult({ ok: false, errors: [error.message || "Admin discovery request failed."] });
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function runAdminCandidateAction(action, candidateId) {
+    if (!candidateId) return;
+    setAdminLoading(true);
+    try {
+      const response = await fetch("/api/admin/reel-discovery", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret
+        },
+        body: JSON.stringify({ action, candidateId, dryRun: true })
+      });
+      const result = await response.json().catch(() => ({}));
+      setAdminResult({ ...result, ok: response.ok, status: response.status });
+    } catch (error) {
+      setAdminResult({ ok: false, errors: [error.message || "Candidate action failed."] });
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
   return (
     <section className="mg2-reel-screen">
       <div className={`mg2-reel-head${activeIndex > 0 ? " hidden" : ""}`}>
@@ -3868,7 +3953,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           {reelTabs.map((tab) => <button key={tab.id} className={reelTab === tab.id ? "active" : ""} type="button" onClick={() => setReelTab(tab.id)}>{tab.label}</button>)}
         </div>
       </div>
-      {isReelAdmin && <button className="mg2-reel-add-link" type="button" onClick={() => setSubmitOpen(true)}>Add Reel Link</button>}
+      {isReelAdmin && (
+        <div className="mg2-reel-admin-entry">
+          <button className="mg2-reel-add-link" type="button" onClick={() => setAdminOpen(true)}>Reels Admin</button>
+        </div>
+      )}
       {reelError && <div className="mg2-reel-notice">{reelError}</div>}
       {loadingReels && visibleReels.length === 0 ? (
         <div className="mg2-reel-empty">Loading reels...</div>
@@ -3965,6 +4054,64 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             <input value={submitReason} onChange={(event) => setSubmitReason(event.target.value)} placeholder="Optional reason or label" />
             {submitStatus && <p>{submitStatus}</p>}
             <button type="submit" disabled={submittingReel}>{submittingReel ? "Saving..." : isReelAdmin ? "Save Approved" : "Submit for Review"}</button>
+          </form>
+        </div>
+      )}
+      {adminOpen && (
+        <div className="mg2-reel-submit" role="dialog" aria-modal="true" aria-label="Reels Admin">
+          <form onSubmit={(event) => { event.preventDefault(); runAdminDiscovery("discover"); }}>
+            <div>
+              <strong>Reels Admin</strong>
+              <button type="button" onClick={() => setAdminOpen(false)} aria-label="Close Reels Admin">Close</button>
+            </div>
+            <small>Requires server ADMIN_BACKFILL_SECRET. Discovery writes candidates only unless promotion is explicitly run.</small>
+            <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder="Admin secret for this request" autoComplete="off" />
+            <select value={adminSource} onChange={(event) => setAdminSource(event.target.value)}>
+              <option value="manual">Manual URLs</option>
+              <option value="tmdb">TMDB official videos</option>
+              <option value="youtube">YouTube Search candidates</option>
+            </select>
+            <textarea
+              value={adminInput}
+              onChange={(event) => setAdminInput(event.target.value)}
+              placeholder={adminSource === "manual" ? "One URL per line. Optional: url | title" : adminSource === "youtube" ? "One search query per line" : "TMDB mode ignores this field"}
+              rows={5}
+            />
+            <label>
+              <span>Target</span>
+              <input type="number" min="1" max="100" value={adminTarget} onChange={(event) => setAdminTarget(event.target.value)} />
+            </label>
+            <label className="mg2-profile-privacy-toggle">
+              <span>Dry run</span>
+              <input type="checkbox" checked={adminDryRun} onChange={(event) => setAdminDryRun(event.target.checked)} />
+            </label>
+            <div className="mg2-reel-admin-actions">
+              <button type="submit" disabled={adminLoading}>{adminLoading ? "Running..." : "Run discovery"}</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("list")}>List pending</button>
+            </div>
+            {adminResult && (
+              <div className="mg2-reel-admin-result">
+                <strong>{adminResult.ok === false ? "Request failed" : "Result"}</strong>
+                {adminResult.message && <small>{adminResult.message}</small>}
+                <small>checked={adminResult.checked || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                {(adminResult.errors || []).map((error, index) => <small key={`${error}-${index}`}>{error}</small>)}
+                {(adminResult.candidates || []).slice(0, 12).map((candidate) => (
+                  <article key={candidate.id || `${candidate.source}-${candidate.source_video_id || candidate.source_url}`}>
+                    <span>
+                      <b>{candidate.video_title || candidate.title || "Candidate"}</b>
+                      <small>{candidate.source} - {candidate.label || candidate.content_format || "unknown"} - score {Math.round(Number(candidate.quality_score || candidate.match_score || 0))}</small>
+                    </span>
+                    {candidate.id && (
+                      <div>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("approve", candidate.id)}>Approve</button>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("promote", candidate.id)}>Promote</button>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("reject", candidate.id)}>Reject</button>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
           </form>
         </div>
       )}

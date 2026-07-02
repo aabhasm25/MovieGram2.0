@@ -1,5 +1,10 @@
 -- CP17 Reels Discovery Engine foundation.
 -- Safe to review and run manually in Supabase. This file is not executed by the app.
+-- Manual execution:
+--   1. Open Supabase SQL Editor.
+--   2. Paste this full file.
+--   3. Run once, then re-run whenever needed; it is idempotent and non-destructive.
+--   4. Writes are intended for service-role/admin tooling only. No public write policies are added.
 
 create extension if not exists pgcrypto;
 
@@ -108,15 +113,39 @@ alter table public.reel_candidates enable row level security;
 alter table public.discovery_jobs enable row level security;
 alter table public.reel_failures enable row level security;
 
-drop policy if exists "Approved creator sources are public" on public.creator_sources;
-create policy "Approved creator sources are public"
-on public.creator_sources for select
-using (approved is true);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'creator_sources'
+      and policyname = 'Approved creator sources are public'
+  ) then
+    create policy "Approved creator sources are public"
+    on public.creator_sources for select
+    using (approved is true);
+  end if;
+end $$;
 
-drop policy if exists "Approved reel candidates are readable" on public.reel_candidates;
-create policy "Approved reel candidates are readable"
-on public.reel_candidates for select
-using (status = 'approved');
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'reel_candidates'
+      and policyname = 'Approved reel candidates are readable'
+  ) then
+    create policy "Approved reel candidates are readable"
+    on public.reel_candidates for select
+    using (status = 'approved');
+  end if;
+end $$;
 
 -- Writes should be performed by service-role/admin tooling only.
 -- Do not add public insert/update/delete policies for discovery tables.
+
+-- Verification queries:
+-- select count(*) from public.creator_sources;
+-- select count(*) from public.reel_candidates;
+-- select count(*) from public.discovery_jobs;
+-- select count(*) from public.reel_failures;
