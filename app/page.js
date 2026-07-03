@@ -7515,15 +7515,13 @@ export default function Home() {
   }
 
   function savePreferences(preferences) {
-    if (typeof window !== "undefined") {
-      safeSetStorage("moviegram.preferences", JSON.stringify(preferences));
-      safeSetStorage("moviegram.preferencesDone", "true");
-    }
+    persist("moviegram.preferences", preferences);
+    persist("moviegram.preferencesDone", true);
     setPreferencesOpen(false);
   }
 
   function skipPreferences() {
-    if (typeof window !== "undefined") safeSetStorage("moviegram.preferencesDone", "true");
+    persist("moviegram.preferencesDone", true);
     setPreferencesOpen(false);
   }
 
