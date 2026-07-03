@@ -205,6 +205,7 @@ const REEL_LIGHT_DISCOVERY_SESSION_KEY = "moviegram.reelLightDiscovery.v1";
 const REEL_CACHE_LOG_SESSION_KEY = "moviegram.reelCacheFirstLog.v1";
 const TMDB_REEL_SEED_SESSION_KEY = "moviegram.tmdbReelSeedDone";
 const YOUTUBE_SEARCH_STOPPED_SESSION_KEY = "moviegram.youtubeSearchStoppedAfter429";
+const REEL_LIKES_STORAGE_KEY = "moviegram.reelLikes";
 const MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION = 2;
 const REEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MOVIEGRAM_REEL_ADMIN_IDS = (process.env.NEXT_PUBLIC_MOVIEGRAM_REEL_ADMIN_IDS || "")
@@ -344,6 +345,24 @@ function saveReelsMutedPreference(muted) {
     window.localStorage.setItem("moviegram.reelsMuted", muted ? "true" : "false");
   } catch {
     // Non-critical player preference.
+  }
+}
+
+function readReelLikes() {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(REEL_LIKES_STORAGE_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReelLikes(likes = {}) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(REEL_LIKES_STORAGE_KEY, JSON.stringify(likes));
+  } catch {
+    // Reel likes stay local and should never interrupt playback.
   }
 }
 
@@ -3073,7 +3092,7 @@ async function submitExternalReelLink({ item, url, reason, userId, approved }) {
   return { success: approved ? "Reel link saved and approved." : "Reel link submitted for review." };
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite }) {
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite, onReelActivity }) {
   const [reelTab, setReelTab] = useState("forYou");
   const [reels, setReels] = useState([]);
   const [loadingReels, setLoadingReels] = useState(true);
@@ -3102,6 +3121,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [adminResult, setAdminResult] = useState(null);
   const [discoveryReady, setDiscoveryReady] = useState(null);
   const [failedEmbeds, setFailedEmbeds] = useState({});
+  const [reelLikes, setReelLikes] = useState(() => readReelLikes());
+  const [heartBurst, setHeartBurst] = useState("");
   const reelRefs = useRef([]);
   const iframeRefs = useRef([]);
   const lastLoadedKeyRef = useRef("");
@@ -3793,6 +3814,29 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     logPlayerControl("2x-end");
   }
 
+  function toggleReelLike(event, reel, item) {
+    stopPlayerEvent(event);
+    const identity = reelIdentity(reel);
+    setReelLikes((current) => {
+      const next = { ...current };
+      if (next[identity]) {
+        delete next[identity];
+      } else {
+        next[identity] = { likedAt: new Date().toISOString(), item_key: keyOf(item), source: reel.source || "youtube" };
+        setHeartBurst(identity);
+        if (typeof window !== "undefined") window.setTimeout(() => setHeartBurst((value) => value === identity ? "" : value), 700);
+        onReelActivity?.("reel_liked", item, { reelId: identity, source: reel.source || "youtube" });
+      }
+      saveReelLikes(next);
+      return next;
+    });
+  }
+
+  function shareReel(event, reel, item) {
+    stopPlayerEvent(event);
+    onReelActivity?.("reel_shared", item, { reelId: reelIdentity(reel), source: reel.source || "youtube" });
+  }
+
   function markYouTubeEmbedFailed(videoId, failureKey) {
     if (!videoId || failedYouTubeVideoIdsRef.current.has(videoId)) return;
     failedYouTubeVideoIdsRef.current.add(videoId);
@@ -3808,7 +3852,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }
 
   function estimateReelAspectMode(reel = {}, videoId = "") {
-    if (reelAspectModes[videoId]) return reelAspectModes[videoId];
+    const remembered = reelAspectModes[videoId];
+    if (remembered) return typeof remembered === "string" ? remembered : remembered.mode;
     const explicitMode = String(reel.aspectMode || reel.aspect_mode || "").toLowerCase();
     if (explicitMode.includes("vertical")) return "vertical-cover";
     if (explicitMode.includes("horizontal")) return "horizontal-contain";
@@ -3849,7 +3894,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (!videoId || reelAspectModes[videoId]) return;
     const image = event.currentTarget;
     const nextMode = image.naturalHeight > image.naturalWidth ? "vertical-cover" : "horizontal-contain";
-    setReelAspectModes((current) => current[videoId] ? current : { ...current, [videoId]: nextMode });
+    setReelAspectModes((current) => current[videoId] ? current : { ...current, [videoId]: { mode: nextMode, natural: `${image.naturalWidth}x${image.naturalHeight}` } });
   }
 
   function renderReelMedia(reel, item, index, active) {
@@ -3864,10 +3909,12 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       ? (reel.thumbnailUrl || `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
       : (reel.thumbnailUrl || backdropUrl(item.backdrop_path || item.poster_path));
     if (active && isYouTube) {
-      const layoutLogKey = `${youtubeVideoId}:${aspectMode}:${aspectFormat}:${aspectReason}`;
+      const rememberedAspect = reelAspectModes[youtubeVideoId];
+      const natural = typeof rememberedAspect === "object" ? rememberedAspect.natural : "unknown";
+      const layoutLogKey = `${youtubeVideoId}:${aspectMode}:${aspectFormat}:${aspectReason}:${natural}`;
       if (reelLayoutLogRef.current !== layoutLogKey) {
         reelLayoutLogRef.current = layoutLogKey;
-        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}, format=${aspectFormat}, reason=${aspectReason}.`);
+        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}, format=${aspectFormat}, reason=${aspectReason}, natural=${natural}.`);
       }
     }
     const preview = (
@@ -4089,7 +4136,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             const itemKey = keyOf(item);
             const saved = Boolean(watchlist[itemKey]);
             const watchedTitle = Boolean(watched[itemKey]);
-            const favorite = Boolean(favorites[itemKey]);
+            const reelLiked = Boolean(reelLikes[reelIdentity(reel)]);
             const active = activeIndex === index;
             const youtubeVideoId = getYouTubeVideoId(reel);
             const isPlayableYouTube = Boolean(active && isYouTubeReel(reel) && youtubeVideoId && !reel.isFallbackPreview);
@@ -4103,6 +4150,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 onClick={(event) => togglePlayPause(event, index)}
               >
                 {renderReelMedia(reel, item, index, active)}
+                {heartBurst === reelIdentity(reel) && <span className="mg2-reel-heart-burst"><Icon name="heart" /></span>}
                 {speeding && index === activeIndex && <span className="mg2-reel-speed">2x</span>}
                 {isPlayableYouTube && (
                   <div className={`mg2-reel-controls ${isPlaying ? "playing" : "paused"}`} onClick={(event) => event.stopPropagation()}>
@@ -4123,12 +4171,12 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   </div>
                 )}
                 <div className="mg2-reel-actions">
-                  <button className={favorite ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onFavorite?.(item); }} aria-label={favorite ? "Unlike title" : "Like title"}><Icon name="heart" /></button><span>{favorite ? "Liked" : "Like"}</span>
+                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
                   <button className={watchedTitle ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : "Mark watched"}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : "Watch"}</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
                   <button type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open reviews and details for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
-                  <button type="button" onClick={stopPlayerEvent} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
+                  <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
                 </div>
                 {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
                 <div className="mg2-reel-copy">
@@ -4212,7 +4260,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_watchlist_reels")}>Enrich watchlist reels</button>
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_favorite_reels")}>Enrich favorite reels</button>
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_friend_reels")}>Enrich friend reels</button>
-              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("list")}>List pending</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("list_pending")}>List pending</button>
               <button type="button" disabled={adminLoading || adminDryRun} onClick={() => runAdminDiscovery("promote_top_safe")}>Promote top safe candidates</button>
             </div>
             {adminResult && (
@@ -4232,7 +4280,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 {Array.isArray(adminResult.promotedList) && adminResult.promotedList.length > 0 && (
                   <div className="mg2-reel-admin-coverage">
                     {adminResult.promotedList.slice(0, 12).map((entry) => (
-                      <small key={`${entry.item_key}-${entry.video_title}`}>promoted: {entry.title} - {entry.video_title} ({entry.format || "unknown"}, {entry.aspect_mode || "unknown"})</small>
+                      <small key={`${entry.item_key}-${entry.video_title}`}>promoted: {entry.title} - {entry.video_title} ({entry.source || "source"}, {entry.format || "unknown"}, {entry.aspect_mode || "unknown"}, score {Math.round(Number(entry.score || 0))})</small>
                     ))}
                   </div>
                 )}
@@ -4900,7 +4948,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
                     <span className="mg2-activity-badges">
                       {event.statuses.map((status) => (
                         <i key={status} className={`mg2-activity-badge ${status}`}>
-                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
+                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : status === "reel_liked" ? <Icon name="heart" /> : status === "reel_shared" ? <Icon name="send" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
                         </i>
                       ))}
                     </span>
@@ -5338,8 +5386,16 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
   );
 }
 
-function NotificationsScreen() {
+function NotificationsScreen({ pendingRequests = [], onRespondFollowRequest }) {
   const groups = [
+    { label: "Requests", items: pendingRequests.map((request) => ({
+      type: "follow_request",
+      friend: { name: request.display_name || request.username || "MovieGram user", handle: request.username ? `@${request.username}` : "", avatar_url: request.avatar_url },
+      title: `${request.display_name || request.username || "Someone"} requested to follow you`,
+      detail: request.bio || "Private account follow request.",
+      time: "Now",
+      requesterId: request.id
+    })) },
     { label: "Today", items: [
       { friend: socialFriendProfiles[0], title: "Shruti followed you", detail: "You both love sci-fi and prestige drama.", time: "20m" },
       { friend: socialFriendProfiles[1], title: "Rohan liked your Joker review", detail: "Your review is getting attention.", time: "2h" },
@@ -5358,7 +5414,7 @@ function NotificationsScreen() {
 
   return (
     <section className="mg2-notifications-screen">
-      {groups.map((group) => (
+      {groups.filter((group) => group.items.length).map((group) => (
         <div key={group.label} className="mg2-notification-group">
           <h3>{group.label}</h3>
           {group.items.map((notification) => (
@@ -5368,6 +5424,12 @@ function NotificationsScreen() {
                 <strong>{notification.title}</strong>
                 <small>{notification.detail}</small>
               </span>
+              {notification.type === "follow_request" ? (
+                <div className="mg2-notification-actions">
+                  <button type="button" onClick={() => onRespondFollowRequest?.(notification.requesterId, "approved")}>Accept</button>
+                  <button type="button" className="ghost" onClick={() => onRespondFollowRequest?.(notification.requesterId, "declined")}>Decline</button>
+                </div>
+              ) : null}
               <em>{notification.time}</em>
             </article>
           ))}
@@ -6741,6 +6803,11 @@ export default function Home() {
     persist(ownerStorageKey(activeDataOwner.current || "guest", MOVIEGRAM_LOCAL_KEYS.profileActivity), trimmed);
   }
 
+  function recordReelActivity(type, item, metadata = {}) {
+    recordProfileActivity(type, item, "reels");
+    logActivity(type, { ...item, media_type: mediaType(item) }, metadata);
+  }
+
   function syncTrackingNow(actionName, overrides = {}) {
     if (!supabaseUser?.id || !remoteReady || remoteHydrating.current) return;
     const nextState = normalizeLocalState({
@@ -7207,7 +7274,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Notifications</h2>
         </div>
-        <NotificationsScreen />
+        <NotificationsScreen pendingRequests={pendingRequests} onRespondFollowRequest={respondFollowRequest} />
       </section>
     );
   } else if (activeSocial === "blend") {
@@ -7243,7 +7310,7 @@ export default function Home() {
   } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} />;
+    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {

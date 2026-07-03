@@ -187,9 +187,11 @@ async function promoteCandidateById(client, id) {
     promotedList: [{
       title: row.title,
       video_title: row.video_title,
+      source: row.source,
       item_key: row.item_key,
       format: normalized.content_format,
-      aspect_mode: normalized.aspect_mode
+      aspect_mode: normalized.aspect_mode,
+      score: normalized.quality_score
     }],
     errors: manualOverride && !relevance.accepted ? ["Warning: manually promoted low-relevance candidate."] : []
   };
@@ -331,9 +333,11 @@ async function tmdbCandidatesForItems(items = [], targetPerItem = 5) {
 
 function youtubeQueriesForEnrichment(item = {}, preferNonTrailers = true) {
   const title = titleOf(item);
+  const year = String(item.year || item.release_year || item.release_date || item.first_air_date || "").match(/\b(19|20)\d{2}\b/)?.[0] || "";
+  const titleWithYear = year ? `${title} ${year}` : title;
   const queries = [
-    `${title} movie scene short`,
-    `${title} official clip`,
+    `${titleWithYear} movie scene short`,
+    `${titleWithYear} official clip`,
     `${title} movie clip`,
     `${title} scene`
   ];
@@ -471,9 +475,11 @@ async function promoteHighConfidenceRows(client, candidates = []) {
       promotedList.push({
         title: row.title,
         video_title: row.video_title,
+        source: row.source,
         item_key: row.item_key,
         format: candidate.content_format,
-        aspect_mode: candidate.aspect_mode
+        aspect_mode: candidate.aspect_mode,
+        score: candidate.quality_score
       });
     }
   }
@@ -539,11 +545,6 @@ async function enrichLibraryReels(client, body = {}) {
     const saveResult = await saveCandidates(client, strictCandidates);
     savedCandidates = saveResult.saved;
     if (saveResult.error) errors.push(saveResult.error);
-    const promoteResult = await promoteHighConfidenceRows(client, strictCandidates);
-    promotedToCache = promoteResult.promoted;
-    skippedDuplicates = promoteResult.skippedDuplicates;
-    promotedList = promoteResult.promotedList || [];
-    errors.push(...promoteResult.errors);
   }
   return {
     itemsSent: items.length,
@@ -667,7 +668,7 @@ export async function POST(request) {
   const dryRun = body?.dryRun !== false;
   const errors = [];
 
-  if (action === "list") {
+  if (action === "list" || action === "list_pending") {
     const listed = await listCandidates(client, body?.status || "pending", target);
     return NextResponse.json({ checked: listed.candidates.length, candidates: listed.candidates, savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: listed.errors, dryRun: true });
   }
@@ -712,12 +713,12 @@ export async function POST(request) {
     });
   }
 
-  if (action === "approve" || action === "reject") {
+  if (action === "approve" || action === "approve_selected" || action === "reject") {
     const updated = await updateCandidateStatus(client, body?.candidateId, action === "approve" ? "approved" : "rejected", body?.rejectionReason || "");
     return NextResponse.json({ checked: updated.candidate ? 1 : 0, candidates: updated.candidate ? [updated.candidate] : [], savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: updated.errors, dryRun: true });
   }
 
-  if (action === "promote") {
+  if (action === "promote" || action === "promote_selected") {
     const promoted = await promoteCandidateById(client, body?.candidateId);
     await saveDiscoveryJob(client, { job_type: "candidate_promote", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
     return NextResponse.json({ checked: 1, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, promotedList: promoted.promotedList || [], skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });

@@ -6809,6 +6809,28 @@ body {
   background: #040507;
 }
 
+.mg2-notification-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mg2-notification-actions button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #fff;
+  background: #8b5cf6;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-notification-actions button.ghost {
+  border: 1px solid rgba(255,255,255,.16);
+  color: #d8deeb;
+  background: rgba(255,255,255,.07);
+}
+
 .mg2-reel-head {
   position: absolute;
   z-index: 6;
@@ -7223,17 +7245,17 @@ body {
 .mg2-reel-actions {
   position: absolute;
   z-index: 2;
-  right: 16px;
-  bottom: calc(var(--reel-content-bottom) + 2px);
+  right: 14px;
+  bottom: calc(var(--reel-content-bottom) + 8px);
   display: grid;
   justify-items: center;
-  gap: 1px;
+  gap: 2px;
 }
 
 .mg2-reel-actions button,
 .mg2-reel-actions a {
-  width: 42px;
-  height: 36px;
+  width: 48px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: 0;
@@ -7245,6 +7267,10 @@ body {
 .mg2-reel-actions button.active,
 .mg2-reel-actions a:focus-visible {
   color: #a997ff;
+}
+
+.mg2-reel-actions button.liked {
+  color: #ff4f87;
 }
 
 .mg2-reel-actions .mg2-reel-details-button {
@@ -7260,8 +7286,8 @@ body {
 }
 
 .mg2-reel-actions svg {
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
   filter: drop-shadow(0 3px 8px rgba(0,0,0,.62));
 }
 
@@ -7270,6 +7296,29 @@ body {
   color: #fff;
   font-size: 9px;
   font-weight: 800;
+}
+
+.mg2-reel-heart-burst {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ff4f87;
+  pointer-events: none;
+  animation: mg2-heart-burst .7s ease both;
+}
+
+.mg2-reel-heart-burst svg {
+  width: 92px;
+  height: 92px;
+  filter: drop-shadow(0 16px 36px rgba(0,0,0,.45));
+}
+
+@keyframes mg2-heart-burst {
+  0% { opacity: 0; transform: scale(.35); }
+  24% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 0; transform: scale(1.32); }
 }
 
 .mg2-reel-empty {
@@ -8062,19 +8111,23 @@ body {
 }
 
 .mg2-reel-add-link {
-  position: absolute;
-  z-index: 6;
-  top: 10px;
-  right: 12px;
-  min-height: 30px;
+  min-height: 38px;
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 999px;
-  padding: 0 10px;
+  padding: 0 13px;
   color: rgba(255,255,255,.86);
   background: rgba(0,0,0,.3);
   font-size: 10px;
   font-weight: 900;
   backdrop-filter: blur(14px);
+}
+
+.mg2-reel-admin-entry {
+  position: absolute;
+  z-index: 7;
+  top: calc(132px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  pointer-events: auto;
 }
 
 .mg2-youtube-watermark {
@@ -8274,6 +8327,18 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 5px;
+}
+
+.mg2-reel-admin-coverage {
+  display: grid;
+  gap: 6px;
+}
+
+.mg2-reel-admin-coverage small {
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: rgba(255,255,255,.045);
 }
 
 .mg2-reel-submit-results {
