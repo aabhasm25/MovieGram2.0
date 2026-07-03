@@ -3133,6 +3133,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }, [favorites, ratings, reviews, watched, watchlist]);
   const friendActivityItems = useMemo(() => dedupe((socialActivity || []).map((event) => event.item).filter(Boolean)), [socialActivity]);
   const isReelAdmin = userId && userId !== "guest" && MOVIEGRAM_REEL_ADMIN_IDS.includes(userId);
+  const localReelAdminEnabled = typeof window !== "undefined" && ["true", "1", "yes"].includes(String(window.localStorage.getItem("moviegram_reels_admin") || window.localStorage.getItem("mg2_reels_admin") || "").toLowerCase());
+  const canOpenReelAdmin = isReelAdmin || process.env.NODE_ENV !== "production" || localReelAdminEnabled;
   const canSubmitReels = isReelAdmin;
   const reelTabs = [
     { id: "forYou", label: "For You" },
@@ -3603,7 +3605,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       if (isTrailer) acc.trailers += 1;
       else acc.nonTrailers += 1;
       const youtubeVideoId = getYouTubeVideoId(reel);
-      const aspectMode = youtubeVideoId ? estimateReelAspectMode(reel, youtubeVideoId) : "unknown";
+      const aspectMode = youtubeVideoId ? estimateReelAspectMode(reel, youtubeVideoId) : "unknown-contain";
       if (aspectMode.includes("vertical")) acc.vertical += 1;
       else if (aspectMode.includes("horizontal")) acc.horizontal += 1;
       else acc.unknown += 1;
@@ -3807,10 +3809,40 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
   function estimateReelAspectMode(reel = {}, videoId = "") {
     if (reelAspectModes[videoId]) return reelAspectModes[videoId];
-    const text = `${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""}`.toLowerCase();
-    if (text.includes("short") || text.includes("/shorts/") || text.includes("reel")) return "vertical-cover";
+    const explicitMode = String(reel.aspectMode || reel.aspect_mode || "").toLowerCase();
+    if (explicitMode.includes("vertical")) return "vertical-cover";
+    if (explicitMode.includes("horizontal")) return "horizontal-contain";
+    if (explicitMode.includes("unknown")) return "unknown-contain";
+    const format = reelContentFormat(reel);
+    if (["short", "reel"].includes(format)) return "vertical-cover";
+    if (["clip", "scene_edit", "teaser", "featurette", "behind_the_scenes", "trailer"].includes(format)) return "horizontal-contain";
+    const text = `${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""} ${reel.embedUrl || ""}`.toLowerCase();
+    if (text.includes("/shorts/") || text.includes("#shorts") || text.includes("#reels")) return "vertical-cover";
     if (reel.source === "youtube") return "horizontal-contain";
+    return "unknown-contain";
+  }
+
+  function reelContentFormat(reel = {}) {
+    const text = `${reel.contentFormat || ""} ${reel.content_format || ""} ${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""}`.toLowerCase();
+    if (text.includes("/shorts/") || /\bshorts?\b/.test(text)) return "short";
+    if (text.includes("instagram reel") || text.includes("facebook reel") || /\breels?\b/.test(text)) return "reel";
+    if (text.includes("scene") || text.includes("edit")) return "scene_edit";
+    if (text.includes("clip")) return "clip";
+    if (text.includes("teaser")) return "teaser";
+    if (text.includes("featurette")) return "featurette";
+    if (text.includes("behind the scenes") || text.includes("bts")) return "behind_the_scenes";
+    if (text.includes("trailer")) return "trailer";
     return "unknown";
+  }
+
+  function reelAspectReason(reel = {}, aspectMode = "") {
+    const format = reelContentFormat(reel);
+    if (reel.aspectMode || reel.aspect_mode) return "metadata";
+    if (reelAspectModes[getYouTubeVideoId(reel)]) return "thumbnail";
+    if (["short", "reel"].includes(format)) return "short/reel signal";
+    if (format !== "unknown") return "format";
+    if (aspectMode === "horizontal-contain" && reel.source === "youtube") return "youtube default";
+    return "safe unknown";
   }
 
   function rememberThumbnailAspect(videoId, event) {
@@ -3826,19 +3858,21 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     const isYouTube = isYouTubeReel(reel) && youtubeVideoId;
     const failureKey = reelFailureKey(reel);
     const aspectMode = isYouTube ? estimateReelAspectMode(reel, youtubeVideoId) : "vertical-cover";
+    const aspectFormat = reelContentFormat(reel);
+    const aspectReason = reelAspectReason(reel, aspectMode);
     const thumbnail = isYouTube
       ? (reel.thumbnailUrl || `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
       : (reel.thumbnailUrl || backdropUrl(item.backdrop_path || item.poster_path));
     if (active && isYouTube) {
-      const layoutLogKey = `${youtubeVideoId}:${aspectMode}`;
+      const layoutLogKey = `${youtubeVideoId}:${aspectMode}:${aspectFormat}:${aspectReason}`;
       if (reelLayoutLogRef.current !== layoutLogKey) {
         reelLayoutLogRef.current = layoutLogKey;
-        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}.`);
+        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}, format=${aspectFormat}, reason=${aspectReason}.`);
       }
     }
     const preview = (
       <img
-        className={`mg2-reel-bg${aspectMode === "horizontal-contain" ? " blurred" : ""}`}
+        className={`mg2-reel-bg${["horizontal-contain", "unknown-contain"].includes(aspectMode) ? " blurred" : ""}`}
         src={thumbnail}
         alt=""
         loading={index <= activeIndex + 2 ? "eager" : "lazy"}
@@ -3935,7 +3969,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }
 
   async function runAdminDiscovery(action = "discover", candidateId = "") {
-    if (!isReelAdmin) return;
+    if (!canOpenReelAdmin) return;
     setAdminLoading(true);
     setAdminResult(null);
     const lines = adminInput.split(/\n+/).map((line) => line.trim()).filter(Boolean);
@@ -3989,7 +4023,9 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       const normalized = { ...item, media_type: mediaType(item) };
       return {
         id: normalized.id,
+        tmdb_id: normalized.id,
         media_type: normalized.media_type,
+        item_key: keyOf(normalized),
         title: normalized.title || "",
         name: normalized.name || "",
         poster_path: normalized.poster_path || "",
@@ -4035,7 +4071,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           {reelTabs.map((tab) => <button key={tab.id} className={reelTab === tab.id ? "active" : ""} type="button" onClick={() => setReelTab(tab.id)}>{tab.label}</button>)}
         </div>
       </div>
-      {isReelAdmin && (
+      {canOpenReelAdmin && (
         <div className="mg2-reel-admin-entry">
           <button className="mg2-reel-add-link" type="button" onClick={() => setAdminOpen(true)}>Reels Admin</button>
         </div>
@@ -4176,13 +4212,13 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_favorite_reels")}>Enrich favorite reels</button>
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_friend_reels")}>Enrich friend reels</button>
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("list")}>List pending</button>
-              <button type="button" disabled={adminLoading || adminDryRun} onClick={() => runAdminDiscovery("promote_top")}>Promote top safe candidates</button>
+              <button type="button" disabled={adminLoading || adminDryRun} onClick={() => runAdminDiscovery("promote_top_safe")}>Promote top safe candidates</button>
             </div>
             {adminResult && (
               <div className="mg2-reel-admin-result">
                 <strong>{adminResult.ok === false ? "Request failed" : "Result"}</strong>
                 {adminResult.message && <small>{adminResult.message}</small>}
-                <small>checked={adminResult.checkedItems || adminResult.checked || 0} candidates={adminResult.candidatesFound || adminResult.candidates?.length || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                <small>checked={adminResult.checkedItems || adminResult.checked || 0} underfilled={adminResult.underfilledItems || 0} candidates={adminResult.candidatesFound || adminResult.candidates?.length || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} rejected={adminResult.rejectedLowRelevance || 0} youtubeSearches={adminResult.youtubeSearches || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
                 {adminResult.discoveryReady !== undefined && <small>{adminResult.discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>}
                 {(adminResult.errors || []).map((error, index) => <small key={`${error}-${index}`}>{error}</small>)}
                 {(adminResult.candidates || []).slice(0, 12).map((candidate) => (

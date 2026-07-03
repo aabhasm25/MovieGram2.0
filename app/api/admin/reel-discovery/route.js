@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
+  assessCandidateRelevance,
   candidateLooksRelevant,
   candidateToReelCacheRow,
   classifyReelSourceUrl,
@@ -60,6 +61,17 @@ function safeError(error) {
 
 function isQuotaError(status, message = "") {
   return status === 429 || /quota|rate limit|rate_limit|exceeded/i.test(message || "");
+}
+
+function scoreForItem(candidate, item = {}) {
+  const relevance = assessCandidateRelevance(candidate, item);
+  return {
+    ...candidate,
+    match_score: relevance.match_score,
+    rejection_reason: relevance.rejection_reason,
+    status: relevance.accepted ? candidate.status || "pending" : "rejected",
+    quality_score: scoreReelCandidate(candidate, item)
+  };
 }
 
 async function saveDiscoveryJob(client, row) {
@@ -139,6 +151,11 @@ async function promoteCandidateById(client, id) {
   if (!(normalized.source && (normalized.source_video_id || normalized.source_url || normalized.watch_url || normalized.embed_url))) {
     return { promoted: 0, skippedDuplicates: 0, errors: ["Candidate is missing source URL or video id."] };
   }
+  const relevance = assessCandidateRelevance(normalized, { title: normalized.title, name: normalized.title, id: normalized.tmdb_id, media_type: normalized.media_type });
+  const manualOverride = normalized.discovered_by === "admin_manual";
+  if (!manualOverride && (!relevance.accepted || Number(normalized.quality_score || 0) < 120 || Number(normalized.match_score || relevance.match_score || 0) < 35)) {
+    return { promoted: 0, skippedDuplicates: 0, errors: [`Low relevance candidate not promoted: ${relevance.rejection_reason || "threshold not met"}`] };
+  }
   const duplicateQuery = client
     .from("reel_cache")
     .select("id", { count: "exact", head: true });
@@ -159,7 +176,7 @@ async function promoteCandidateById(client, id) {
   const { error: upsertError } = await client.from("reel_cache").upsert(row, { onConflict: "source,source_video_id" });
   if (upsertError) return { promoted: 0, skippedDuplicates: 0, errors: [safeError(upsertError)] };
   await client.from("reel_candidates").update({ status: "approved", updated_at: new Date().toISOString() }).eq("id", id);
-  return { promoted: 1, skippedDuplicates: 0, errors: [] };
+  return { promoted: 1, skippedDuplicates: 0, errors: manualOverride && !relevance.accepted ? ["Warning: manually promoted low-relevance candidate."] : [] };
 }
 
 async function promoteTopSafeCandidates(client, limit = 25) {
@@ -176,7 +193,7 @@ async function promoteTopSafeCandidates(client, limit = 25) {
   const errors = [];
   for (const candidate of data || []) {
     const normalized = normalizeReelCandidate({ ...candidate, status: "approved" });
-    if (Number(normalized.quality_score || 0) < 120 || normalized.source !== "youtube") continue;
+    if (normalized.rejection_reason || Number(normalized.quality_score || 0) < 145 || Number(normalized.match_score || 0) < 45 || normalized.source !== "youtube") continue;
     const result = await promoteCandidateById(client, candidate.id);
     promoted += result.promoted || 0;
     skippedDuplicates += result.skippedDuplicates || 0;
@@ -234,7 +251,7 @@ async function tmdbCandidates(target) {
               status: "pending",
               discovered_by: "admin_tmdb"
             });
-            candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate, normalizedItem) });
+            candidates.push(scoreForItem(candidate, normalizedItem));
           });
       }
     } catch (error) {
@@ -284,7 +301,8 @@ async function tmdbCandidatesForItems(items = [], targetPerItem = 5) {
             status: "pending",
             discovered_by: "admin_enrich_tmdb"
           });
-          candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate, item) + (video.official ? 10 : 0) });
+          const scored = scoreForItem(candidate, item);
+          candidates.push({ ...scored, quality_score: scored.quality_score + (video.official ? 10 : 0) });
         });
     } catch (error) {
       errors.push(`${titleOf(item)}: ${error.message}`);
@@ -296,15 +314,12 @@ async function tmdbCandidatesForItems(items = [], targetPerItem = 5) {
 function youtubeQueriesForEnrichment(item = {}, preferNonTrailers = true) {
   const title = titleOf(item);
   const queries = [
-    `${title} clip`,
-    `${title} scene`,
-    `${title} short`,
-    `${title} edit`,
-    `${title} teaser`,
-    `${title} behind the scenes`
+    `${title} movie scene short`,
+    `${title} official clip`,
+    `${title} movie clip`,
+    `${title} scene`
   ];
-  if (!preferNonTrailers) queries.push(`${title} trailer`);
-  else queries.push(`${title} trailer`);
+  queries.push(`${title} trailer`);
   return queries;
 }
 
@@ -359,7 +374,7 @@ async function youtubeCandidatesForItems(items = [], remainingBudget = 0, prefer
             status: "pending",
             discovered_by: "admin_enrich_youtube"
           });
-          candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate, item) });
+          candidates.push(scoreForItem(candidate, item));
         });
       } catch (error) {
         errors.push(error.message);
@@ -390,7 +405,8 @@ async function promoteHighConfidenceRows(client, candidates = []) {
   const errors = [];
   const safeCandidates = candidates
     .filter((candidate) => candidate.source === "youtube")
-    .filter((candidate) => Number(candidate.quality_score || 0) >= 120)
+    .filter((candidate) => !candidate.rejection_reason)
+    .filter((candidate) => Number(candidate.quality_score || 0) >= 145 && Number(candidate.match_score || 0) >= 45)
     .slice(0, 50);
   for (const candidate of safeCandidates) {
     const row = candidateToReelCacheRow({ ...candidate, status: "approved" });
@@ -424,6 +440,21 @@ async function enrichLibraryReels(client, body = {}) {
   const preferNonTrailers = body.preferNonTrailers !== false;
   const dryRun = body.dryRun !== false;
   const items = (body.items || []).filter((item) => item?.id).slice(0, maxItems).map((item) => ({ ...item, media_type: mediaType(item) }));
+  if (!items.length) {
+    return {
+      checkedItems: 0,
+      underfilledItems: 0,
+      candidates: [],
+      candidatesFound: 0,
+      savedCandidates: 0,
+      promotedToCache: 0,
+      skippedDuplicates: 0,
+      errors: ["No items supplied from client."],
+      dryRun,
+      youtubeSearches: 0,
+      quota: false
+    };
+  }
   const itemKeys = items.map(itemKeyOf).filter(Boolean);
   const existingCounts = await existingCacheCountByItem(client, itemKeys);
   const needs = items.filter((item) => (existingCounts.get(itemKeyOf(item)) || 0) < targetPerItem);
@@ -432,6 +463,7 @@ async function enrichLibraryReels(client, body = {}) {
   const youtube = await youtubeCandidatesForItems(needs, youtubeBudget, preferNonTrailers);
   const candidates = dedupeReelCandidates([...tmdb.candidates, ...youtube.candidates])
     .sort((a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0));
+  const rejectedLowRelevance = candidates.filter((candidate) => candidate.rejection_reason || candidate.status === "rejected").length;
   const errors = [...tmdb.errors, ...youtube.errors];
   let savedCandidates = 0;
   let promotedToCache = 0;
@@ -450,6 +482,7 @@ async function enrichLibraryReels(client, body = {}) {
     underfilledItems: needs.length,
     candidates,
     candidatesFound: candidates.length,
+    rejectedLowRelevance,
     savedCandidates,
     promotedToCache,
     skippedDuplicates,
@@ -503,7 +536,7 @@ async function youtubeCandidates(queries = [], target) {
           status: "pending",
           discovered_by: "admin_youtube"
         });
-        candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate) });
+        candidates.push(scoreForItem(candidate, { title: query }));
       });
     } catch (error) {
       errors.push(error.message);
@@ -530,7 +563,7 @@ function manualCandidates(urls = [], target) {
       status: "pending",
       discovered_by: "admin_manual"
     });
-    return { ...candidate, quality_score: scoreReelCandidate(candidate) };
+    return scoreForItem(candidate, { title: raw.title || candidate.title });
   }).filter(Boolean);
   return { candidates: dedupeReelCandidates(candidates), errors: [] };
 }
@@ -588,6 +621,7 @@ export async function POST(request) {
       underfilledItems: enrichment.underfilledItems,
       candidates: enrichment.candidates,
       candidatesFound: enrichment.candidatesFound,
+      rejectedLowRelevance: enrichment.rejectedLowRelevance,
       savedCandidates: enrichment.savedCandidates,
       promotedToCache: enrichment.promotedToCache,
       skippedDuplicates: enrichment.skippedDuplicates,
@@ -609,7 +643,7 @@ export async function POST(request) {
     return NextResponse.json({ checked: 1, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
   }
 
-  if (action === "promote_top") {
+  if (action === "promote_top" || action === "promote_top_safe") {
     const promoted = await promoteTopSafeCandidates(client, target);
     await saveDiscoveryJob(client, { job_type: "candidate_promote_top", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
     return NextResponse.json({ checked: target, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
@@ -618,9 +652,11 @@ export async function POST(request) {
   const source = ["tmdb", "youtube", "manual"].includes(body?.source) ? body.source : "tmdb";
   const result = await discoverCandidates(source, body, target);
   const relevant = result.candidates.filter((candidate) => {
+    if (candidate.rejection_reason || candidate.status === "rejected") return false;
     if (!candidate.item_key && !candidate.tmdb_id) return true;
     return candidateLooksRelevant(candidate, { title: candidate.title, name: candidate.title, id: candidate.tmdb_id, media_type: candidate.media_type });
   });
+  const rejectedLowRelevance = result.candidates.length - relevant.length;
   errors.push(...(result.errors || []));
 
   let savedCandidates = 0;
@@ -648,9 +684,12 @@ export async function POST(request) {
   return NextResponse.json({
     checked: relevant.length,
     candidates: relevant,
+    candidatesFound: relevant.length,
     savedCandidates,
     promotedToCache: 0,
     skippedDuplicates,
+    rejectedLowRelevance,
+    youtubeSearches: result.searches || 0,
     errors,
     dryRun
   });

@@ -6918,7 +6918,8 @@ body {
   pointer-events: none;
 }
 
-.mg2-reel-player-frame.horizontal-contain {
+.mg2-reel-player-frame.horizontal-contain,
+.mg2-reel-player-frame.unknown-contain {
   top: 50%;
   bottom: auto;
   left: 0;
@@ -6955,7 +6956,8 @@ body {
   transform: translateX(-50%);
 }
 
-.mg2-reel-player-frame.horizontal-contain .mg2-reel-player-youtube {
+.mg2-reel-player-frame.horizontal-contain .mg2-reel-player-youtube,
+.mg2-reel-player-frame.unknown-contain .mg2-reel-player-youtube {
   left: 0;
   width: 100%;
   min-width: 0;
