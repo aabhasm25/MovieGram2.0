@@ -206,6 +206,7 @@ const REEL_CACHE_LOG_SESSION_KEY = "moviegram.reelCacheFirstLog.v1";
 const TMDB_REEL_SEED_SESSION_KEY = "moviegram.tmdbReelSeedDone";
 const YOUTUBE_SEARCH_STOPPED_SESSION_KEY = "moviegram.youtubeSearchStoppedAfter429";
 const REEL_LIKES_STORAGE_KEY = "moviegram.reelLikes";
+const REEL_COMMENTS_STORAGE_KEY = "moviegram.reelComments";
 const MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION = 2;
 const REEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MOVIEGRAM_REEL_ADMIN_IDS = (process.env.NEXT_PUBLIC_MOVIEGRAM_REEL_ADMIN_IDS || "")
@@ -363,6 +364,24 @@ function saveReelLikes(likes = {}) {
     window.localStorage.setItem(REEL_LIKES_STORAGE_KEY, JSON.stringify(likes));
   } catch {
     // Reel likes stay local and should never interrupt playback.
+  }
+}
+
+function readReelComments() {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(REEL_COMMENTS_STORAGE_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReelComments(comments = {}) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(REEL_COMMENTS_STORAGE_KEY, JSON.stringify(comments));
+  } catch {
+    // Local comment drafts should never interrupt Reels.
   }
 }
 
@@ -3122,6 +3141,9 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [discoveryReady, setDiscoveryReady] = useState(null);
   const [failedEmbeds, setFailedEmbeds] = useState({});
   const [reelLikes, setReelLikes] = useState(() => readReelLikes());
+  const [reelComments, setReelComments] = useState(() => readReelComments());
+  const [commentReel, setCommentReel] = useState(null);
+  const [commentText, setCommentText] = useState("");
   const [heartBurst, setHeartBurst] = useState("");
   const reelRefs = useRef([]);
   const iframeRefs = useRef([]);
@@ -3135,6 +3157,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const feedMixLogRef = useRef("");
   const coverageLogRef = useRef("");
   const reelOrderLogRef = useRef("");
+  const reelSocialWarnedRef = useRef(new Set());
   const seenReelIdsRef = useRef(new Set());
   const failedYouTubeVideoIdsRef = useRef(new Set());
   const baseReels = useMemo(() => dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]), [rows]);
@@ -3814,6 +3837,44 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     logPlayerControl("2x-end");
   }
 
+  function reelSocialPayload(reel, item, extra = {}) {
+    const videoId = getYouTubeVideoId(reel);
+    return {
+      user_id: userId,
+      reel_key: reelIdentity(reel),
+      item_key: keyOf(item),
+      media_type: mediaType(item),
+      tmdb_id: item?.id || null,
+      title: titleOf(item),
+      source: reel.source || reelSourceFromUrl("", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "") || "youtube",
+      source_video_id: videoId || reel.sourceVideoId || reel.source_video_id || null,
+      source_url: reel.sourceUrl || reel.source_url || reel.watchUrl || reel.watch_url || reel.embedUrl || reel.embed_url || "",
+      created_at: new Date().toISOString(),
+      ...extra
+    };
+  }
+
+  async function saveReelSocialRemote(table, payload, actionLabel) {
+    if (!supabase || !userId || userId === "guest") return;
+    try {
+      const { error } = await supabase.from(table).insert(payload);
+      if (error) throw error;
+    } catch (error) {
+      const key = `${table}:${error?.code || error?.message || "unknown"}`;
+      if (!reelSocialWarnedRef.current.has(key)) {
+        reelSocialWarnedRef.current.add(key);
+        console.warn("MovieGram reel social save skipped", {
+          table,
+          action: actionLabel,
+          code: error?.code,
+          message: error?.message,
+          details: error?.details,
+          hint: error?.hint
+        });
+      }
+    }
+  }
+
   function toggleReelLike(event, reel, item) {
     stopPlayerEvent(event);
     const identity = reelIdentity(reel);
@@ -3826,6 +3887,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         setHeartBurst(identity);
         if (typeof window !== "undefined") window.setTimeout(() => setHeartBurst((value) => value === identity ? "" : value), 700);
         onReelActivity?.("reel_liked", item, { reelId: identity, source: reel.source || "youtube" });
+        saveReelSocialRemote("reel_likes", reelSocialPayload(reel, item), "reel_liked");
       }
       saveReelLikes(next);
       return next;
@@ -3834,7 +3896,43 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
   function shareReel(event, reel, item) {
     stopPlayerEvent(event);
+    const url = reel.watchUrl || reel.sourceUrl || (typeof window !== "undefined" ? window.location.href : "");
+    const title = `${titleOf(item)} on MovieGram`;
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title, url }).catch(() => {});
+    } else if (typeof navigator !== "undefined" && navigator.clipboard && url) {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
     onReelActivity?.("reel_shared", item, { reelId: reelIdentity(reel), source: reel.source || "youtube" });
+    saveReelSocialRemote("reel_shares", reelSocialPayload(reel, item, { share_url: url }), "reel_shared");
+  }
+
+  function openReelComments(event, reel, item) {
+    stopPlayerEvent(event);
+    setCommentReel({ reel, item });
+    setCommentText("");
+  }
+
+  function submitReelComment(event) {
+    event.preventDefault();
+    if (!commentReel || !commentText.trim()) return;
+    const identity = reelIdentity(commentReel.reel);
+    const nextComment = {
+      id: `${identity}:${Date.now()}`,
+      text: commentText.trim(),
+      createdAt: new Date().toISOString()
+    };
+    setReelComments((current) => {
+      const next = { ...current, [identity]: [...(current[identity] || []), nextComment].slice(-50) };
+      saveReelComments(next);
+      return next;
+    });
+    onReelActivity?.("reel_commented", commentReel.item, { reelId: identity, source: commentReel.reel.source || "youtube" });
+    saveReelSocialRemote("reel_comments", reelSocialPayload(commentReel.reel, commentReel.item, {
+      comment_text: nextComment.text,
+      body: nextComment.text
+    }), "reel_commented");
+    setCommentText("");
   }
 
   function markYouTubeEmbedFailed(videoId, failureKey) {
@@ -3858,12 +3956,12 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (explicitMode.includes("vertical")) return "vertical-cover";
     if (explicitMode.includes("horizontal")) return "horizontal-contain";
     if (explicitMode.includes("unknown")) return "unknown-contain";
-    const format = reelContentFormat(reel);
-    if (["short", "reel"].includes(format)) return "vertical-cover";
-    if (["clip", "scene_edit", "teaser", "featurette", "behind_the_scenes", "trailer"].includes(format)) return "horizontal-contain";
     const text = `${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""} ${reel.embedUrl || ""}`.toLowerCase();
     if (text.includes("/shorts/") || text.includes("#shorts") || text.includes("#reels")) return "vertical-cover";
-    if (reel.source === "youtube") return "horizontal-contain";
+    const format = reelContentFormat(reel);
+    if (["short", "reel"].includes(format)) return "vertical-cover";
+    if (["clip", "scene_edit"].includes(format) && (text.includes("#shorts") || text.includes("#reels") || text.includes("/shorts/"))) return "vertical-cover";
+    if (["teaser", "featurette", "behind_the_scenes", "trailer"].includes(format)) return "horizontal-contain";
     return "unknown-contain";
   }
 
@@ -3886,15 +3984,36 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (reelAspectModes[getYouTubeVideoId(reel)]) return "thumbnail";
     if (["short", "reel"].includes(format)) return "short/reel signal";
     if (format !== "unknown") return "format";
-    if (aspectMode === "horizontal-contain" && reel.source === "youtube") return "youtube default";
     return "safe unknown";
   }
 
+  function aspectModeForReel(reel = {}) {
+    const videoId = getYouTubeVideoId(reel);
+    return videoId ? estimateReelAspectMode(reel, videoId) : "unknown-contain";
+  }
+
+  function aspectModeClassForReel(reel = {}) {
+    return aspectModeForReel(reel).replace("-cover", "").replace("-contain", "");
+  }
+
+  function aspectModeLabelForReel(reel = {}) {
+    const mode = aspectModeForReel(reel);
+    if (mode.includes("vertical")) return "VERTICAL";
+    if (mode.includes("horizontal")) return "HORIZONTAL";
+    return "UNKNOWN";
+  }
+
   function rememberThumbnailAspect(videoId, event) {
-    if (!videoId || reelAspectModes[videoId]) return;
+    if (!videoId) return;
     const image = event.currentTarget;
+    if (!image.naturalWidth || !image.naturalHeight) return;
     const nextMode = image.naturalHeight > image.naturalWidth ? "vertical-cover" : "horizontal-contain";
-    setReelAspectModes((current) => current[videoId] ? current : { ...current, [videoId]: { mode: nextMode, natural: `${image.naturalWidth}x${image.naturalHeight}` } });
+    const natural = `${image.naturalWidth}x${image.naturalHeight}`;
+    setReelAspectModes((current) => {
+      const existing = current[videoId];
+      if (existing?.mode === nextMode && existing?.natural === natural) return current;
+      return { ...current, [videoId]: { mode: nextMode, natural } };
+    });
   }
 
   function renderReelMedia(reel, item, index, active) {
@@ -4090,7 +4209,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     return [];
   }
 
-  async function runAdminCandidateAction(action, candidateId) {
+  async function runAdminCandidateAction(action, candidateId, extra = {}) {
     if (!candidateId) return;
     setAdminLoading(true);
     try {
@@ -4100,7 +4219,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           "Content-Type": "application/json",
           "x-admin-secret": adminSecret
         },
-        body: JSON.stringify({ action, candidateId, dryRun: true })
+        body: JSON.stringify({ action, candidateId, dryRun: true, ...extra })
       });
       const result = await response.json().catch(() => ({}));
       setAdminResult({ ...result, ok: response.ok, status: response.status });
@@ -4150,6 +4269,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 onClick={(event) => togglePlayPause(event, index)}
               >
                 {renderReelMedia(reel, item, index, active)}
+                {active && <span className={`mg2-reel-layout-badge ${aspectModeClassForReel(reel)}`}>{aspectModeLabelForReel(reel)}</span>}
                 {heartBurst === reelIdentity(reel) && <span className="mg2-reel-heart-burst"><Icon name="heart" /></span>}
                 {speeding && index === activeIndex && <span className="mg2-reel-speed">2x</span>}
                 {isPlayableYouTube && (
@@ -4175,7 +4295,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
                   <button className={watchedTitle ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : "Mark watched"}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : "Watch"}</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
-                  <button type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open reviews and details for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
+                  <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
                   <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
                 </div>
                 {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
@@ -4199,6 +4319,28 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <button type="button" onClick={() => setPageSize((current) => current + 5)}>Load more reels</button>
             </article>
           )}
+        </div>
+      )}
+      {commentReel && (
+        <div className="mg2-reel-comments-sheet" role="dialog" aria-modal="true" aria-label="Reel comments" onClick={(event) => event.stopPropagation()}>
+          <div>
+            <strong>Comments</strong>
+            <button type="button" onClick={() => setCommentReel(null)}>Close</button>
+          </div>
+          <div className="mg2-reel-comments-list">
+            {(reelComments[reelIdentity(commentReel.reel)] || []).length ? (
+              reelComments[reelIdentity(commentReel.reel)].map((comment) => (
+                <article key={comment.id}>
+                  <Avatar friend={friends[0]} size="sm" />
+                  <span><b>You</b><small>{comment.text}</small></span>
+                </article>
+              ))
+            ) : <p>No comments yet. Start the conversation.</p>}
+          </div>
+          <form onSubmit={submitReelComment}>
+            <input value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Add a comment..." />
+            <button type="submit" disabled={!commentText.trim()}>Post</button>
+          </form>
         </div>
       )}
       {submitOpen && (
@@ -4289,13 +4431,17 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   <article key={candidate.id || `${candidate.source}-${candidate.source_video_id || candidate.source_url}`}>
                     <span>
                       <b>{candidate.video_title || candidate.title || "Candidate"}</b>
-                      <small>{candidate.source} - {candidate.label || candidate.content_format || "unknown"} - score {Math.round(Number(candidate.quality_score || candidate.match_score || 0))}</small>
+                      <small>{candidate.source} - {candidate.channel_title || candidate.creator_username || "unknown channel"} - {candidate.label || candidate.content_format || "unknown"} - aspect {candidate.aspect_mode || "unknown"}</small>
+                      <small>score {Math.round(Number(candidate.quality_score || 0))} match {Math.round(Number(candidate.match_score || 0))}{candidate.rejection_reason ? ` - ${candidate.rejection_reason}` : ""}</small>
                     </span>
                     {candidate.id && (
                       <div>
                         <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("approve", candidate.id)}>Approve</button>
                         <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("promote", candidate.id)}>Promote</button>
                         <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("reject", candidate.id)}>Reject</button>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("update_reel_aspect", candidate.id, { aspect_mode: "vertical", content_format: candidate.content_format || "short", source_video_id: candidate.source_video_id, sourceUrl: candidate.source_url || candidate.watch_url || candidate.embed_url })}>Vertical</button>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("update_reel_aspect", candidate.id, { aspect_mode: "horizontal", source_video_id: candidate.source_video_id, sourceUrl: candidate.source_url || candidate.watch_url || candidate.embed_url })}>Horizontal</button>
+                        <button type="button" disabled={adminLoading} onClick={() => runAdminCandidateAction("update_reel_aspect", candidate.id, { aspect_mode: "unknown", source_video_id: candidate.source_video_id, sourceUrl: candidate.source_url || candidate.watch_url || candidate.embed_url })}>Unknown</button>
                       </div>
                     )}
                   </article>

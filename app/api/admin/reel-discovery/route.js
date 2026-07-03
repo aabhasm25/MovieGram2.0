@@ -142,6 +142,42 @@ async function updateCandidateStatus(client, id, status, rejectionReason = "") {
   return { candidate: data, errors: [] };
 }
 
+async function updateReelAspect(client, body = {}) {
+  if (!client) return { updated: 0, errors: ["Supabase server client is not configured."] };
+  const aspectMode = ["vertical", "horizontal", "unknown"].includes(body.aspect_mode || body.aspectMode)
+    ? (body.aspect_mode || body.aspectMode)
+    : "";
+  const contentFormat = body.content_format || body.contentFormat || "";
+  const patch = {
+    ...(aspectMode ? { aspect_mode: aspectMode } : {}),
+    ...(contentFormat ? { content_format: contentFormat } : {}),
+    updated_at: new Date().toISOString()
+  };
+  if (!aspectMode && !contentFormat) return { updated: 0, errors: ["Missing aspect_mode or content_format."] };
+  const errors = [];
+  let updated = 0;
+  if (body.candidateId) {
+    const { error, count } = await client.from("reel_candidates").update(patch, { count: "exact" }).eq("id", body.candidateId);
+    if (error) errors.push(safeError(error));
+    else updated += count || 0;
+  }
+  if (body.source_video_id || body.sourceUrl || body.source_url) {
+    const sourceUrl = body.sourceUrl || body.source_url;
+    let query = client.from("reel_cache").update(patch, { count: "exact" });
+    if (body.source_video_id) query = query.eq("source_video_id", body.source_video_id);
+    else query = query.eq("source_url", sourceUrl);
+    const { error, count } = await query;
+    if (error) errors.push(safeError(error));
+    else updated += count || 0;
+    if (!body.source_video_id && sourceUrl) {
+      const { error: watchError, count: watchCount } = await client.from("reel_cache").update(patch, { count: "exact" }).eq("watch_url", sourceUrl);
+      if (watchError) errors.push(safeError(watchError));
+      else updated += watchCount || 0;
+    }
+  }
+  return { updated, errors };
+}
+
 async function promoteCandidateById(client, id) {
   if (!client || !id) return { promoted: 0, skippedDuplicates: 0, errors: ["Missing Supabase client or candidate id."] };
   const { data: candidate, error } = await client.from("reel_candidates").select("*").eq("id", id).maybeSingle();
@@ -716,6 +752,11 @@ export async function POST(request) {
   if (action === "approve" || action === "approve_selected" || action === "reject") {
     const updated = await updateCandidateStatus(client, body?.candidateId, action === "approve" ? "approved" : "rejected", body?.rejectionReason || "");
     return NextResponse.json({ checked: updated.candidate ? 1 : 0, candidates: updated.candidate ? [updated.candidate] : [], savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: updated.errors, dryRun: true });
+  }
+
+  if (action === "update_reel_aspect") {
+    const updated = await updateReelAspect(client, body);
+    return NextResponse.json({ checked: updated.updated, candidates: [], savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: updated.errors, dryRun: false });
   }
 
   if (action === "promote" || action === "promote_selected") {

@@ -6953,7 +6953,12 @@ body {
 }
 
 .mg2-reel-player-frame.vertical-cover {
-  inset: 0;
+  top: 50%;
+  left: 50%;
+  width: min(100%, calc(100svh * 9 / 16));
+  height: 100%;
+  aspect-ratio: 9 / 16;
+  transform: translate(-50%, -50%);
 }
 
 .mg2-reel-player {
@@ -6987,11 +6992,10 @@ body {
 }
 
 .mg2-reel-player-frame.vertical-cover .mg2-reel-player-youtube {
-  left: 50%;
-  right: auto;
-  width: max(100%, calc(100svh * 16 / 9));
-  min-width: 100%;
-  transform: translateX(-50%);
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  transform: none;
 }
 
 .mg2-reel-player-instagram,
@@ -7313,6 +7317,31 @@ body {
   width: 92px;
   height: 92px;
   filter: drop-shadow(0 16px 36px rgba(0,0,0,.45));
+}
+
+.mg2-reel-layout-badge {
+  position: absolute;
+  z-index: 4;
+  left: 16px;
+  top: calc(92px + env(safe-area-inset-top, 0px));
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: rgba(255,255,255,.72);
+  background: rgba(0,0,0,.22);
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: .04em;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
+.mg2-reel-layout-badge.vertical {
+  color: #d7ffef;
+}
+
+.mg2-reel-layout-badge.horizontal {
+  color: #d9ddff;
 }
 
 @keyframes mg2-heart-burst {
@@ -7922,6 +7951,80 @@ body {
   color: #d3d7df;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.mg2-reel-comments-sheet {
+  position: absolute;
+  z-index: 9;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(255,255,255,.12);
+  border-radius: 22px 22px 0 0;
+  padding: 14px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+  color: #fff;
+  background: rgba(10,12,17,.94);
+  box-shadow: 0 -22px 70px rgba(0,0,0,.45);
+  backdrop-filter: blur(22px);
+}
+
+.mg2-reel-comments-sheet > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mg2-reel-comments-sheet button {
+  min-height: 34px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255,255,255,.09);
+  font-weight: 900;
+}
+
+.mg2-reel-comments-list {
+  display: grid;
+  max-height: 220px;
+  overflow-y: auto;
+  gap: 10px;
+}
+
+.mg2-reel-comments-list article {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 9px;
+  align-items: center;
+}
+
+.mg2-reel-comments-list span {
+  display: grid;
+  gap: 2px;
+}
+
+.mg2-reel-comments-list small,
+.mg2-reel-comments-list p {
+  margin: 0;
+  color: #b8c0cf;
+}
+
+.mg2-reel-comments-sheet form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.mg2-reel-comments-sheet input {
+  min-height: 40px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+  outline: none;
 }
 
 .mg2-profile-avatar-img {
