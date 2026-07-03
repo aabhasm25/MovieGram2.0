@@ -22,6 +22,7 @@ const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
 const YOUTUBE_SEARCH_LIMIT = 5;
 const RESULT_LIMIT = 5;
+const ENRICH_SEARCH_LIMIT = 20;
 
 function serverSupabase() {
   const key = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
@@ -73,6 +74,24 @@ async function saveDiscoveryJob(client, row) {
   if (error && !isMissingTableError(error)) {
     console.error("MovieGram admin discovery job save failed", { message: error.message, code: error.code });
   }
+}
+
+async function checkDiscoveryDb(client) {
+  if (!client) return { ready: false, errors: ["Supabase server client is not configured."] };
+  const tables = ["creator_sources", "reel_candidates", "discovery_jobs", "reel_failures"];
+  const results = {};
+  const errors = [];
+  for (const table of tables) {
+    const { count, error } = await client.from(table).select("id", { count: "exact", head: true });
+    if (error) {
+      results[table] = false;
+      errors.push(safeError(error));
+    } else {
+      results[table] = true;
+      results[`${table}_count`] = count || 0;
+    }
+  }
+  return { ready: tables.every((table) => results[table]), tables: results, errors: [...new Set(errors)] };
 }
 
 async function saveCandidates(client, candidates = []) {
@@ -143,6 +162,29 @@ async function promoteCandidateById(client, id) {
   return { promoted: 1, skippedDuplicates: 0, errors: [] };
 }
 
+async function promoteTopSafeCandidates(client, limit = 25) {
+  if (!client) return { promoted: 0, skippedDuplicates: 0, errors: ["Supabase server client is not configured."] };
+  const { data, error } = await client
+    .from("reel_candidates")
+    .select("*")
+    .in("status", ["approved", "pending"])
+    .order("quality_score", { ascending: false })
+    .limit(clampNumber(limit, 25, 100));
+  if (error) return { promoted: 0, skippedDuplicates: 0, errors: [safeError(error)] };
+  let promoted = 0;
+  let skippedDuplicates = 0;
+  const errors = [];
+  for (const candidate of data || []) {
+    const normalized = normalizeReelCandidate({ ...candidate, status: "approved" });
+    if (Number(normalized.quality_score || 0) < 120 || normalized.source !== "youtube") continue;
+    const result = await promoteCandidateById(client, candidate.id);
+    promoted += result.promoted || 0;
+    skippedDuplicates += result.skippedDuplicates || 0;
+    errors.push(...(result.errors || []));
+  }
+  return { promoted, skippedDuplicates, errors };
+}
+
 async function tmdbCandidates(target) {
   if (!TMDB_API_KEY) return { candidates: [], errors: ["Missing TMDB_API_KEY or NEXT_PUBLIC_TMDB_API_KEY."] };
   const errors = [];
@@ -200,6 +242,222 @@ async function tmdbCandidates(target) {
     }
   }
   return { candidates: dedupeReelCandidates(candidates).slice(0, target), errors };
+}
+
+async function tmdbCandidatesForItems(items = [], targetPerItem = 5) {
+  if (!TMDB_API_KEY) return { candidates: [], errors: ["Missing TMDB_API_KEY or NEXT_PUBLIC_TMDB_API_KEY."] };
+  const errors = [];
+  const candidates = [];
+  for (const rawItem of items) {
+    const item = { ...rawItem, media_type: mediaType(rawItem) };
+    if (!item.id) continue;
+    try {
+      const videosUrl = `https://api.themoviedb.org/3/${mediaType(item)}/${item.id}/videos?api_key=${encodeURIComponent(TMDB_API_KEY)}&language=en-US`;
+      const response = await fetch(videosUrl, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.status_message || `TMDB videos ${response.status}`);
+      (data.results || [])
+        .filter((video) => video.site === "YouTube" && video.key && ["Clip", "Teaser", "Featurette", "Behind the Scenes", "Trailer"].includes(video.type))
+        .sort((a, b) => {
+          const ranks = { Clip: 100, Teaser: 80, Featurette: 72, "Behind the Scenes": 68, Trailer: 35 };
+          return (ranks[b.type] || 0) - (ranks[a.type] || 0) + (Number(b.official) - Number(a.official)) * 10;
+        })
+        .slice(0, targetPerItem)
+        .forEach((video) => {
+          const sourceUrl = `https://www.youtube.com/watch?v=${video.key}`;
+          const candidate = normalizeReelCandidate({
+            source: "youtube",
+            source_video_id: video.key,
+            source_url: sourceUrl,
+            watch_url: sourceUrl,
+            media_type: mediaType(item),
+            tmdb_id: item.id,
+            item_key: itemKeyOf(item),
+            title: titleOf(item),
+            video_title: video.name,
+            channel_title: "TMDB",
+            creator_username: "TMDB",
+            thumbnail_url: `https://img.youtube.com/vi/${video.key}/hqdefault.jpg`,
+            label: video.type,
+            content_format: video.type === "Clip" ? "clip" : video.type === "Teaser" ? "teaser" : video.type === "Featurette" ? "featurette" : video.type === "Behind the Scenes" ? "behind_the_scenes" : "trailer",
+            aspect_mode: "horizontal",
+            status: "pending",
+            discovered_by: "admin_enrich_tmdb"
+          });
+          candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate, item) + (video.official ? 10 : 0) });
+        });
+    } catch (error) {
+      errors.push(`${titleOf(item)}: ${error.message}`);
+    }
+  }
+  return { candidates: dedupeReelCandidates(candidates), errors };
+}
+
+function youtubeQueriesForEnrichment(item = {}, preferNonTrailers = true) {
+  const title = titleOf(item);
+  const queries = [
+    `${title} clip`,
+    `${title} scene`,
+    `${title} short`,
+    `${title} edit`,
+    `${title} teaser`,
+    `${title} behind the scenes`
+  ];
+  if (!preferNonTrailers) queries.push(`${title} trailer`);
+  else queries.push(`${title} trailer`);
+  return queries;
+}
+
+async function youtubeCandidatesForItems(items = [], remainingBudget = 0, preferNonTrailers = true) {
+  if (!YOUTUBE_API_KEY || remainingBudget <= 0) return { candidates: [], errors: YOUTUBE_API_KEY ? [] : ["Missing server-only YOUTUBE_API_KEY."] };
+  const errors = [];
+  const candidates = [];
+  let searches = 0;
+  for (const rawItem of items) {
+    if (searches >= remainingBudget) break;
+    const item = { ...rawItem, media_type: mediaType(rawItem) };
+    for (const query of youtubeQueriesForEnrichment(item, preferNonTrailers)) {
+      if (searches >= remainingBudget) break;
+      searches += 1;
+      try {
+        const params = new URLSearchParams({
+          key: YOUTUBE_API_KEY,
+          part: "snippet",
+          q: query,
+          type: "video",
+          videoEmbeddable: "true",
+          safeSearch: "moderate",
+          maxResults: String(Math.min(RESULT_LIMIT, 5))
+        });
+        if (!query.toLowerCase().includes("trailer")) params.set("videoDuration", "short");
+        const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          errors.push(data?.error?.message || `YouTube ${response.status}`);
+          if (isQuotaError(response.status, data?.error?.message)) return { candidates, errors, searches, quota: true };
+          continue;
+        }
+        (data.items || []).forEach((video) => {
+          const sourceVideoId = video.id?.videoId;
+          const videoTitle = video.snippet?.title || query;
+          if (!sourceVideoId || rejectUnsafeReelResult({ title: videoTitle })) return;
+          const sourceUrl = `https://www.youtube.com/watch?v=${sourceVideoId}`;
+          const candidate = normalizeReelCandidate({
+            source: "youtube",
+            source_video_id: sourceVideoId,
+            source_url: sourceUrl,
+            watch_url: sourceUrl,
+            media_type: mediaType(item),
+            tmdb_id: item.id,
+            item_key: itemKeyOf(item),
+            title: titleOf(item),
+            video_title: videoTitle,
+            channel_title: video.snippet?.channelTitle || "",
+            creator_username: video.snippet?.channelTitle || "",
+            thumbnail_url: video.snippet?.thumbnails?.high?.url || video.snippet?.thumbnails?.medium?.url || "",
+            label: query.toLowerCase().includes("trailer") ? "Trailer" : query.toLowerCase().includes("teaser") ? "Teaser" : query.toLowerCase().includes("behind") ? "Behind the Scenes" : query.toLowerCase().includes("short") ? "Short" : query.toLowerCase().includes("scene") ? "Scene Edit" : "Clip",
+            status: "pending",
+            discovered_by: "admin_enrich_youtube"
+          });
+          candidates.push({ ...candidate, quality_score: scoreReelCandidate(candidate, item) });
+        });
+      } catch (error) {
+        errors.push(error.message);
+      }
+    }
+  }
+  return { candidates: dedupeReelCandidates(candidates), errors, searches, quota: false };
+}
+
+async function existingCacheCountByItem(client, itemKeys = []) {
+  if (!client || !itemKeys.length) return new Map();
+  const { data, error } = await client
+    .from("reel_cache")
+    .select("item_key")
+    .in("item_key", itemKeys)
+    .or("playable.eq.true,source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null");
+  if (error) return new Map();
+  return (data || []).reduce((map, row) => {
+    map.set(row.item_key, (map.get(row.item_key) || 0) + 1);
+    return map;
+  }, new Map());
+}
+
+async function promoteHighConfidenceRows(client, candidates = []) {
+  if (!client || !candidates.length) return { promoted: 0, skippedDuplicates: 0, errors: [] };
+  let promoted = 0;
+  let skippedDuplicates = 0;
+  const errors = [];
+  const safeCandidates = candidates
+    .filter((candidate) => candidate.source === "youtube")
+    .filter((candidate) => Number(candidate.quality_score || 0) >= 120)
+    .slice(0, 50);
+  for (const candidate of safeCandidates) {
+    const row = candidateToReelCacheRow({ ...candidate, status: "approved" });
+    const duplicateFilters = [
+      row.source_video_id ? `source_video_id.eq.${row.source_video_id}` : "",
+      row.source_url ? `source_url.eq.${row.source_url}` : "",
+      row.watch_url ? `watch_url.eq.${row.watch_url}` : "",
+      row.embed_url ? `embed_url.eq.${row.embed_url}` : ""
+    ].filter(Boolean);
+    const duplicateResult = duplicateFilters.length
+      ? await client.from("reel_cache").select("id", { count: "exact", head: true }).or(duplicateFilters.join(","))
+      : { count: 0, error: null };
+    if (duplicateResult.error) {
+      errors.push(safeError(duplicateResult.error));
+      continue;
+    }
+    if (duplicateResult.count) {
+      skippedDuplicates += duplicateResult.count;
+      continue;
+    }
+    const { error } = await client.from("reel_cache").upsert(row, { onConflict: "source,source_video_id" });
+    if (error) errors.push(safeError(error));
+    else promoted += 1;
+  }
+  return { promoted, skippedDuplicates, errors };
+}
+
+async function enrichLibraryReels(client, body = {}) {
+  const targetPerItem = clampNumber(body.targetPerItem, 5, 10);
+  const maxItems = clampNumber(body.maxItems, 50, 100);
+  const preferNonTrailers = body.preferNonTrailers !== false;
+  const dryRun = body.dryRun !== false;
+  const items = (body.items || []).filter((item) => item?.id).slice(0, maxItems).map((item) => ({ ...item, media_type: mediaType(item) }));
+  const itemKeys = items.map(itemKeyOf).filter(Boolean);
+  const existingCounts = await existingCacheCountByItem(client, itemKeys);
+  const needs = items.filter((item) => (existingCounts.get(itemKeyOf(item)) || 0) < targetPerItem);
+  const tmdb = await tmdbCandidatesForItems(needs, targetPerItem);
+  const youtubeBudget = Math.min(ENRICH_SEARCH_LIMIT, Math.max(0, Number(body.youtubeSearchBudget || 5)));
+  const youtube = await youtubeCandidatesForItems(needs, youtubeBudget, preferNonTrailers);
+  const candidates = dedupeReelCandidates([...tmdb.candidates, ...youtube.candidates])
+    .sort((a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0));
+  const errors = [...tmdb.errors, ...youtube.errors];
+  let savedCandidates = 0;
+  let promotedToCache = 0;
+  let skippedDuplicates = 0;
+  if (!dryRun && client) {
+    const saveResult = await saveCandidates(client, candidates);
+    savedCandidates = saveResult.saved;
+    if (saveResult.error) errors.push(saveResult.error);
+    const promoteResult = await promoteHighConfidenceRows(client, candidates);
+    promotedToCache = promoteResult.promoted;
+    skippedDuplicates = promoteResult.skippedDuplicates;
+    errors.push(...promoteResult.errors);
+  }
+  return {
+    checkedItems: items.length,
+    underfilledItems: needs.length,
+    candidates,
+    candidatesFound: candidates.length,
+    savedCandidates,
+    promotedToCache,
+    skippedDuplicates,
+    errors,
+    dryRun,
+    youtubeSearches: youtube.searches || 0,
+    quota: Boolean(youtube.quota)
+  };
 }
 
 async function youtubeCandidates(queries = [], target) {
@@ -264,6 +522,11 @@ function manualCandidates(urls = [], target) {
       title: raw.title || "Manual reel candidate",
       video_title: raw.video_title || raw.title || "Manual reel candidate",
       label: raw.label || classified.label,
+      tmdb_id: raw.tmdb_id || raw.tmdbId || null,
+      media_type: raw.media_type || raw.mediaType || undefined,
+      item_key: raw.item_key || (raw.tmdb_id || raw.tmdbId ? `${raw.media_type || raw.mediaType || "movie"}:${raw.tmdb_id || raw.tmdbId}` : undefined),
+      content_format: raw.content_format || raw.contentFormat || undefined,
+      aspect_mode: raw.aspect_mode || raw.aspectMode || undefined,
       status: "pending",
       discovered_by: "admin_manual"
     });
@@ -302,6 +565,39 @@ export async function POST(request) {
     return NextResponse.json({ checked: listed.candidates.length, candidates: listed.candidates, savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: listed.errors, dryRun: true });
   }
 
+  if (action === "check_db") {
+    const status = await checkDiscoveryDb(client);
+    return NextResponse.json({ checked: 4, candidates: [], savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: status.errors, dryRun: true, discoveryReady: status.ready, tables: status.tables });
+  }
+
+  if (["enrich_watched_reels", "enrich_watchlist_reels", "enrich_favorite_reels", "enrich_friend_reels"].includes(action)) {
+    const enrichment = await enrichLibraryReels(client, body);
+    await saveDiscoveryJob(client, {
+      job_type: action,
+      status: enrichment.errors.length ? "failed" : "done",
+      source: "admin",
+      target_count: Number(body.targetPerItem || 5),
+      checked_count: enrichment.checkedItems,
+      saved_count: enrichment.savedCandidates,
+      error_count: enrichment.errors.length,
+      error_message: enrichment.errors.join("; ").slice(0, 500)
+    });
+    return NextResponse.json({
+      checked: enrichment.checkedItems,
+      checkedItems: enrichment.checkedItems,
+      underfilledItems: enrichment.underfilledItems,
+      candidates: enrichment.candidates,
+      candidatesFound: enrichment.candidatesFound,
+      savedCandidates: enrichment.savedCandidates,
+      promotedToCache: enrichment.promotedToCache,
+      skippedDuplicates: enrichment.skippedDuplicates,
+      errors: enrichment.errors,
+      dryRun: enrichment.dryRun,
+      youtubeSearches: enrichment.youtubeSearches,
+      quota: enrichment.quota
+    });
+  }
+
   if (action === "approve" || action === "reject") {
     const updated = await updateCandidateStatus(client, body?.candidateId, action === "approve" ? "approved" : "rejected", body?.rejectionReason || "");
     return NextResponse.json({ checked: updated.candidate ? 1 : 0, candidates: updated.candidate ? [updated.candidate] : [], savedCandidates: 0, promotedToCache: 0, skippedDuplicates: 0, errors: updated.errors, dryRun: true });
@@ -311,6 +607,12 @@ export async function POST(request) {
     const promoted = await promoteCandidateById(client, body?.candidateId);
     await saveDiscoveryJob(client, { job_type: "candidate_promote", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
     return NextResponse.json({ checked: 1, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
+  }
+
+  if (action === "promote_top") {
+    const promoted = await promoteTopSafeCandidates(client, target);
+    await saveDiscoveryJob(client, { job_type: "candidate_promote_top", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
+    return NextResponse.json({ checked: target, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
   }
 
   const source = ["tmdb", "youtube", "manual"].includes(body?.source) ? body.source : "tmdb";

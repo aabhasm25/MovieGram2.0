@@ -3100,6 +3100,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [adminDryRun, setAdminDryRun] = useState(true);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminResult, setAdminResult] = useState(null);
+  const [discoveryReady, setDiscoveryReady] = useState(null);
   const [failedEmbeds, setFailedEmbeds] = useState({});
   const reelRefs = useRef([]);
   const iframeRefs = useRef([]);
@@ -3111,6 +3112,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const activePlayerLogRef = useRef("");
   const reelLayoutLogRef = useRef("");
   const feedMixLogRef = useRef("");
+  const coverageLogRef = useRef("");
   const reelOrderLogRef = useRef("");
   const seenReelIdsRef = useRef(new Set());
   const failedYouTubeVideoIdsRef = useRef(new Set());
@@ -3265,7 +3267,9 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
   useEffect(() => {
     let alive = true;
-    const stableSeeds = seedItems.slice(0, Math.min(pageSize, 10));
+    const stableSeeds = reelTab === "watched" || reelTab === "friends"
+      ? reelCandidates.slice(0, 50)
+      : seedItems.slice(0, Math.min(pageSize, 10));
     const fallbackReels = () => fallbackPreviewReels;
 
     async function loadYouTubeReels() {
@@ -3536,7 +3540,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
   function reelEmptyMessage() {
     if (reelTab === "watched") return "Mark movies or shows watched to see edits here.";
-    if (reelTab === "friends") return "Follow friends to see friend reels.";
+    if (reelTab === "friends") return "Follow friends to see their movie reels. Try For You while your friend feed warms up.";
     return "Reels will appear when MovieGram has titles to show.";
   }
 
@@ -3544,7 +3548,27 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (!reels.length || reelTab === "forYou") return reels;
     return reels.filter((reel) => currentReelCandidateKeys.has(keyOf(reel.item || {})));
   }, [currentReelCandidateKeys, reelTab, reels]);
-  const visibleReels = eligibleReels.length ? eligibleReels : (loadingReels ? [] : fallbackPreviewReels);
+  const missingCandidateFallbacks = useMemo(() => {
+    if (reelTab === "forYou") return [];
+    const representedKeys = new Set(eligibleReels.map((reel) => keyOf(reel.item || {})));
+    return reelCandidates
+      .filter((candidate) => !representedKeys.has(keyOf(candidate.item)))
+      .slice(0, 50)
+      .map((candidate, index) => ({
+        item: candidate.item,
+        id: `fallback-${reelTab}-${keyOf(candidate.item)}-${index}`,
+        source: "fallback",
+        reason: candidate.reason,
+        isFallbackPreview: true,
+        kind: "Preview",
+        score: candidate.score || 0
+      }));
+  }, [eligibleReels, reelCandidates, reelTab]);
+  const visibleReels = useMemo(() => (
+    eligibleReels.length
+      ? [...eligibleReels, ...missingCandidateFallbacks]
+      : (loadingReels ? [] : fallbackPreviewReels)
+  ), [eligibleReels, fallbackPreviewReels, loadingReels, missingCandidateFallbacks]);
   const sourceWatermarkLabel = (source = "") => source === "instagram" ? "Instagram"
     : source === "facebook" ? "Facebook"
       : source === "web" ? "Web"
@@ -3590,6 +3614,32 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     feedMixLogRef.current = signature;
     console.info(`Reels feed mix: youtube=${mix.youtube}, instagram=${mix.instagram}, facebook=${mix.facebook}, web=${mix.web}, fallback=${mix.fallback}, vertical=${mix.vertical}, horizontal=${mix.horizontal}, unknown=${mix.unknown}, trailers=${mix.trailers}, nonTrailers=${mix.nonTrailers}.`);
   }, [visibleReels]);
+
+  useEffect(() => {
+    if (loadingReels && visibleReels.length === 0) return;
+    if (reelTab === "watched") {
+      const watchedKeys = new Set(watchedReels.map(keyOf));
+      const matchedKeys = new Set(visibleReels.filter((reel) => !reel.isFallbackPreview && watchedKeys.has(keyOf(reel.item || {}))).map((reel) => keyOf(reel.item || {})));
+      const fallbackItems = visibleReels.filter((reel) => reel.isFallbackPreview).length;
+      const trailers = visibleReels.filter((reel) => reelTypeLabel(reel).toLowerCase().includes("trailer")).length;
+      const nonTrailers = visibleReels.length - trailers;
+      const signature = `watched:${watchedReels.length}:${matchedKeys.size}:${visibleReels.length}:${fallbackItems}:${trailers}:${nonTrailers}`;
+      if (coverageLogRef.current !== signature) {
+        coverageLogRef.current = signature;
+        console.info(`Watched reels coverage: watchedItems=${watchedReels.length}, matchedItems=${matchedKeys.size}, reels=${visibleReels.length}, fallbackItems=${fallbackItems}, trailers=${trailers}, nonTrailers=${nonTrailers}.`);
+      }
+    }
+    if (reelTab === "friends") {
+      const friendKeys = new Set(reelCandidates.map((candidate) => keyOf(candidate.item)));
+      const friendReels = visibleReels.filter((reel) => !reel.isFallbackPreview && friendKeys.has(keyOf(reel.item || {}))).length;
+      const previewMode = userId === "guest" && friendKeys.size === 0 && visibleReels.length > 0;
+      const signature = `friends:${socialActivity.length}:${friendKeys.size}:${friendReels}:${previewMode}`;
+      if (coverageLogRef.current !== signature) {
+        coverageLogRef.current = signature;
+        console.info(`Friends reels coverage: friends=${socialActivity.length ? "active" : 0}, friendItems=${friendKeys.size}, reels=${friendReels}, previewMode=${previewMode}.`);
+      }
+    }
+  }, [loadingReels, reelCandidates, reelTab, socialActivity.length, userId, visibleReels, watchedReels]);
 
   useEffect(() => {
     reels.forEach((reel, index) => {
@@ -3897,10 +3947,19 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     };
     if (candidateId) body.candidateId = candidateId;
     if (adminSource === "manual") body.urls = lines.map((line) => {
-      const [url, title] = line.split("|").map((part) => part.trim());
-      return title ? { url, title } : url;
+      const [url, title, tmdbId, mediaTypeValue, contentFormat, aspectMode, label] = line.split("|").map((part) => part.trim());
+      return title || tmdbId || mediaTypeValue || contentFormat || aspectMode || label
+        ? { url, title, tmdb_id: tmdbId ? Number(tmdbId) : undefined, media_type: mediaTypeValue || undefined, content_format: contentFormat || undefined, aspect_mode: aspectMode || undefined, label: label || undefined }
+        : url;
     });
     if (adminSource === "youtube") body.queries = lines;
+    if (action.startsWith("enrich_")) {
+      body.items = adminItemsForAction(action);
+      body.targetPerItem = 5;
+      body.maxItems = 50;
+      body.preferNonTrailers = true;
+      body.youtubeSearchBudget = 5;
+    }
     try {
       const response = await fetch("/api/admin/reel-discovery", {
         method: "POST",
@@ -3917,11 +3976,34 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         status: response.status,
         message: response.ok ? "" : result.error || "Admin discovery request failed."
       });
+      if (Object.prototype.hasOwnProperty.call(result, "discoveryReady")) setDiscoveryReady(Boolean(result.discoveryReady));
     } catch (error) {
       setAdminResult({ ok: false, errors: [error.message || "Admin discovery request failed."] });
     } finally {
       setAdminLoading(false);
     }
+  }
+
+  function adminItemsForAction(action) {
+    const compact = (item) => {
+      const normalized = { ...item, media_type: mediaType(item) };
+      return {
+        id: normalized.id,
+        media_type: normalized.media_type,
+        title: normalized.title || "",
+        name: normalized.name || "",
+        poster_path: normalized.poster_path || "",
+        backdrop_path: normalized.backdrop_path || "",
+        release_date: normalized.release_date || "",
+        first_air_date: normalized.first_air_date || "",
+        vote_average: normalized.vote_average || null
+      };
+    };
+    if (action === "enrich_watched_reels") return watchedReels.slice(0, 50).map(compact);
+    if (action === "enrich_watchlist_reels") return watchlistReels.slice(0, 50).map(compact);
+    if (action === "enrich_favorite_reels") return favoriteReels.slice(0, 50).map(compact);
+    if (action === "enrich_friend_reels") return friendActivityItems.slice(0, 50).map(compact);
+    return [];
   }
 
   async function runAdminCandidateAction(action, candidateId) {
@@ -4065,6 +4147,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <button type="button" onClick={() => setAdminOpen(false)} aria-label="Close Reels Admin">Close</button>
             </div>
             <small>Requires server ADMIN_BACKFILL_SECRET. Discovery writes candidates only unless promotion is explicitly run.</small>
+            <small>{discoveryReady === null ? "Discovery DB status unknown" : discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>
             <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder="Admin secret for this request" autoComplete="off" />
             <select value={adminSource} onChange={(event) => setAdminSource(event.target.value)}>
               <option value="manual">Manual URLs</option>
@@ -4074,7 +4157,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             <textarea
               value={adminInput}
               onChange={(event) => setAdminInput(event.target.value)}
-              placeholder={adminSource === "manual" ? "One URL per line. Optional: url | title" : adminSource === "youtube" ? "One search query per line" : "TMDB mode ignores this field"}
+              placeholder={adminSource === "manual" ? "One URL per line. Optional: url | title | tmdb_id | media_type | content_format | aspect_mode | label" : adminSource === "youtube" ? "One search query per line" : "TMDB mode ignores this field"}
               rows={5}
             />
             <label>
@@ -4086,14 +4169,21 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <input type="checkbox" checked={adminDryRun} onChange={(event) => setAdminDryRun(event.target.checked)} />
             </label>
             <div className="mg2-reel-admin-actions">
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("check_db")}>Check DB readiness</button>
               <button type="submit" disabled={adminLoading}>{adminLoading ? "Running..." : "Run discovery"}</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_watched_reels")}>Enrich watched reels</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_watchlist_reels")}>Enrich watchlist reels</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_favorite_reels")}>Enrich favorite reels</button>
+              <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("enrich_friend_reels")}>Enrich friend reels</button>
               <button type="button" disabled={adminLoading} onClick={() => runAdminDiscovery("list")}>List pending</button>
+              <button type="button" disabled={adminLoading || adminDryRun} onClick={() => runAdminDiscovery("promote_top")}>Promote top safe candidates</button>
             </div>
             {adminResult && (
               <div className="mg2-reel-admin-result">
                 <strong>{adminResult.ok === false ? "Request failed" : "Result"}</strong>
                 {adminResult.message && <small>{adminResult.message}</small>}
-                <small>checked={adminResult.checked || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                <small>checked={adminResult.checkedItems || adminResult.checked || 0} candidates={adminResult.candidatesFound || adminResult.candidates?.length || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                {adminResult.discoveryReady !== undefined && <small>{adminResult.discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>}
                 {(adminResult.errors || []).map((error, index) => <small key={`${error}-${index}`}>{error}</small>)}
                 {(adminResult.candidates || []).slice(0, 12).map((candidate) => (
                   <article key={candidate.id || `${candidate.source}-${candidate.source_video_id || candidate.source_url}`}>

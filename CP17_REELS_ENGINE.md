@@ -118,6 +118,33 @@ curl -X POST http://localhost:3000/api/admin/reel-discovery \
   -d "{\"action\":\"promote\",\"candidateId\":\"CANDIDATE_UUID\"}"
 ```
 
+Check discovery DB readiness:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"check_db\"}"
+```
+
+Dry-run watched reel enrichment:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"enrich_watched_reels\",\"dryRun\":true,\"targetPerItem\":5,\"maxItems\":50,\"preferNonTrailers\":true,\"items\":[{\"id\":603,\"media_type\":\"movie\",\"title\":\"The Matrix\"}]}"
+```
+
+Promote top safe candidates:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/reel-discovery \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: $ADMIN_BACKFILL_SECRET" \
+  -d "{\"action\":\"promote_top\",\"target\":25}"
+```
+
 ## Reels Admin Panel
 
 Admin-gated Reels UI includes a `Reels Admin` panel. It sends the admin secret only in the request header and does not store it in localStorage.
@@ -127,6 +154,7 @@ Panel modes:
 - `Manual URLs`: accepts one URL per line, optionally `url | title`.
 - `TMDB official videos`: collects safe TMDB video metadata.
 - `YouTube Search candidates`: server-only YouTube Search with a hard cap of 5 queries/request and 5 results/query.
+- Enrichment buttons send the current watched/watchlist/favorite/friend item metadata to admin jobs. These jobs save `reel_candidates` first and only promote high-confidence YouTube candidates.
 
 Dry run is enabled by default.
 
@@ -198,3 +226,5 @@ This uses TMDB videos metadata and stores YouTube embed/source URLs. It does not
 - Admin dry run returns candidates without writing.
 - If discovery tables are missing, response says to run `supabase/reels_discovery_engine.sql`.
 - Manual URL candidates do not appear in Reels until promoted into `reel_cache`.
+- Watched tab should log `Watched reels coverage: ...`.
+- Friends tab should log `Friends reels coverage: ...`.

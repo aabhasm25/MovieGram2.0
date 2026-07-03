@@ -144,6 +144,31 @@ end $$;
 -- Writes should be performed by service-role/admin tooling only.
 -- Do not add public insert/update/delete policies for discovery tables.
 
+-- Optional trusted creator source seed. These are source profiles only, not playable reels.
+insert into public.creator_sources
+  (platform, source_name, source_url, source_type, approved, quality_score, trust_score, keywords, genres, updated_at)
+values
+  ('youtube', 'Marvel Entertainment', 'https://www.youtube.com/@marvel', 'official_channel', true, 95, 95, array['marvel','clip','trailer'], array['superhero','action'], now()),
+  ('youtube', 'HBO / Max', 'https://www.youtube.com/@HBO', 'official_channel', true, 94, 94, array['hbo','max','official'], array['drama','series'], now()),
+  ('youtube', 'Netflix', 'https://www.youtube.com/@Netflix', 'ott', true, 93, 93, array['netflix','clip','trailer'], array['movie','tv'], now()),
+  ('youtube', 'Prime Video', 'https://www.youtube.com/@PrimeVideo', 'ott', true, 91, 91, array['prime video','clip','trailer'], array['movie','tv'], now()),
+  ('youtube', 'Disney', 'https://www.youtube.com/@Disney', 'studio', true, 91, 91, array['disney','official'], array['family','adventure'], now()),
+  ('youtube', 'Pixar', 'https://www.youtube.com/@Pixar', 'studio', true, 91, 91, array['pixar','official'], array['animation'], now()),
+  ('youtube', 'Warner Bros. Pictures', 'https://www.youtube.com/@WarnerBrosPictures', 'studio', true, 94, 94, array['warner bros','clip','trailer'], array['movie'], now()),
+  ('youtube', 'Sony Pictures Entertainment', 'https://www.youtube.com/@SonyPictures', 'studio', true, 92, 92, array['sony pictures','official'], array['movie'], now()),
+  ('youtube', 'Universal Pictures', 'https://www.youtube.com/@UniversalPictures', 'studio', true, 92, 92, array['universal','official'], array['movie'], now()),
+  ('youtube', 'A24', 'https://www.youtube.com/@A24', 'studio', true, 90, 90, array['a24','official'], array['indie','drama'], now()),
+  ('youtube', 'Rotten Tomatoes Trailers', 'https://www.youtube.com/@RottenTomatoesTRAILERS', 'creator', true, 86, 82, array['trailer','official'], array['movie'], now()),
+  ('youtube', 'Movieclips', 'https://www.youtube.com/@MOVIECLIPS', 'creator', true, 84, 80, array['clip','scene'], array['movie'], now()),
+  ('youtube', 'IGN', 'https://www.youtube.com/@IGN', 'creator', true, 82, 76, array['clip','trailer'], array['movie','tv'], now()),
+  ('youtube', 'KinoCheck', 'https://www.youtube.com/@KinoCheck', 'creator', true, 80, 74, array['clip','trailer'], array['movie'], now()),
+  ('instagram', 'Marvel', 'https://www.instagram.com/marvel/', 'official_profile', true, 94, 94, array['marvel'], array['superhero','action'], now()),
+  ('instagram', 'Netflix', 'https://www.instagram.com/netflix/', 'ott', true, 92, 92, array['netflix'], array['movie','tv'], now()),
+  ('instagram', 'Prime Video', 'https://www.instagram.com/primevideo/', 'ott', true, 90, 90, array['prime video'], array['movie','tv'], now()),
+  ('facebook', 'Marvel', 'https://www.facebook.com/Marvel/', 'official_profile', true, 90, 90, array['marvel'], array['superhero','action'], now()),
+  ('facebook', 'Netflix', 'https://www.facebook.com/netflix/', 'ott', true, 88, 88, array['netflix'], array['movie','tv'], now())
+on conflict (platform, source_url) do nothing;
+
 -- Verification queries:
 -- select count(*) from public.creator_sources;
 -- select count(*) from public.reel_candidates;
