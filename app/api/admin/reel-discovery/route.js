@@ -172,11 +172,27 @@ async function promoteCandidateById(client, id) {
     await client.from("reel_candidates").update({ status: "approved", updated_at: new Date().toISOString() }).eq("id", id);
     return { promoted: 0, skippedDuplicates: duplicateResult.count, errors: [] };
   }
+  const failureResult = normalized.source_video_id
+    ? await client.from("reel_failures").select("id", { count: "exact", head: true }).eq("source_video_id", normalized.source_video_id)
+    : { count: 0, error: null };
+  if (failureResult.error && !isMissingTableError(failureResult.error)) return { promoted: 0, skippedDuplicates: 0, errors: [safeError(failureResult.error)] };
+  if (failureResult.count) return { promoted: 0, skippedDuplicates: 0, errors: ["Candidate has a known embed/playback failure."] };
   const row = promoteCandidateToReelCache(normalized) || candidateToReelCacheRow({ ...normalized, status: "approved" });
   const { error: upsertError } = await client.from("reel_cache").upsert(row, { onConflict: "source,source_video_id" });
   if (upsertError) return { promoted: 0, skippedDuplicates: 0, errors: [safeError(upsertError)] };
   await client.from("reel_candidates").update({ status: "approved", updated_at: new Date().toISOString() }).eq("id", id);
-  return { promoted: 1, skippedDuplicates: 0, errors: manualOverride && !relevance.accepted ? ["Warning: manually promoted low-relevance candidate."] : [] };
+  return {
+    promoted: 1,
+    skippedDuplicates: 0,
+    promotedList: [{
+      title: row.title,
+      video_title: row.video_title,
+      item_key: row.item_key,
+      format: normalized.content_format,
+      aspect_mode: normalized.aspect_mode
+    }],
+    errors: manualOverride && !relevance.accepted ? ["Warning: manually promoted low-relevance candidate."] : []
+  };
 }
 
 async function promoteTopSafeCandidates(client, limit = 25) {
@@ -190,6 +206,7 @@ async function promoteTopSafeCandidates(client, limit = 25) {
   if (error) return { promoted: 0, skippedDuplicates: 0, errors: [safeError(error)] };
   let promoted = 0;
   let skippedDuplicates = 0;
+  const promotedList = [];
   const errors = [];
   for (const candidate of data || []) {
     const normalized = normalizeReelCandidate({ ...candidate, status: "approved" });
@@ -197,9 +214,10 @@ async function promoteTopSafeCandidates(client, limit = 25) {
     const result = await promoteCandidateById(client, candidate.id);
     promoted += result.promoted || 0;
     skippedDuplicates += result.skippedDuplicates || 0;
+    promotedList.push(...(result.promotedList || []));
     errors.push(...(result.errors || []));
   }
-  return { promoted, skippedDuplicates, errors };
+  return { promoted, skippedDuplicates, errors, promotedList };
 }
 
 async function tmdbCandidates(target) {
@@ -384,24 +402,35 @@ async function youtubeCandidatesForItems(items = [], remainingBudget = 0, prefer
   return { candidates: dedupeReelCandidates(candidates), errors, searches, quota: false };
 }
 
-async function existingCacheCountByItem(client, itemKeys = []) {
-  if (!client || !itemKeys.length) return new Map();
+function isTrailerLike(row = {}) {
+  return /trailer/i.test(`${row.label || ""} ${row.video_title || ""} ${row.title || ""}`);
+}
+
+async function existingCacheCoverageByItem(client, items = []) {
+  const itemKeys = items.map(itemKeyOf).filter(Boolean);
+  const coverage = new Map(itemKeys.map((key) => [key, { cachedReels: 0, trailers: 0, nonTrailers: 0 }]));
+  if (!client || !itemKeys.length) return coverage;
   const { data, error } = await client
     .from("reel_cache")
-    .select("item_key")
+    .select("item_key,label,video_title,title")
     .in("item_key", itemKeys)
     .or("playable.eq.true,source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null");
-  if (error) return new Map();
-  return (data || []).reduce((map, row) => {
-    map.set(row.item_key, (map.get(row.item_key) || 0) + 1);
-    return map;
-  }, new Map());
+  if (error) return coverage;
+  (data || []).forEach((row) => {
+    if (!coverage.has(row.item_key)) coverage.set(row.item_key, { cachedReels: 0, trailers: 0, nonTrailers: 0 });
+    const entry = coverage.get(row.item_key);
+    entry.cachedReels += 1;
+    if (isTrailerLike(row)) entry.trailers += 1;
+    else entry.nonTrailers += 1;
+  });
+  return coverage;
 }
 
 async function promoteHighConfidenceRows(client, candidates = []) {
   if (!client || !candidates.length) return { promoted: 0, skippedDuplicates: 0, errors: [] };
   let promoted = 0;
   let skippedDuplicates = 0;
+  const promotedList = [];
   const errors = [];
   const safeCandidates = candidates
     .filter((candidate) => candidate.source === "youtube")
@@ -427,11 +456,28 @@ async function promoteHighConfidenceRows(client, candidates = []) {
       skippedDuplicates += duplicateResult.count;
       continue;
     }
+    const failureResult = row.source_video_id
+      ? await client.from("reel_failures").select("id", { count: "exact", head: true }).eq("source_video_id", row.source_video_id)
+      : { count: 0, error: null };
+    if (failureResult.error && !isMissingTableError(failureResult.error)) {
+      errors.push(safeError(failureResult.error));
+      continue;
+    }
+    if (failureResult.count) continue;
     const { error } = await client.from("reel_cache").upsert(row, { onConflict: "source,source_video_id" });
     if (error) errors.push(safeError(error));
-    else promoted += 1;
+    else {
+      promoted += 1;
+      promotedList.push({
+        title: row.title,
+        video_title: row.video_title,
+        item_key: row.item_key,
+        format: candidate.content_format,
+        aspect_mode: candidate.aspect_mode
+      });
+    }
   }
-  return { promoted, skippedDuplicates, errors };
+  return { promoted, skippedDuplicates, errors, promotedList };
 }
 
 async function enrichLibraryReels(client, body = {}) {
@@ -440,12 +486,18 @@ async function enrichLibraryReels(client, body = {}) {
   const preferNonTrailers = body.preferNonTrailers !== false;
   const dryRun = body.dryRun !== false;
   const items = (body.items || []).filter((item) => item?.id).slice(0, maxItems).map((item) => ({ ...item, media_type: mediaType(item) }));
+  const firstTitles = items.slice(0, 5).map(titleOf);
   if (!items.length) {
     return {
+      itemsSent: 0,
+      firstTitles: [],
       checkedItems: 0,
       underfilledItems: 0,
+      perItemCoverage: [],
       candidates: [],
       candidatesFound: 0,
+      rejectedLowRelevance: 0,
+      rejectedWrongSequel: 0,
       savedCandidates: 0,
       promotedToCache: 0,
       skippedDuplicates: 0,
@@ -455,36 +507,58 @@ async function enrichLibraryReels(client, body = {}) {
       quota: false
     };
   }
-  const itemKeys = items.map(itemKeyOf).filter(Boolean);
-  const existingCounts = await existingCacheCountByItem(client, itemKeys);
-  const needs = items.filter((item) => (existingCounts.get(itemKeyOf(item)) || 0) < targetPerItem);
+  const existingCoverage = await existingCacheCoverageByItem(client, items);
+  const perItemCoverage = items.map((item) => {
+    const key = itemKeyOf(item);
+    const coverage = existingCoverage.get(key) || { cachedReels: 0, trailers: 0, nonTrailers: 0 };
+    return {
+      title: titleOf(item),
+      item_key: key,
+      cachedReels: coverage.cachedReels || 0,
+      trailers: coverage.trailers || 0,
+      nonTrailers: coverage.nonTrailers || 0,
+      needsMore: (coverage.cachedReels || 0) < targetPerItem
+    };
+  });
+  const needs = items.filter((item) => perItemCoverage.find((entry) => entry.item_key === itemKeyOf(item))?.needsMore);
+  const message = needs.length ? "" : `All ${items.length} supplied items already have at least ${targetPerItem} cached playable reels.`;
   const tmdb = await tmdbCandidatesForItems(needs, targetPerItem);
   const youtubeBudget = Math.min(ENRICH_SEARCH_LIMIT, Math.max(0, Number(body.youtubeSearchBudget || 5)));
   const youtube = await youtubeCandidatesForItems(needs, youtubeBudget, preferNonTrailers);
   const candidates = dedupeReelCandidates([...tmdb.candidates, ...youtube.candidates])
     .sort((a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0));
   const rejectedLowRelevance = candidates.filter((candidate) => candidate.rejection_reason || candidate.status === "rejected").length;
+  const rejectedWrongSequel = candidates.filter((candidate) => candidate.rejection_reason === "wrong_sequel_or_year").length;
+  const strictCandidates = candidates.filter((candidate) => !candidate.rejection_reason && candidate.status !== "rejected");
   const errors = [...tmdb.errors, ...youtube.errors];
   let savedCandidates = 0;
   let promotedToCache = 0;
   let skippedDuplicates = 0;
+  let promotedList = [];
   if (!dryRun && client) {
-    const saveResult = await saveCandidates(client, candidates);
+    const saveResult = await saveCandidates(client, strictCandidates);
     savedCandidates = saveResult.saved;
     if (saveResult.error) errors.push(saveResult.error);
-    const promoteResult = await promoteHighConfidenceRows(client, candidates);
+    const promoteResult = await promoteHighConfidenceRows(client, strictCandidates);
     promotedToCache = promoteResult.promoted;
     skippedDuplicates = promoteResult.skippedDuplicates;
+    promotedList = promoteResult.promotedList || [];
     errors.push(...promoteResult.errors);
   }
   return {
+    itemsSent: items.length,
+    firstTitles,
+    message,
     checkedItems: items.length,
     underfilledItems: needs.length,
+    perItemCoverage,
     candidates,
     candidatesFound: candidates.length,
     rejectedLowRelevance,
+    rejectedWrongSequel,
     savedCandidates,
     promotedToCache,
+    promotedList,
     skippedDuplicates,
     errors,
     dryRun,
@@ -616,14 +690,20 @@ export async function POST(request) {
       error_message: enrichment.errors.join("; ").slice(0, 500)
     });
     return NextResponse.json({
+      itemsSent: enrichment.itemsSent,
+      firstTitles: enrichment.firstTitles,
+      message: enrichment.message,
       checked: enrichment.checkedItems,
       checkedItems: enrichment.checkedItems,
       underfilledItems: enrichment.underfilledItems,
+      perItemCoverage: enrichment.perItemCoverage,
       candidates: enrichment.candidates,
       candidatesFound: enrichment.candidatesFound,
       rejectedLowRelevance: enrichment.rejectedLowRelevance,
+      rejectedWrongSequel: enrichment.rejectedWrongSequel,
       savedCandidates: enrichment.savedCandidates,
       promotedToCache: enrichment.promotedToCache,
+      promotedList: enrichment.promotedList,
       skippedDuplicates: enrichment.skippedDuplicates,
       errors: enrichment.errors,
       dryRun: enrichment.dryRun,
@@ -640,13 +720,13 @@ export async function POST(request) {
   if (action === "promote") {
     const promoted = await promoteCandidateById(client, body?.candidateId);
     await saveDiscoveryJob(client, { job_type: "candidate_promote", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
-    return NextResponse.json({ checked: 1, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
+    return NextResponse.json({ checked: 1, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, promotedList: promoted.promotedList || [], skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
   }
 
   if (action === "promote_top" || action === "promote_top_safe") {
     const promoted = await promoteTopSafeCandidates(client, target);
     await saveDiscoveryJob(client, { job_type: "candidate_promote_top", status: promoted.errors.length ? "failed" : "done", source: "admin", saved_count: promoted.promoted, error_count: promoted.errors.length, error_message: promoted.errors.join("; ") });
-    return NextResponse.json({ checked: target, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
+    return NextResponse.json({ checked: target, candidates: [], savedCandidates: 0, promotedToCache: promoted.promoted, promotedList: promoted.promotedList || [], skippedDuplicates: promoted.skippedDuplicates, errors: promoted.errors, dryRun: false });
   }
 
   const source = ["tmdb", "youtube", "manual"].includes(body?.source) ? body.source : "tmdb";
@@ -657,6 +737,7 @@ export async function POST(request) {
     return candidateLooksRelevant(candidate, { title: candidate.title, name: candidate.title, id: candidate.tmdb_id, media_type: candidate.media_type });
   });
   const rejectedLowRelevance = result.candidates.length - relevant.length;
+  const rejectedWrongSequel = result.candidates.filter((candidate) => candidate.rejection_reason === "wrong_sequel_or_year").length;
   errors.push(...(result.errors || []));
 
   let savedCandidates = 0;
@@ -689,6 +770,7 @@ export async function POST(request) {
     promotedToCache: 0,
     skippedDuplicates,
     rejectedLowRelevance,
+    rejectedWrongSequel,
     youtubeSearches: result.searches || 0,
     errors,
     dryRun

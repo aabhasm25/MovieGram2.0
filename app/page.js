@@ -3990,7 +3990,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (action.startsWith("enrich_")) {
       body.items = adminItemsForAction(action);
       body.targetPerItem = 5;
-      body.maxItems = 50;
+      body.maxItems = 100;
       body.preferNonTrailers = true;
       body.youtubeSearchBudget = 5;
     }
@@ -4032,13 +4032,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         backdrop_path: normalized.backdrop_path || "",
         release_date: normalized.release_date || "",
         first_air_date: normalized.first_air_date || "",
+        year: yearOf(normalized),
         vote_average: normalized.vote_average || null
       };
     };
-    if (action === "enrich_watched_reels") return watchedReels.slice(0, 50).map(compact);
-    if (action === "enrich_watchlist_reels") return watchlistReels.slice(0, 50).map(compact);
-    if (action === "enrich_favorite_reels") return favoriteReels.slice(0, 50).map(compact);
-    if (action === "enrich_friend_reels") return friendActivityItems.slice(0, 50).map(compact);
+    if (action === "enrich_watched_reels") return watchedReels.map(compact);
+    if (action === "enrich_watchlist_reels") return watchlistReels.map(compact);
+    if (action === "enrich_favorite_reels") return favoriteReels.map(compact);
+    if (action === "enrich_friend_reels") return friendActivityItems.map(compact);
     return [];
   }
 
@@ -4218,8 +4219,23 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               <div className="mg2-reel-admin-result">
                 <strong>{adminResult.ok === false ? "Request failed" : "Result"}</strong>
                 {adminResult.message && <small>{adminResult.message}</small>}
-                <small>checked={adminResult.checkedItems || adminResult.checked || 0} underfilled={adminResult.underfilledItems || 0} candidates={adminResult.candidatesFound || adminResult.candidates?.length || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} rejected={adminResult.rejectedLowRelevance || 0} youtubeSearches={adminResult.youtubeSearches || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                <small>itemsSent={adminResult.itemsSent ?? "-"} checked={adminResult.checkedItems || adminResult.checked || 0} underfilled={adminResult.underfilledItems || 0} candidates={adminResult.candidatesFound || adminResult.candidates?.length || 0} saved={adminResult.savedCandidates || 0} promoted={adminResult.promotedToCache || 0} skipped={adminResult.skippedDuplicates || 0} rejected={adminResult.rejectedLowRelevance || 0} wrongSequel={adminResult.rejectedWrongSequel || 0} youtubeSearches={adminResult.youtubeSearches || 0} dryRun={String(Boolean(adminResult.dryRun))}</small>
+                {Array.isArray(adminResult.firstTitles) && adminResult.firstTitles.length > 0 && <small>firstTitles={adminResult.firstTitles.join(", ")}</small>}
                 {adminResult.discoveryReady !== undefined && <small>{adminResult.discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>}
+                {Array.isArray(adminResult.perItemCoverage) && adminResult.perItemCoverage.length > 0 && (
+                  <div className="mg2-reel-admin-coverage">
+                    {adminResult.perItemCoverage.slice(0, 12).map((entry) => (
+                      <small key={entry.item_key || entry.title}>{entry.title}: cached={entry.cachedReels} trailers={entry.trailers} nonTrailers={entry.nonTrailers} {entry.needsMore ? "needs more" : "covered"}</small>
+                    ))}
+                  </div>
+                )}
+                {Array.isArray(adminResult.promotedList) && adminResult.promotedList.length > 0 && (
+                  <div className="mg2-reel-admin-coverage">
+                    {adminResult.promotedList.slice(0, 12).map((entry) => (
+                      <small key={`${entry.item_key}-${entry.video_title}`}>promoted: {entry.title} - {entry.video_title} ({entry.format || "unknown"}, {entry.aspect_mode || "unknown"})</small>
+                    ))}
+                  </div>
+                )}
                 {(adminResult.errors || []).map((error, index) => <small key={`${error}-${index}`}>{error}</small>)}
                 {(adminResult.candidates || []).slice(0, 12).map((candidate) => (
                   <article key={candidate.id || `${candidate.source}-${candidate.source_video_id || candidate.source_url}`}>
