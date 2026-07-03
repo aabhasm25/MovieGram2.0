@@ -3899,6 +3899,21 @@ body {
   line-height: 1;
 }
 
+.mg2-version-badge {
+  display: inline-flex;
+  min-height: 16px;
+  align-items: center;
+  margin-top: 4px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 0 7px;
+  color: #aeb5c1;
+  background: rgba(255,255,255,.05);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .mg2-brand {
   font-size: 34px !important;
   font-weight: 900;
@@ -3907,6 +3922,63 @@ body {
 
 .mg2-brand span {
   color: #b66cff;
+}
+
+.mg2-home-dashboard {
+  display: grid;
+  gap: 12px;
+  margin: 6px 16px 18px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(255,255,255,.045);
+}
+
+.mg2-home-dashboard > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.mg2-home-dashboard span {
+  color: #b6a7ff;
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.mg2-home-dashboard strong {
+  color: #fff;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.mg2-home-dashboard small {
+  color: #aeb5c1;
+  font-size: 11px;
+}
+
+.mg2-home-dashboard > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mg2-home-dashboard b {
+  display: grid;
+  min-height: 48px;
+  align-content: center;
+  justify-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: rgba(255,255,255,.06);
+  font-size: 17px;
+}
+
+.mg2-home-dashboard b small {
+  margin-top: 3px;
+  color: #9aa3af;
+  font-size: 9px;
+  font-weight: 900;
 }
 
 .mg2-top-actions {
@@ -6953,12 +7025,11 @@ body {
 }
 
 .mg2-reel-player-frame.vertical-cover {
-  top: 50%;
-  left: 50%;
-  width: min(100%, calc(100svh * 9 / 16));
+  inset: 0;
+  width: 100%;
   height: 100%;
-  aspect-ratio: 9 / 16;
-  transform: translate(-50%, -50%);
+  aspect-ratio: auto;
+  transform: none;
 }
 
 .mg2-reel-player {
@@ -6994,6 +7065,7 @@ body {
 .mg2-reel-player-frame.vertical-cover .mg2-reel-player-youtube {
   left: 0;
   width: 100%;
+  height: 100%;
   min-width: 0;
   transform: none;
 }
@@ -8380,6 +8452,43 @@ body {
   gap: 8px;
 }
 
+.mg2-reel-admin-dashboard {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mg2-reel-admin-dashboard span {
+  display: grid;
+  min-height: 52px;
+  align-content: center;
+  justify-items: center;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  padding: 8px 4px;
+  background: rgba(255,255,255,.055);
+}
+
+.mg2-reel-admin-dashboard b {
+  color: #fff;
+  font-size: 15px;
+}
+
+.mg2-reel-admin-dashboard small {
+  color: #9aa3af;
+  font-size: 9px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.mg2-reel-admin-dashboard span.ready b {
+  color: #8ff0b2;
+}
+
+.mg2-reel-admin-dashboard span.warn b {
+  color: #ffd35a;
+}
+
 .mg2-reel-admin-actions button,
 .mg2-reel-admin-result button {
   min-height: 32px;
@@ -9465,6 +9574,103 @@ body {
 .mg2-profile-list-detail > small {
   color: #aeb5c1;
   font-size: 11px;
+}
+
+.mg2-profile-list-titlebar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mg2-profile-list-titlebar span {
+  min-width: 0;
+}
+
+.mg2-profile-list-titlebar div {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mg2-profile-list-titlebar div button {
+  min-height: 28px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.mg2-profile-list-titlebar div button.danger {
+  border-color: rgba(255,96,116,.36);
+  color: #ff9aa8;
+  background: rgba(255,96,116,.1);
+}
+
+.mg2-preferences-sheet {
+  gap: 14px;
+}
+
+.mg2-preference-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mg2-preference-chips button {
+  min-height: 34px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #d9dee7;
+  background: rgba(255,255,255,.06);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-preference-chips button.active {
+  border-color: rgba(155,124,255,.45);
+  color: #fff;
+  background: rgba(155,124,255,.22);
+}
+
+.mg2-preferences-sheet label {
+  display: grid;
+  gap: 6px;
+}
+
+.mg2-preferences-sheet label small {
+  color: #aeb5c1;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-preferences-sheet select {
+  min-height: 38px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  padding: 0 10px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+}
+
+.mg2-profile-activity-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.mg2-profile-activity-groups section {
+  display: grid;
+  gap: 8px;
+}
+
+.mg2-profile-activity-groups h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 13px;
 }
 
 .mg2-profile-activity,

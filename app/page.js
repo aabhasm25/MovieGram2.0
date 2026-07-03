@@ -1395,7 +1395,10 @@ function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, 
       <section className={`mg2-phone${socialActive ? " social-active" : ""}`}>
         <div className="mg2-status"><span>9:41</span><span>Wi-Fi</span></div>
         <header className="mg2-topbar">
-          {activeTab === "home" ? <h1 className="mg2-brand">Movie<span>Gram</span></h1> : <h1>{title}</h1>}
+          <div>
+            {activeTab === "home" ? <h1 className="mg2-brand">Movie<span>Gram</span></h1> : <h1>{title}</h1>}
+            {process.env.NODE_ENV !== "production" && <small className="mg2-version-badge">CP19 - cache-first</small>}
+          </div>
           <div className="mg2-top-actions">
             <button type="button" aria-label="Messages" onClick={onOpenMessages}>
               <Icon name="chat" />
@@ -1991,6 +1994,41 @@ function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) 
           {listEntries.length === 0 && <em>No custom lists yet. Create one above.</em>}
         </div>
         <button type="button" onClick={onClose}>Done</button>
+      </section>
+    </div>
+  );
+}
+
+function PreferencesSheet({ open, onSave, onSkip }) {
+  const [selectedGenres, setSelectedGenres] = useState([]);
+  const [privacy, setPrivacy] = useState("public");
+  if (!open) return null;
+  const genres = ["Action", "Comedy", "Drama", "Sci-Fi", "Thriller", "Animation", "Crime", "Fantasy"];
+  const toggleGenre = (genre) => {
+    setSelectedGenres((current) => current.includes(genre) ? current.filter((entry) => entry !== genre) : [...current, genre].slice(0, 5));
+  };
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onSkip}>
+      <section className="mg2-watch-sheet mg2-preferences-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>Personalize MovieGram</h3>
+        <p>Pick a few lanes so Home and Reels can start with better signals. You can skip this and keep guest mode.</p>
+        <div className="mg2-preference-chips">
+          {genres.map((genre) => (
+            <button key={genre} className={selectedGenres.includes(genre) ? "active" : ""} type="button" onClick={() => toggleGenre(genre)}>{genre}</button>
+          ))}
+        </div>
+        <label>
+          <small>Profile default</small>
+          <select value={privacy} onChange={(event) => setPrivacy(event.target.value)}>
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+        <div className="mg2-sheet-actions">
+          <button type="button" onClick={() => onSave({ genres: selectedGenres, privacy, savedAt: new Date().toISOString() })}>Save Preferences</button>
+          <button type="button" onClick={onSkip}>Skip</button>
+        </div>
       </section>
     </div>
   );
@@ -2644,7 +2682,22 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
+function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
+  const recentlyOpened = useMemo(() => Object.values(profileActivity || {})
+    .filter((event) => event?.item && event.type === "opened")
+    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+    .map((event) => event.item)
+    .filter((item) => item?.poster_path)
+    .slice(0, 18), [profileActivity]);
+  const ratedValues = Object.values(ratings || {}).map(normalizeUserRating).filter(Boolean);
+  const averageRating = ratedValues.length ? (ratedValues.reduce((sum, value) => sum + value, 0) / ratedValues.length).toFixed(1) : "NR";
+  const dashboardCards = [
+    { label: "Watched", value: Object.keys(watched || {}).length },
+    { label: "Saved", value: Object.keys(watchlist || {}).length },
+    { label: "Favorites", value: Object.keys(favorites || {}).length },
+    { label: "Avg Rating", value: averageRating },
+    { label: "Opened", value: recentlyOpened.length }
+  ];
   return (
     <>
       <div className="mg2-stories">
@@ -2656,6 +2709,19 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
         ))}
       </div>
 
+      <section className="mg2-home-dashboard" aria-label="Your MovieGram dashboard">
+        <div>
+          <span>{user ? "Synced dashboard" : "Guest dashboard"}</span>
+          <strong>Your MovieGram</strong>
+          <small>{recentlyOpened.length ? "Pick up from recent details, saves, and ratings." : "Open a title to start shaping your dashboard."}</small>
+        </div>
+        <div>
+          {dashboardCards.map((card) => (
+            <b key={card.label}>{card.value}<small>{card.label}</small></b>
+          ))}
+        </div>
+      </section>
+
       <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} useMockFallback={!user} />
 
       <section className="mg2-section mg2-activity-section">
@@ -2664,6 +2730,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       </section>
 
       <ContinueWatchingRow items={continueWatching} onOpen={onOpen} />
+      <ContentRow title="Recently Opened" items={recentlyOpened} loading={false} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <ContentRow title="Recommended for You" items={recommended} loading={loading && recommended.length === 0} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <RecommendationIntelligence rows={rows} intelligenceRows={intelligenceRows} watchlist={watchlist} hiddenRecs={hiddenRecs} onOpen={onOpen} onWatchlist={onWatchlist} onNotInterested={onNotInterested} />
       <ContentRow title="Trending This Week" items={rows.trending || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
@@ -2675,7 +2742,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, onLoadMoreExplore, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
 
   return (
@@ -2692,6 +2759,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
         ))}
       </div>
       <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <button className="mg2-wide-button" type="button" disabled={tabLoading} onClick={onLoadMoreExplore}>{tabLoading ? "Loading..." : "Load more from this tab"}</button>
       {exploreHubSections.map((section) => (
         <ContentRow
           key={section.id}
@@ -3158,6 +3226,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const coverageLogRef = useRef("");
   const reelOrderLogRef = useRef("");
   const reelSocialWarnedRef = useRef(new Set());
+  const disabledReelSocialTablesRef = useRef(new Set());
   const seenReelIdsRef = useRef(new Set());
   const failedYouTubeVideoIdsRef = useRef(new Set());
   const baseReels = useMemo(() => dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]), [rows]);
@@ -3855,11 +3924,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }
 
   async function saveReelSocialRemote(table, payload, actionLabel) {
-    if (!supabase || !userId || userId === "guest") return;
+    if (!supabase || !userId || userId === "guest" || disabledReelSocialTablesRef.current.has(table)) return;
     try {
       const { error } = await supabase.from(table).insert(payload);
       if (error) throw error;
     } catch (error) {
+      if (["404", "PGRST205", "PGRST202"].includes(String(error?.code || "")) || /not found|schema cache|does not exist/i.test(String(error?.message || ""))) {
+        disabledReelSocialTablesRef.current.add(table);
+      }
       const key = `${table}:${error?.code || error?.message || "unknown"}`;
       if (!reelSocialWarnedRef.current.has(key)) {
         reelSocialWarnedRef.current.add(key);
@@ -3878,20 +3950,23 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   function toggleReelLike(event, reel, item) {
     stopPlayerEvent(event);
     const identity = reelIdentity(reel);
+    const wasLiked = Boolean(reelLikes[identity]);
     setReelLikes((current) => {
       const next = { ...current };
       if (next[identity]) {
         delete next[identity];
       } else {
         next[identity] = { likedAt: new Date().toISOString(), item_key: keyOf(item), source: reel.source || "youtube" };
-        setHeartBurst(identity);
-        if (typeof window !== "undefined") window.setTimeout(() => setHeartBurst((value) => value === identity ? "" : value), 700);
-        onReelActivity?.("reel_liked", item, { reelId: identity, source: reel.source || "youtube" });
-        saveReelSocialRemote("reel_likes", reelSocialPayload(reel, item), "reel_liked");
       }
       saveReelLikes(next);
       return next;
     });
+    if (!wasLiked) {
+      setHeartBurst(identity);
+      if (typeof window !== "undefined") window.setTimeout(() => setHeartBurst((value) => value === identity ? "" : value), 700);
+      onReelActivity?.("reel_liked", item, { reelId: identity, source: reel.source || "youtube" });
+      saveReelSocialRemote("reel_likes", reelSocialPayload(reel, item), "reel_liked");
+    }
   }
 
   function shareReel(event, reel, item) {
@@ -3949,20 +4024,35 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     return `${source}:${reel.sourceUrl || reel.watchUrl || reel.embedUrl || reel.id}`;
   }
 
-  function estimateReelAspectMode(reel = {}, videoId = "") {
-    const remembered = reelAspectModes[videoId];
-    if (remembered) return typeof remembered === "string" ? remembered : remembered.mode;
+  function strongVerticalReelSignal(reel = {}) {
     const explicitMode = String(reel.aspectMode || reel.aspect_mode || "").toLowerCase();
-    if (explicitMode.includes("vertical")) return "vertical-cover";
-    if (explicitMode.includes("horizontal")) return "horizontal-contain";
-    if (explicitMode.includes("unknown")) return "unknown-contain";
-    const text = `${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""} ${reel.embedUrl || ""}`.toLowerCase();
-    if (text.includes("/shorts/") || text.includes("#shorts") || text.includes("#reels")) return "vertical-cover";
+    if (explicitMode.includes("vertical")) return { strong: true, reason: "manual/metadata vertical" };
+    const text = `${reel.contentFormat || ""} ${reel.content_format || ""} ${reel.kind || ""} ${reel.label || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.sourceUrl || ""} ${reel.watchUrl || ""} ${reel.embedUrl || ""}`.toLowerCase();
+    if (text.includes("/shorts/")) return { strong: true, reason: "shorts url" };
+    if (text.includes("#shorts") || text.includes("#reels")) return { strong: true, reason: "hashtag" };
     const format = reelContentFormat(reel);
-    if (["short", "reel"].includes(format)) return "vertical-cover";
-    if (["clip", "scene_edit"].includes(format) && (text.includes("#shorts") || text.includes("#reels") || text.includes("/shorts/"))) return "vertical-cover";
-    if (["teaser", "featurette", "behind_the_scenes", "trailer"].includes(format)) return "horizontal-contain";
-    return "unknown-contain";
+    if (["short", "reel"].includes(format)) return { strong: true, reason: "content format" };
+    if (/\bshorts?\b/.test(text) || /\breels?\b/.test(text)) return { strong: true, reason: "title/label" };
+    return { strong: false, reason: "" };
+  }
+
+  function resolveReelLayout(reel = {}, videoId = "") {
+    const explicitMode = String(reel.aspectMode || reel.aspect_mode || "").toLowerCase();
+    if (explicitMode.includes("vertical")) return { mode: "vertical-cover", reason: "manual/metadata vertical", strongVertical: true };
+    if (explicitMode.includes("horizontal")) return { mode: "horizontal-contain", reason: "manual/metadata horizontal", strongVertical: false };
+    if (explicitMode.includes("unknown")) return { mode: "unknown-contain", reason: "manual/metadata unknown", strongVertical: false };
+    const strongVertical = strongVerticalReelSignal(reel);
+    if (strongVertical.strong) return { mode: "vertical-cover", reason: strongVertical.reason, strongVertical: true };
+    const remembered = reelAspectModes[videoId];
+    const rememberedMode = typeof remembered === "string" ? remembered : remembered?.mode;
+    if (rememberedMode) return { mode: rememberedMode, reason: "thumbnail dimensions", strongVertical: rememberedMode.includes("vertical") };
+    const format = reelContentFormat(reel);
+    if (["teaser", "featurette", "behind_the_scenes", "trailer"].includes(format)) return { mode: "horizontal-contain", reason: "format", strongVertical: false };
+    return { mode: "unknown-contain", reason: "safe unknown", strongVertical: false };
+  }
+
+  function estimateReelAspectMode(reel = {}, videoId = "") {
+    return resolveReelLayout(reel, videoId).mode;
   }
 
   function reelContentFormat(reel = {}) {
@@ -3981,6 +4071,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   function reelAspectReason(reel = {}, aspectMode = "") {
     const format = reelContentFormat(reel);
     if (reel.aspectMode || reel.aspect_mode) return "metadata";
+    const layoutReason = resolveReelLayout(reel, getYouTubeVideoId(reel)).reason;
+    if (layoutReason) return layoutReason;
     if (reelAspectModes[getYouTubeVideoId(reel)]) return "thumbnail";
     if (["short", "reel"].includes(format)) return "short/reel signal";
     if (format !== "unknown") return "format";
@@ -4007,7 +4099,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (!videoId) return;
     const image = event.currentTarget;
     if (!image.naturalWidth || !image.naturalHeight) return;
-    const nextMode = image.naturalHeight > image.naturalWidth ? "vertical-cover" : "horizontal-contain";
+    const activeReel = visibleReels.find((entry) => getYouTubeVideoId(entry) === videoId);
+    const nextMode = strongVerticalReelSignal(activeReel).strong ? "vertical-cover" : (image.naturalHeight > image.naturalWidth ? "vertical-cover" : "horizontal-contain");
     const natural = `${image.naturalWidth}x${image.naturalHeight}`;
     setReelAspectModes((current) => {
       const existing = current[videoId];
@@ -4030,10 +4123,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (active && isYouTube) {
       const rememberedAspect = reelAspectModes[youtubeVideoId];
       const natural = typeof rememberedAspect === "object" ? rememberedAspect.natural : "unknown";
-      const layoutLogKey = `${youtubeVideoId}:${aspectMode}:${aspectFormat}:${aspectReason}:${natural}`;
+      const strongVertical = resolveReelLayout(reel, youtubeVideoId).strongVertical;
+      const layoutLogKey = `${youtubeVideoId}:${aspectMode}:${aspectFormat}:${aspectReason}:${natural}:${strongVertical}`;
       if (reelLayoutLogRef.current !== layoutLogKey) {
         reelLayoutLogRef.current = layoutLogKey;
-        console.info(`Reel layout: videoId=${youtubeVideoId}, aspectMode=${aspectMode}, format=${aspectFormat}, reason=${aspectReason}, natural=${natural}.`);
+        console.info(`Reel layout final: videoId=${youtubeVideoId}, mode=${aspectMode}, strongVertical=${strongVertical}, reason=${aspectReason}, thumbnail=${natural}.`);
       }
     }
     const preview = (
@@ -4375,6 +4469,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             </div>
             <small>Requires server ADMIN_BACKFILL_SECRET. Discovery writes candidates only unless promotion is explicitly run.</small>
             <small>{discoveryReady === null ? "Discovery DB status unknown" : discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>
+            {adminResult?.tables && (
+              <div className="mg2-reel-admin-dashboard">
+                <span><b>{adminResult.tables.reel_cache_count ?? "-"}</b><small>Playable cache</small></span>
+                <span><b>{adminResult.tables.reel_candidates_count ?? "-"}</b><small>Candidates</small></span>
+                <span><b>{adminResult.tables.discovery_jobs_count ?? "-"}</b><small>Jobs</small></span>
+                <span className={adminResult.tables.social_tables_ready ? "ready" : "warn"}><b>{adminResult.tables.social_tables_ready ? "Ready" : "Local"}</b><small>Reel social</small></span>
+              </div>
+            )}
             <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder="Admin secret for this request" autoComplete="off" />
             <select value={adminSource} onChange={(event) => setAdminSource(event.target.value)}>
               <option value="manual">Manual URLs</option>
@@ -4758,7 +4860,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower, onDeleteCustomList, onRenameCustomList, onShareList }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -4782,8 +4884,8 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   const profileLists = [
     { id: "watchlist", title: "Watchlist", subtitle: `${saved.length} saved`, items: saved, action: () => { setProfilePanel(null); setSelectedList(null); setProfileTab("watchlist"); } },
     { id: "favorites", title: "Favorites", subtitle: `${favoriteItems.length} favorites`, items: favoriteItems, action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
-    ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], action: () => { setSelectedList({ title: "Blend List", subtitle: "Saved from Blend", items: list.items || [] }); setProfilePanel("list-detail"); } })),
-    ...userLists.map((list) => ({ ...list, subtitle: "Custom list", action: () => { setSelectedList({ title: list.title, subtitle: "Custom list", items: list.items || [] }); setProfilePanel("list-detail"); } }))
+    ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], type: "blend", privacy: "shared", action: () => { setSelectedList({ id: list.id || `blend-${index}`, type: "blend", title: "Blend List", subtitle: "Saved from Blend", privacy: "shared", items: list.items || [] }); setProfilePanel("list-detail"); } })),
+    ...userLists.map((list) => ({ ...list, type: "custom", privacy: list.privacy || "private", subtitle: `${list.privacy || "private"} custom list`, action: () => { setSelectedList({ id: list.id, type: "custom", title: list.title, subtitle: "Custom list", privacy: list.privacy || "private", items: list.items || [] }); setProfilePanel("list-detail"); } }))
   ];
   const reviewItems = ratedKeys
     .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
@@ -4869,6 +4971,22 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   realReviewItems.forEach((item, index) => addProfileStatus({ type: "reviewed", item, timestamp: item.reviewedAt || item.reviewAt || item.updatedAt || item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length + ratedKeys.length), rating: ratingForItem(item, ratings), review: reviewTextFor(item) }));
   const activityEvents = Array.from(statusMap.values())
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const activityGroupLabel = (timestamp) => {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diff = Math.round((today - target) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return "Older";
+  };
+  const groupedActivityEvents = activityEvents.reduce((acc, event) => {
+    const label = activityGroupLabel(event.timestamp);
+    acc[label] = acc[label] || [];
+    acc[label].push(event);
+    return acc;
+  }, {});
   const gridItems = profileTab === "activity" ? activityEvents.map((event) => event.item) : profileTab === "watched" ? watchedGrid : watchlistGrid;
   const relationshipProfiles = profilePanel === "followers" ? followerProfiles : followingProfiles;
   const filteredRelationshipProfiles = relationshipProfiles.filter((entry) => {
@@ -5073,8 +5191,17 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
             selectedList?.items?.length ? (
               <div className="mg2-profile-list-detail">
                 <button type="button" onClick={() => { setProfilePanel("lists"); setSelectedList(null); }}><Icon name="back" /> Lists</button>
-                <h3>{selectedList.title}</h3>
-                <small>{selectedList.subtitle}</small>
+                <div className="mg2-profile-list-titlebar">
+                  <span>
+                    <h3>{selectedList.title}</h3>
+                    <small>{selectedList.subtitle} - {selectedList.privacy || "private"}</small>
+                  </span>
+                  <div>
+                    <button type="button" onClick={() => onShareList?.(selectedList)}>Share</button>
+                    {selectedList.type === "custom" && <button type="button" onClick={() => onRenameCustomList?.(selectedList.id, selectedList.title, (nextTitle) => setSelectedList((current) => current ? { ...current, title: nextTitle } : current))}>Rename</button>}
+                    {selectedList.type === "custom" && <button type="button" className="danger" onClick={() => { onDeleteCustomList?.(selectedList.id); setProfilePanel("lists"); setSelectedList(null); }}>Delete</button>}
+                  </div>
+                </div>
                 <div className="mg2-profile-poster-grid">
                   {selectedList.items.map((item) => {
                     const userRating = ratingForItem(item, ratings);
@@ -5087,20 +5214,27 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
 
           {!profilePanel && profileTab === "activity" && (
             activityEvents.length ? (
-              <div className="mg2-profile-activity-grid">
-                {activityEvents.map((event, index) => (
-                  <button key={`${keyOf(event.item)}-${index}`} type="button" onClick={() => onOpen(event.item)}>
-                    <img src={posterUrl(event.item.poster_path, "w185")} alt={titleOf(event.item)} loading="lazy" onError={(imageEvent) => { imageEvent.currentTarget.src = POSTER_FALLBACK; }} />
-                    <span className="mg2-activity-badges">
-                      {event.statuses.map((status) => (
-                        <i key={status} className={`mg2-activity-badge ${status}`}>
-                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : status === "reel_liked" ? <Icon name="heart" /> : status === "reel_shared" ? <Icon name="send" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
-                        </i>
+              <div className="mg2-profile-activity-groups">
+                {["Today", "Yesterday", "Older"].filter((group) => groupedActivityEvents[group]?.length).map((group) => (
+                  <section key={group}>
+                    <h3>{group}</h3>
+                    <div className="mg2-profile-activity-grid">
+                      {groupedActivityEvents[group].map((event, index) => (
+                        <button key={`${keyOf(event.item)}-${group}-${index}`} type="button" onClick={() => onOpen(event.item)}>
+                          <img src={posterUrl(event.item.poster_path, "w185")} alt={titleOf(event.item)} loading="lazy" onError={(imageEvent) => { imageEvent.currentTarget.src = POSTER_FALLBACK; }} />
+                          <span className="mg2-activity-badges">
+                            {event.statuses.map((status) => (
+                              <i key={status} className={`mg2-activity-badge ${status}`}>
+                                {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : status === "reel_liked" ? <Icon name="heart" /> : status === "reel_shared" ? <Icon name="send" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
+                              </i>
+                            ))}
+                          </span>
+                          <em>{profileTimeLabel(event.timestamp)}</em>
+                          <strong>{titleOf(event.item)}</strong>
+                        </button>
                       ))}
-                    </span>
-                    <em>{profileTimeLabel(event.timestamp).split(",")[0]}</em>
-                    <strong>{titleOf(event.item)}</strong>
-                  </button>
+                    </div>
+                  </section>
                 ))}
               </div>
             ) : <div className="mg2-empty">Watch, rate, review, or save titles to build your activity.</div>
@@ -5622,7 +5756,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenReels, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -5774,6 +5908,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
               <button className={watched ? "active watched" : ""} type="button" onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : "Mark watched"}><Icon name="check" /><span>{watched ? "Watched" : "Watch"}</span></button>
               <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
               <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
+              <button type="button" onClick={() => onOpenReels?.(shown)} aria-label={`Open reels for ${titleOf(shown)}`}><Icon name="play" /><span>Reels</span></button>
             </div>
             <section className="mg2-detail-panel">
               <h3>Overview</h3>
@@ -5957,6 +6092,7 @@ export default function Home() {
   const observer = useRef(null);
   const [activeTab, setActiveTab] = useState("home");
   const [activeExplore, setActiveExplore] = useState("trending");
+  const [activeExplorePage, setActiveExplorePage] = useState(1);
   const [rows, setRows] = useState(fallbackRows);
   const [loadingRows, setLoadingRows] = useState(false);
   const [tabResults, setTabResults] = useState([]);
@@ -5999,6 +6135,7 @@ export default function Home() {
   const [quickActionItem, setQuickActionItem] = useState(null);
   const [reviewItem, setReviewItem] = useState(null);
   const [listItem, setListItem] = useState(null);
+  const [preferencesOpen, setPreferencesOpen] = useState(() => typeof window !== "undefined" && !window.localStorage.getItem("moviegram.preferencesDone"));
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [feedPage, setFeedPage] = useState(2);
   const [likedFeed, setLikedFeed] = useState({});
@@ -6424,6 +6561,7 @@ export default function Home() {
     async function loadExplore() {
       const tab = exploreTabs.find((item) => item.id === activeExplore);
       if (!tab) return;
+      setActiveExplorePage(1);
       setTabLoading(true);
       try {
         const data = await apiFetch(tab.endpoint, { page: 1 });
@@ -6436,6 +6574,22 @@ export default function Home() {
     }
     loadExplore();
   }, [activeExplore, apiFetch]);
+
+  const loadMoreExplore = useCallback(async () => {
+    const tab = exploreTabs.find((item) => item.id === activeExplore);
+    if (!tab || tabLoading) return;
+    const nextPage = activeExplorePage + 1;
+    setTabLoading(true);
+    try {
+      const data = await apiFetch(tab.endpoint, { page: nextPage });
+      setTabResults((current) => sortResults(dedupe([...current, ...normalize(data.results)])).slice(0, 60));
+      setActiveExplorePage(nextPage);
+    } catch {
+      // Keep the existing results visible if pagination fails.
+    } finally {
+      setTabLoading(false);
+    }
+  }, [activeExplore, activeExplorePage, apiFetch, tabLoading]);
 
   useEffect(() => {
     async function loadExploreHub() {
@@ -7321,6 +7475,58 @@ export default function Home() {
     logActivity(exists ? "custom_list_remove" : "custom_list_add", normalized, { listKey: listId });
   }
 
+  function deleteCustomList(listId) {
+    if (!listId || !customLists[listId]) return;
+    const next = { ...customLists };
+    const removed = next[listId];
+    delete next[listId];
+    setCustomLists(next);
+    persist("moviegram.customLists", next);
+    syncTrackingNow("custom_list_delete", { customLists: next });
+    if (removed?.items?.[0]) logActivity("custom_list_delete", removed.items[0], { listKey: listId, title: removed.title });
+  }
+
+  function renameCustomList(listId, currentTitle, onRenamed) {
+    if (!listId || !customLists[listId] || typeof window === "undefined") return;
+    const nextTitle = window.prompt("Rename list", currentTitle || customLists[listId].title || "");
+    const trimmed = String(nextTitle || "").trim();
+    if (!trimmed) return;
+    const next = {
+      ...customLists,
+      [listId]: { ...customLists[listId], title: trimmed, updatedAt: new Date().toISOString() }
+    };
+    setCustomLists(next);
+    persist("moviegram.customLists", next);
+    syncTrackingNow("custom_list_rename", { customLists: next });
+    onRenamed?.(trimmed);
+    const firstItem = next[listId].items?.[0];
+    if (firstItem) logActivity("custom_list_rename", firstItem, { listKey: listId, title: trimmed });
+  }
+
+  function shareCustomList(list = {}) {
+    const url = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}#list-${encodeURIComponent(list.id || list.title || "moviegram")}` : "";
+    const text = `${list.title || "MovieGram list"} - ${(list.items || []).length} titles`;
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title: list.title || "MovieGram list", text, url }).catch(() => {});
+    } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(`${text}${url ? ` ${url}` : ""}`).catch(() => {});
+    }
+    if (list.items?.[0]) logActivity("list_shared", list.items[0], { listKey: list.id, title: list.title });
+  }
+
+  function savePreferences(preferences) {
+    if (typeof window !== "undefined") {
+      safeSetStorage("moviegram.preferences", JSON.stringify(preferences));
+      safeSetStorage("moviegram.preferencesDone", "true");
+    }
+    setPreferencesOpen(false);
+  }
+
+  function skipPreferences() {
+    if (typeof window !== "undefined") safeSetStorage("moviegram.preferencesDone", "true");
+    setPreferencesOpen(false);
+  }
+
   function toggleFavorite(item) {
     const normalized = { ...item, media_type: mediaType(item) };
     const key = keyOf(normalized);
@@ -7454,7 +7660,7 @@ export default function Home() {
       </section>
     );
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
@@ -7467,6 +7673,7 @@ export default function Home() {
         queryProps={queryProps}
         tabResults={tabResults}
         tabLoading={tabLoading}
+        onLoadMoreExplore={loadMoreExplore}
         exploreRows={exploreRows}
         exploreLoading={exploreLoading}
         actors={popularActors}
@@ -7482,7 +7689,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
   }
 
   if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
@@ -7532,6 +7739,7 @@ export default function Home() {
           rating={ratingForItem(selected, ratings)}
           onRate={rateItem}
           onOpen={openItem}
+          onOpenReels={() => { setSelected(null); setActiveTab("reels"); }}
           onOpenPerson={openPerson}
           onOpenPublicProfile={(profile) => { setSelected(null); openPublicProfile(profile); }}
           externalRatings={externalRatings}
@@ -7588,6 +7796,11 @@ export default function Home() {
         onCreate={createCustomList}
         onToggleItem={toggleCustomListItem}
         onClose={() => setListItem(null)}
+      />
+      <PreferencesSheet
+        open={preferencesOpen}
+        onSave={savePreferences}
+        onSkip={skipPreferences}
       />
     </PhoneShell>
   );

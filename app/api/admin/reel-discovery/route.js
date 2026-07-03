@@ -91,18 +91,21 @@ async function saveDiscoveryJob(client, row) {
 async function checkDiscoveryDb(client) {
   if (!client) return { ready: false, errors: ["Supabase server client is not configured."] };
   const tables = ["creator_sources", "reel_candidates", "discovery_jobs", "reel_failures"];
+  const optionalTables = ["reel_likes", "reel_comments", "reel_shares"];
+  const countTables = ["reel_cache", ...tables, ...optionalTables];
   const results = {};
   const errors = [];
-  for (const table of tables) {
+  for (const table of countTables) {
     const { count, error } = await client.from(table).select("id", { count: "exact", head: true });
     if (error) {
       results[table] = false;
-      errors.push(safeError(error));
+      if (tables.includes(table) || table === "reel_cache") errors.push(safeError(error));
     } else {
       results[table] = true;
       results[`${table}_count`] = count || 0;
     }
   }
+  results.social_tables_ready = optionalTables.every((table) => results[table]);
   return { ready: tables.every((table) => results[table]), tables: results, errors: [...new Set(errors)] };
 }
 
