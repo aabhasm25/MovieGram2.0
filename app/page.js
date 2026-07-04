@@ -2,11 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  acceptFollowRequest,
+  addToSupabaseWatchlist,
+  addItemToList,
+  createUserList,
   createActivityEvent,
+  declineFollowRequest,
+  ensureUserProfile,
+  followUser,
   isSupabaseConfigured,
+  loadNotifications,
   loadMovieGramRemoteState,
+  loadRecentActivity,
+  markSupabaseWatched,
+  removeFromSupabaseWatchlist,
+  removeSupabaseWatched,
   saveMovieGramRemoteState,
-  supabase
+  saveRatingReview,
+  supabase,
+  updateUserProfile
 } from "../lib/supabaseClient";
 
 const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
@@ -1100,51 +1114,18 @@ function persistGuestProfile(profile) {
 
 async function loadOrCreateSupabaseProfile(user) {
   if (!supabase || !user?.id) return defaultProfileForUser(user);
-  const defaults = defaultProfileForUser(user);
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (error) throw error;
-  if (data) return { ...defaults, ...data, email: data.email || user.email || defaults.email };
-
-  const insertProfile = {
-    id: user.id,
-    email: user.email,
-    username: defaults.username,
-    display_name: defaults.display_name,
-    bio: defaults.bio,
-    avatar_url: defaults.avatar_url,
-    is_private: defaults.is_private,
-    updated_at: new Date().toISOString()
-  };
-  const { data: created, error: createError } = await supabase
-    .from("profiles")
-    .upsert(insertProfile, { onConflict: "id" })
-    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
-    .single();
-  if (createError) throw createError;
-  return { ...defaults, ...created };
+  const profile = await ensureUserProfile(user);
+  return { ...defaultProfileForUser(user), ...(profile || {}), email: user.email || "" };
 }
 
 async function saveSupabaseProfile(user, profile) {
   if (!supabase || !user?.id) throw new Error("Sign in to sync profile changes.");
   const validation = validateProfileIdentity(profile);
   if (validation.error) throw new Error(validation.error);
-  const payload = {
-    id: user.id,
-    email: user.email,
-    ...validation.value,
-    updated_at: new Date().toISOString()
-  };
-  const { data, error } = await supabase
-    .from("profiles")
-    .upsert(payload, { onConflict: "id" })
-    .select("id,email,username,display_name,bio,avatar_url,is_private,updated_at")
-    .single();
-  if (error) throw error;
-  return { ...defaultProfileForUser(user), ...data };
+  const saved = await ensureUserProfile(user);
+  const updated = await updateUserProfile(user, { ...(saved || {}), ...validation.value });
+  if (!updated) throw new Error("Profile table is unavailable.");
+  return { ...defaultProfileForUser(user), ...updated, email: user.email || "" };
 }
 
 function publicProfileFromRow(row = {}) {
@@ -1187,17 +1168,24 @@ function publicActivityDate(value) {
 }
 
 function normalizeSocialActivity(row = {}, profileMap = {}) {
-  const item = row.item_data || {};
+  const item = row.item_data || {
+    id: row.tmdb_id,
+    media_type: row.media_type,
+    title: row.title,
+    name: row.media_type === "tv" ? row.title : undefined,
+    poster_path: row.poster_path
+  };
   const profile = profileMap[row.user_id] || { id: row.user_id, username: "moviegram", display_name: "MovieGram user" };
+  const action = row.action || row.type || "";
   return {
-    id: row.event_key || `${row.user_id}-${row.created_at}`,
+    id: row.event_key || row.id || `${row.user_id}-${row.created_at}`,
     user_id: row.user_id,
     profile,
-    action: row.action,
-    actionLabel: socialActivityCopy(row.action),
+    action,
+    actionLabel: socialActivityCopy(action),
     item: { ...item, media_type: mediaType(item) },
     title: titleOf(item),
-    poster: item.poster_path,
+    poster: item.poster_path || row.poster_path,
     metadata: row.metadata || {},
     created_at: row.created_at,
     time: publicActivityDate(row.created_at)
@@ -1214,7 +1202,7 @@ async function countRows(table, column, value) {
   return count || 0;
 }
 
-async function countFollowRows(column, value, status = "approved") {
+async function countFollowRows(column, value, status = "accepted") {
   if (!supabase || !value) return 0;
   const { count, error } = await supabase
     .from("follows")
@@ -1252,15 +1240,15 @@ async function loadSocialFoundation(userId) {
   const [{ data: followingRows, error: followingError }, { data: requestRows, error: requestError }, { data: followerRows, error: followerError }, followers, following] = await Promise.all([
     supabase.from("follows").select("following_id,status").eq("follower_id", userId),
     supabase.from("follows").select("follower_id,status").eq("following_id", userId).eq("status", "pending"),
-    supabase.from("follows").select("follower_id,status").eq("following_id", userId).eq("status", "approved"),
+    supabase.from("follows").select("follower_id,status").eq("following_id", userId).eq("status", "accepted"),
     countFollowRows("following_id", userId),
     countFollowRows("follower_id", userId)
   ]);
   if (followingError) throw followingError;
   if (requestError) throw requestError;
   if (followerError) throw followerError;
-  const followStatuses = Object.fromEntries((followingRows || []).map((row) => [row.following_id, row.status || "approved"]));
-  const followingIds = (followingRows || []).filter((row) => (row.status || "approved") === "approved").map((row) => row.following_id).filter(Boolean);
+  const followStatuses = Object.fromEntries((followingRows || []).map((row) => [row.following_id, row.status || "accepted"]));
+  const followingIds = (followingRows || []).filter((row) => (row.status || "accepted") === "accepted").map((row) => row.following_id).filter(Boolean);
   const pendingIds = (followingRows || []).filter((row) => row.status === "pending").map((row) => row.following_id).filter(Boolean);
   const requesterIds = (requestRows || []).map((row) => row.follower_id).filter(Boolean);
   const followerIds = (followerRows || []).map((row) => row.follower_id).filter(Boolean);
@@ -1307,7 +1295,7 @@ async function loadPublicProfileBundle(profileId, viewerId) {
   if (relationResult.error) throw relationResult.error;
   const profile = publicProfileFromRow(profileRow || { id: profileId });
   const relationStatus = profileId === viewerId ? "owner" : relationResult.data?.status || "";
-  const canViewActivity = !profile.is_private || relationStatus === "owner" || relationStatus === "approved";
+  const canViewActivity = !profile.is_private || relationStatus === "owner" || relationStatus === "accepted";
   const { data: activityRows, error: activityError } = canViewActivity
     ? await supabase.from("activity_events").select("user_id,event_key,action,item_key,item_data,metadata,created_at").eq("user_id", profileId).order("created_at", { ascending: false }).limit(30)
     : { data: [], error: null };
@@ -2134,8 +2122,8 @@ function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}
   const activity = bundle?.activity || [];
   const tracking = bundle?.tracking || { watchlist: {}, watched: {}, ratings: {}, reviews: {}, customLists: {} };
   const relation = currentUser?.id === shownProfile.id ? "owner" : bundle?.relationStatus || followStatuses[shownProfile.id] || "";
-  const canViewActivity = bundle?.canViewActivity ?? (!shownProfile.is_private || relation === "owner" || relation === "approved");
-  const buttonLabel = relation === "approved" ? "Following" : relation === "pending" ? "Requested" : shownProfile.is_private ? "Follow" : "Follow";
+  const canViewActivity = bundle?.canViewActivity ?? (!shownProfile.is_private || relation === "owner" || relation === "accepted");
+  const buttonLabel = relation === "accepted" ? "Following" : relation === "pending" ? "Requested" : shownProfile.is_private ? "Follow" : "Follow";
   const watchedItems = Object.values(tracking.watched || {});
   const watchlistItems = Object.values(tracking.watchlist || {});
   const ratings = tracking.ratings || {};
@@ -4860,7 +4848,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower, onDeleteCustomList, onRenameCustomList, onShareList }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, recentActivity = [], loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower, onDeleteCustomList, onRenameCustomList, onShareList }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
@@ -4963,6 +4951,23 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   };
   watchedItems.forEach((item, index) => addProfileStatus({ type: "watched", item, timestamp: item.watchedAt || fallbackTimestamp(index) }));
   saved.forEach((item, index) => addProfileStatus({ type: "watchlisted", item, timestamp: item.savedAt || fallbackTimestamp(index + watchedItems.length) }));
+  recentActivity.slice(0, 30).forEach((event, index) => {
+    const item = event.item_data || {
+      id: event.tmdb_id,
+      media_type: event.media_type,
+      title: event.title,
+      name: event.media_type === "tv" ? event.title : undefined,
+      poster_path: event.poster_path
+    };
+    const type = event.action || event.type || "activity";
+    addProfileStatus({
+      type: type === "watchlist_add" ? "watchlisted" : type === "review" ? "reviewed" : type === "rating" ? "rated" : type === "rated" ? "rated" : type === "reviewed" ? "reviewed" : type,
+      item,
+      timestamp: event.created_at || fallbackTimestamp(index),
+      rating: event.metadata?.rating || null,
+      review: event.metadata?.review || ""
+    });
+  });
   Object.values(profileActivity || {}).forEach((event, index) => addProfileStatus({ type: event.type || "opened", item: event.item, timestamp: event.timestamp || fallbackTimestamp(index + watchedItems.length + saved.length), rating: event.rating || null }));
   ratedKeys.forEach((key, index) => {
       const item = localItems.find((entry) => keyOf(entry) === key) || fallbackItems.find((entry) => keyOf(entry) === key);
@@ -5029,8 +5034,8 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
         <div className="mg2-profile-people-list">
           {filteredRelationshipProfiles.length ? filteredRelationshipProfiles.map((person) => {
             const status = followStatuses[person.id] || "";
-            const label = status === "approved" && profilePanel === "following" ? "Unfollow" : status === "approved" ? "Following" : status === "pending" ? "Requested" : "Follow";
-            const buttonClass = status === "approved" && profilePanel === "following" ? "unfollow" : status === "approved" ? "following" : status === "pending" ? "requested" : "follow";
+            const label = status === "accepted" && profilePanel === "following" ? "Unfollow" : status === "accepted" ? "Following" : status === "pending" ? "Requested" : "Follow";
+            const buttonClass = status === "accepted" && profilePanel === "following" ? "unfollow" : status === "accepted" ? "following" : status === "pending" ? "requested" : "follow";
             return (
               <article key={person.id}>
                 <button className="mg2-profile-people-main" type="button" onClick={() => onOpenPublicProfile?.(person)}>
@@ -5077,7 +5082,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
           {pendingRequests.map((request) => (
             <div key={request.id}>
               <span>{publicProfileName(request)} <small>@{request.username}</small></span>
-              <button type="button" onClick={() => onRespondFollowRequest(request.id, "approved")}>Accept</button>
+              <button type="button" onClick={() => onRespondFollowRequest(request.id, "accepted")}>Accept</button>
               <button type="button" onClick={() => onRespondFollowRequest(request.id, "declined")}>Decline</button>
             </div>
           ))}
@@ -5294,7 +5299,7 @@ function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, social
           {!userSearchLoading && realProfiles.length ? realProfiles.map((profile) => {
             const following = followingIds.includes(profile.id);
             const status = followStatuses[profile.id] || "";
-            const label = status === "approved" ? "Following" : status === "pending" ? "Requested" : profile.is_private ? "Request" : "Follow";
+            const label = status === "accepted" ? "Following" : status === "pending" ? "Requested" : profile.is_private ? "Request" : "Follow";
             return (
               <article key={profile.id}>
                 <button className="mg2-friend-main" type="button" onClick={() => onOpenPublicProfile(profile)}>
@@ -5666,7 +5671,14 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
   );
 }
 
-function NotificationsScreen({ pendingRequests = [], onRespondFollowRequest }) {
+function NotificationsScreen({ pendingRequests = [], notifications = [], onRespondFollowRequest }) {
+  const remoteItems = notifications.map((notification) => ({
+    type: notification.type,
+    friend: { name: "MovieGram", handle: "", avatar_url: "" },
+    title: notification.message || notification.type?.replaceAll("_", " ") || "Notification",
+    detail: notification.entity_type ? `${notification.entity_type}${notification.entity_id ? ` - ${notification.entity_id}` : ""}` : "MovieGram update",
+    time: publicActivityDate(notification.created_at)
+  }));
   const groups = [
     { label: "Requests", items: pendingRequests.map((request) => ({
       type: "follow_request",
@@ -5676,6 +5688,7 @@ function NotificationsScreen({ pendingRequests = [], onRespondFollowRequest }) {
       time: "Now",
       requesterId: request.id
     })) },
+    { label: "Recent", items: remoteItems },
     { label: "Today", items: [
       { friend: socialFriendProfiles[0], title: "Shruti followed you", detail: "You both love sci-fi and prestige drama.", time: "20m" },
       { friend: socialFriendProfiles[1], title: "Rohan liked your Joker review", detail: "Your review is getting attention.", time: "2h" },
@@ -5706,7 +5719,7 @@ function NotificationsScreen({ pendingRequests = [], onRespondFollowRequest }) {
               </span>
               {notification.type === "follow_request" ? (
                 <div className="mg2-notification-actions">
-                  <button type="button" onClick={() => onRespondFollowRequest?.(notification.requesterId, "approved")}>Accept</button>
+                  <button type="button" onClick={() => onRespondFollowRequest?.(notification.requesterId, "accepted")}>Accept</button>
                   <button type="button" className="ghost" onClick={() => onRespondFollowRequest?.(notification.requesterId, "declined")}>Decline</button>
                 </div>
               ) : null}
@@ -6149,6 +6162,8 @@ export default function Home() {
   const [followerProfiles, setFollowerProfiles] = useState([]);
   const [followingProfiles, setFollowingProfiles] = useState([]);
   const [socialActivity, setSocialActivity] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [followingIds, setFollowingIds] = useState([]);
   const [pendingFollowIds, setPendingFollowIds] = useState([]);
   const [followStatuses, setFollowStatuses] = useState({});
@@ -6314,6 +6329,8 @@ export default function Home() {
         setFollowerProfiles([]);
         setFollowingProfiles([]);
         setSocialActivity([]);
+        setRecentActivity([]);
+        setNotifications([]);
         setFollowingIds([]);
         setPendingFollowIds([]);
         setFollowStatuses({});
@@ -6346,6 +6363,8 @@ export default function Home() {
         setFollowerProfiles([]);
         setFollowingProfiles([]);
         setSocialActivity([]);
+        setRecentActivity([]);
+        setNotifications([]);
         setFollowingIds([]);
         setPendingFollowIds([]);
         setFollowStatuses({});
@@ -6442,6 +6461,8 @@ export default function Home() {
       setFollowerProfiles([]);
       setFollowingProfiles([]);
       setSocialActivity([]);
+      setRecentActivity([]);
+      setNotifications([]);
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -6455,6 +6476,12 @@ export default function Home() {
       setFollowerProfiles(social.followerProfiles || []);
       setFollowingProfiles(social.followingProfiles || []);
       setSocialActivity(social.activity);
+      const [activityRows, notificationRows] = await Promise.all([
+        loadRecentActivity(supabaseUser.id, 30),
+        loadNotifications(supabaseUser.id, 30)
+      ]);
+      setRecentActivity(activityRows);
+      setNotifications(notificationRows);
       setFollowingIds(social.followingIds);
       setPendingFollowIds(social.pendingIds || []);
       setFollowStatuses(social.followStatuses || {});
@@ -6467,6 +6494,8 @@ export default function Home() {
       setFollowerProfiles([]);
       setFollowingProfiles([]);
       setSocialActivity([]);
+      setRecentActivity([]);
+      setNotifications([]);
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -6917,6 +6946,8 @@ export default function Home() {
       setFollowerProfiles([]);
       setFollowingProfiles([]);
       setSocialActivity([]);
+      setRecentActivity([]);
+      setNotifications([]);
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -6978,7 +7009,7 @@ export default function Home() {
   async function toggleFollow(profile) {
     if (!supabase || !supabaseUser || !profile?.id || profile.id === supabaseUser.id) return;
     const currentStatus = followStatuses[profile.id] || "";
-    const shouldRemove = currentStatus === "approved" || currentStatus === "pending";
+    const shouldRemove = currentStatus === "accepted" || currentStatus === "pending";
     try {
       if (shouldRemove) {
         const { error } = await supabase
@@ -6988,13 +7019,10 @@ export default function Home() {
           .eq("following_id", profile.id);
         if (error) throw error;
       } else {
-        const status = profile.is_private ? "pending" : "approved";
-        const { error } = await supabase
-          .from("follows")
-          .upsert({ follower_id: supabaseUser.id, following_id: profile.id, status }, { onConflict: "follower_id,following_id" });
-        if (error) throw error;
+        const result = await followUser(supabaseUser.id, profile);
+        if (!result) throw new Error("Follow table is unavailable.");
       }
-      const nextStatus = shouldRemove ? "" : profile.is_private ? "pending" : "approved";
+      const nextStatus = shouldRemove ? "" : profile.is_private ? "pending" : "accepted";
       setFollowStatuses((current) => {
         const next = { ...current };
         if (shouldRemove) delete next[profile.id];
@@ -7016,22 +7044,11 @@ export default function Home() {
   async function respondFollowRequest(requesterId, status) {
     if (!supabase || !supabaseUser || !requesterId) return;
     try {
-      if (status === "approved") {
-        const { error } = await supabase
-          .from("follows")
-          .update({ status: "approved" })
-          .eq("follower_id", requesterId)
-          .eq("following_id", supabaseUser.id)
-          .eq("status", "pending");
-        if (error) throw error;
+      if (status === "accepted") {
+        const result = await acceptFollowRequest(supabaseUser.id, requesterId);
+        if (!result) throw new Error("Follow request table is unavailable.");
       } else {
-        const { error } = await supabase
-          .from("follows")
-          .delete()
-          .eq("follower_id", requesterId)
-          .eq("following_id", supabaseUser.id)
-          .eq("status", "pending");
-        if (error) throw error;
+        await declineFollowRequest(supabaseUser.id, requesterId);
       }
       await refreshSocialFoundation();
     } catch (error) {
@@ -7140,6 +7157,7 @@ export default function Home() {
       const removed = removeMatchingItem(nextWatchlist, normalized);
       setWatchlist(removed);
       persist("moviegram.watchlist", removed);
+      if (supabaseUser?.id) removeFromSupabaseWatchlist(supabaseUser.id, normalized);
       syncTrackingNow("watchlist_remove", { watchlist: removed });
     } else {
       nextWatchlist[key] = normalized;
@@ -7148,6 +7166,10 @@ export default function Home() {
       setWatched(nextWatched);
       persist("moviegram.watchlist", nextWatchlist);
       persist("moviegram.watched", nextWatched);
+      if (supabaseUser?.id) {
+        addToSupabaseWatchlist(supabaseUser.id, normalized);
+        removeSupabaseWatched(supabaseUser.id, normalized);
+      }
       syncTrackingNow("watchlist_add", { watchlist: nextWatchlist, watched: nextWatched });
       logActivity("watchlist_add", normalized);
     }
@@ -7226,6 +7248,7 @@ export default function Home() {
         }
       }
       syncTrackingNow("watched_remove", { watched: removed, episodeProgress: nextEpisodesForSync });
+      if (supabaseUser?.id) removeSupabaseWatched(supabaseUser.id, normalized);
     }
   }
 
@@ -7238,6 +7261,10 @@ export default function Home() {
     setWatchlist(nextWatchlist);
     persist("moviegram.watched", nextWatched);
     persist("moviegram.watchlist", nextWatchlist);
+    if (supabaseUser?.id) {
+      markSupabaseWatched(supabaseUser.id, normalized, watchedAt);
+      removeFromSupabaseWatchlist(supabaseUser.id, normalized);
+    }
     let nextEpisodesForSync = episodeProgress;
     if (normalized.media_type === "tv") {
       const keys = knownEpisodeKeysForShow(normalized);
@@ -7414,7 +7441,8 @@ export default function Home() {
     setRatings(next);
     persist("moviegram.ratings", next);
     syncTrackingNow(rating ? "rating_save" : "rating_clear", { ratings: next, reviews: nextReviews });
-    if (rating) logActivity("rated", normalized, { rating });
+    if (supabaseUser?.id) saveRatingReview(supabaseUser.id, normalized, { rating, reviewText: existingText });
+    if (rating) logActivity("rating", normalized, { rating });
   }
 
   function reviewForItem(item) {
@@ -7432,8 +7460,9 @@ export default function Home() {
     else delete next[key];
     setReviews(next);
     persist("moviegram.reviews", next);
+    if (supabaseUser?.id) saveRatingReview(supabaseUser.id, normalized, { rating: ratingForItem(normalized, ratings) || null, reviewText: trimmed });
     syncTrackingNow(trimmed ? "review_save" : "review_clear", { reviews: next });
-    if (trimmed) logActivity("reviewed", normalized, { review: trimmed, rating: ratingForItem(normalized, ratings) });
+    if (trimmed) logActivity("review", normalized, { review: trimmed, rating: ratingForItem(normalized, ratings) });
     setReviewItem(null);
   }
 
@@ -7459,6 +7488,12 @@ export default function Home() {
     setCustomLists(next);
     persist("moviegram.customLists", next);
     syncTrackingNow("custom_list_create", { customLists: next });
+    if (supabaseUser?.id) {
+      createUserList(supabaseUser.id, { name: title, visibility: "private" })
+        .then((remoteList) => {
+          if (remoteList?.id) addItemToList(supabaseUser.id, remoteList.id, normalized);
+        });
+    }
     logActivity("custom_list_create", normalized, { listKey: id });
   }
 
@@ -7472,6 +7507,7 @@ export default function Home() {
     setCustomLists(next);
     persist("moviegram.customLists", next);
     syncTrackingNow(exists ? "custom_list_remove" : "custom_list_add", { customLists: next });
+    if (!exists && supabaseUser?.id && /^[0-9a-f-]{36}$/i.test(listId)) addItemToList(supabaseUser.id, listId, normalized, nextItems.length - 1);
     logActivity(exists ? "custom_list_remove" : "custom_list_add", normalized, { listKey: listId });
   }
 
@@ -7624,7 +7660,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Notifications</h2>
         </div>
-        <NotificationsScreen pendingRequests={pendingRequests} onRespondFollowRequest={respondFollowRequest} />
+        <NotificationsScreen pendingRequests={pendingRequests} notifications={notifications} onRespondFollowRequest={respondFollowRequest} />
       </section>
     );
   } else if (activeSocial === "blend") {
@@ -7687,7 +7723,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
+    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} recentActivity={recentActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
   }
 
   if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
