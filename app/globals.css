@@ -9767,33 +9767,34 @@ body {
 
 .mg2-profile-review-cards {
   display: grid;
-  gap: 9px;
+  gap: 10px;
 }
 
 .mg2-profile-review-cards button {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 58px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  border: 0;
-  border-bottom: 1px solid rgba(255,255,255,.08);
-  padding: 8px 0;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: 8px;
   color: #fff;
-  background: transparent;
+  background: rgba(255,255,255,.035);
   text-align: left;
-  transition: transform .18s ease, background .18s ease;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
 }
 
 .mg2-profile-review-cards button:hover {
   transform: translateY(-1px);
-  background: rgba(255,255,255,.035);
+  border-color: rgba(167,139,255,.24);
+  background: rgba(255,255,255,.055);
 }
 
 .mg2-profile-review-cards img {
-  width: 42px;
-  height: 58px;
-  border-radius: 6px;
+  width: 58px;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
   object-fit: cover;
 }
 
@@ -9811,7 +9812,9 @@ body {
 }
 
 .mg2-profile-review-cards small {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-top: 4px;
   overflow: hidden;
   color: #aeb5c1;
@@ -9820,11 +9823,23 @@ body {
   white-space: nowrap;
 }
 
-.mg2-profile-review-cards em {
-  color: #ffd35a;
-  font-size: 12px;
+.mg2-profile-review-cards small b {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #dfe3ec;
+  background: rgba(255,255,255,.055);
+  font-size: 10px;
+}
+
+.mg2-profile-review-cards small i {
+  min-width: 0;
+  overflow: hidden;
+  color: #b8bfca;
   font-style: normal;
-  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mg2-profile-preview-row {
@@ -10542,6 +10557,395 @@ body {
   min-height: auto;
   padding: 10px;
   font-size: 12px;
+}
+
+/* CP21B: guest landing and surgical visual polish */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.mg2-app,
+.mg2-phone,
+.mg2-screen,
+.mg2-auth-page,
+.mg2-landing {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.mg2-auth-page {
+  min-height: 100dvh;
+  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 18% 10%, rgba(128, 87, 255, .26), transparent 30%),
+    radial-gradient(circle at 78% 8%, rgba(43, 119, 255, .2), transparent 32%),
+    radial-gradient(circle at 78% 80%, rgba(255, 49, 92, .12), transparent 35%),
+    #050507;
+}
+
+.mg2-auth-card,
+.mg2-landing {
+  animation: mg2-auth-soft-enter .22s ease both;
+  transform-origin: center top;
+}
+
+@keyframes mg2-auth-soft-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mg2-landing {
+  position: relative;
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  color: #fff;
+}
+
+.mg2-landing-top {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 0 18px;
+  background: linear-gradient(180deg, rgba(5,5,7,.96), rgba(5,5,7,.72) 72%, transparent);
+  backdrop-filter: blur(16px);
+}
+
+.mg2-landing-top strong {
+  color: #fff;
+  font-size: clamp(20px, 4vw, 30px);
+  letter-spacing: 0;
+}
+
+.mg2-landing-top strong span {
+  color: #bca7ff;
+}
+
+.mg2-landing-top nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mg2-landing button,
+.mg2-auth-card button {
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 999px;
+  padding: 0 16px;
+  color: #fff;
+  background: rgba(255,255,255,.08);
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.mg2-landing button:first-of-type,
+.mg2-landing-actions .mg2-google-auth {
+  border-color: rgba(176, 150, 255, .36);
+  background: linear-gradient(135deg, rgba(130, 92, 255, .92), rgba(50, 114, 255, .72));
+  box-shadow: 0 14px 38px rgba(72, 72, 200, .28);
+}
+
+.mg2-landing button:disabled {
+  opacity: .52;
+}
+
+.mg2-landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(26px, 6vw, 64px);
+  align-items: center;
+  min-height: calc(100dvh - 112px);
+  padding: 34px 0 58px;
+}
+
+.mg2-landing-copy {
+  display: grid;
+  gap: 18px;
+  max-width: 670px;
+}
+
+.mg2-landing-copy > span {
+  width: fit-content;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #d7d8ff;
+  background: rgba(255,255,255,.06);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.mg2-landing-copy h1 {
+  max-width: 11ch;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(42px, 13vw, 92px);
+  line-height: .94;
+  letter-spacing: 0;
+}
+
+.mg2-landing-copy p {
+  max-width: 620px;
+  margin: 0;
+  color: rgba(239, 241, 250, .78);
+  font-size: clamp(16px, 3.8vw, 22px);
+  line-height: 1.45;
+}
+
+.mg2-landing-copy small {
+  color: rgba(229, 232, 244, .66);
+  font-size: 12px;
+}
+
+.mg2-landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.mg2-landing-mosaic {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(54px, 1fr));
+  gap: clamp(8px, 2vw, 16px);
+  width: min(520px, 100%);
+  margin: 0 auto;
+  padding: 10px;
+}
+
+.mg2-landing-mosaic::before {
+  content: "";
+  position: absolute;
+  inset: 12% -8%;
+  z-index: -1;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(112, 92, 255, .34), transparent 64%);
+  filter: blur(18px);
+}
+
+.mg2-landing-mosaic img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: clamp(10px, 2.4vw, 18px);
+  object-fit: cover;
+  box-shadow: 0 22px 52px rgba(0,0,0,.42);
+}
+
+.mg2-landing-mosaic .tile-1,
+.mg2-landing-mosaic .tile-4 {
+  transform: translateY(22px);
+}
+
+.mg2-landing-mosaic .tile-2,
+.mg2-landing-mosaic .tile-5 {
+  transform: translateY(-12px);
+}
+
+.mg2-landing-story {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 0 0 42px;
+}
+
+.mg2-landing-story article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 18px;
+  padding: 15px;
+  background: rgba(255,255,255,.045);
+}
+
+.mg2-landing-story span {
+  color: #a997ff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mg2-landing-story p {
+  margin: 0;
+  color: rgba(244, 246, 252, .86);
+  font-size: clamp(14px, 3.3vw, 17px);
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.mg2-phone {
+  background:
+    radial-gradient(circle at 30% 0%, rgba(112, 92, 255, .14), transparent 36%),
+    linear-gradient(180deg, #0a0b10 0%, #050507 100%);
+}
+
+.mg2-screen {
+  padding-bottom: calc(104px + env(safe-area-inset-bottom));
+}
+
+.mg2-section-head {
+  margin-top: 18px;
+  margin-bottom: 12px;
+}
+
+.mg2-section-head h2 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.mg2-section-head span {
+  color: rgba(229, 232, 244, .56);
+}
+
+.mg2-row,
+.mg2-stories,
+.mg2-cast-row,
+.mg2-season-row,
+.mg2-watch-asap-row,
+.mg2-profile-tabs,
+.mg2-log-tabs,
+.mg2-chips {
+  scrollbar-width: none;
+}
+
+.mg2-row::-webkit-scrollbar,
+.mg2-stories::-webkit-scrollbar,
+.mg2-cast-row::-webkit-scrollbar,
+.mg2-season-row::-webkit-scrollbar,
+.mg2-watch-asap-row::-webkit-scrollbar,
+.mg2-profile-tabs::-webkit-scrollbar,
+.mg2-log-tabs::-webkit-scrollbar,
+.mg2-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-poster img,
+.mg2-profile-poster-grid img,
+.mg2-profile-activity-grid img,
+.mg2-profile-review-cards img,
+.mg2-log-grid img {
+  object-fit: cover;
+  background: linear-gradient(145deg, rgba(255,255,255,.1), rgba(255,255,255,.03));
+}
+
+.mg2-poster,
+.mg2-feed-card,
+.mg2-detail-panel,
+.mg2-profile-account,
+.mg2-profile-shortcuts button,
+.mg2-empty {
+  border-color: rgba(255,255,255,.09);
+  box-shadow: 0 18px 46px rgba(0,0,0,.2);
+}
+
+.mg2-empty {
+  border-radius: 18px;
+  color: rgba(233, 236, 247, .72);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(131, 94, 255, .12), transparent 46%),
+    rgba(255,255,255,.045);
+  line-height: 1.45;
+}
+
+.mg2-detail-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mg2-detail-actions button {
+  min-width: 0;
+  white-space: normal;
+}
+
+.mg2-profile-stats {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.mg2-profile-stats button small,
+.mg2-detail-actions button span,
+.mg2-poster strong {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 780px) {
+  .mg2-auth-page {
+    padding-inline: 32px;
+  }
+
+  .mg2-landing-hero {
+    grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+    padding-top: 46px;
+  }
+
+  .mg2-landing-story {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .mg2-landing-story article {
+    grid-template-columns: 1fr;
+    align-content: start;
+    min-height: 128px;
+  }
+}
+
+@media (max-width: 430px) {
+  .mg2-auth-page {
+    padding-inline: 12px;
+  }
+
+  .mg2-landing-top {
+    align-items: flex-start;
+  }
+
+  .mg2-landing-top nav {
+    max-width: 160px;
+  }
+
+  .mg2-landing-top button {
+    min-height: 36px;
+    padding-inline: 12px;
+    font-size: 12px;
+  }
+
+  .mg2-landing-actions button {
+    flex: 1 1 145px;
+  }
+
+  .mg2-landing-mosaic {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mg2-profile-stats button {
+    padding-inline: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg2-auth-card,
+  .mg2-landing {
+    animation: none;
+  }
 }
 
 .mg2-next-episode {

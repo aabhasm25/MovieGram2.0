@@ -1966,33 +1966,80 @@ function AuthOnboarding({ configured, loading, onGuest, onSession, onProfileSave
       setBusy(false);
     }
   };
+  const landingPosters = dedupe([
+    ...fallbackRows.trending,
+    ...fallbackRows.movies,
+    ...fallbackRows.series,
+    ...fallbackRows.anime
+  ]).filter((item) => item.poster_path).slice(0, 12);
+  const landingStories = [
+    "Discover what to watch from reels.",
+    "Track everything you watch.",
+    "Save movies and shows to watch later.",
+    "Rate, review, and share with friends.",
+    "Find what's upcoming.",
+    "Build collections and watch orders.",
+    "Your taste, your watch history, your MovieGram."
+  ];
 
   return (
     <main className="mg2-auth-page">
-      <section className="mg2-auth-card">
-        <div className="mg2-auth-brand">
-          <span>Movie<span>Gram</span></span>
-          <small>Track, share, and discover what to watch next.</small>
-        </div>
-        {loading ? (
-          <div className="mg2-auth-state">Checking your account...</div>
-        ) : !configured ? (
+      {loading ? (
+        <section className="mg2-auth-card mg2-auth-loading">
+          <div className="mg2-auth-brand">
+            <span>Movie<span>Gram</span></span>
+            <small>Checking your account...</small>
+          </div>
+          <div className="mg2-auth-state">Loading MovieGram</div>
+        </section>
+      ) : screen === "welcome" ? (
+        <section className="mg2-landing">
+          <header className="mg2-landing-top">
+            <strong>Movie<span>Gram</span></strong>
+            <nav aria-label="Landing actions">
+              <button type="button" onClick={() => go("login")}>Login</button>
+              <button type="button" onClick={() => go("signup")}>Sign Up</button>
+            </nav>
+          </header>
+          <div className="mg2-landing-hero">
+            <div className="mg2-landing-copy">
+              <span>Movie taste, finally in one place</span>
+              <h1>Your movie taste, beautifully organized.</h1>
+              <p>Discover from reels, track everything, save what matters, and share your taste with friends.</p>
+              <div className="mg2-landing-actions">
+                {configured && <button className="mg2-google-auth" type="button" disabled={busy} onClick={continueWithGoogle}>Continue with Google</button>}
+                <button type="button" disabled={!configured} onClick={() => go("signup")}>Sign Up</button>
+                <button type="button" disabled={!configured} onClick={() => go("login")}>Login</button>
+                <button type="button" onClick={onGuest}>Explore as guest</button>
+              </div>
+              {!configured && <small>Supabase is not configured. Guest exploration works locally.</small>}
+            </div>
+            <div className="mg2-landing-mosaic" aria-hidden="true">
+              {landingPosters.map((item, index) => (
+                <img key={`${keyOf(item)}-${index}`} className={`tile-${index % 6}`} src={posterUrl(item.poster_path, "w342")} alt="" loading={index < 4 ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+              ))}
+            </div>
+          </div>
+          <div className="mg2-landing-story" aria-label="MovieGram story">
+            {landingStories.map((story, index) => (
+              <article key={story}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <p>{story}</p>
+              </article>
+            ))}
+          </div>
+          {(message || error) && <div className={`mg2-auth-banner ${error ? "error" : ""}`}>{error || message}</div>}
+        </section>
+      ) : (
+        <section className="mg2-auth-card">
+          <div className="mg2-auth-brand">
+            <span>Movie<span>Gram</span></span>
+            <small>Track, share, and discover what to watch next.</small>
+          </div>
+          {!configured ? (
           <>
             <div className="mg2-auth-state">Supabase is not configured. Guest mode is available locally.</div>
             <button type="button" onClick={onGuest}>Continue as guest</button>
-          </>
-        ) : screen === "welcome" ? (
-          <>
-            <div className="mg2-auth-hero-copy">
-              <h1>Welcome to MovieGram</h1>
-              <p>Your private beta movie and TV social tracker.</p>
-            </div>
-            <div className="mg2-auth-actions">
-              <button className="mg2-google-auth" type="button" disabled={busy} onClick={continueWithGoogle}>Continue with Google</button>
-              <button type="button" onClick={() => go("signup")}>Create account</button>
-              <button type="button" onClick={() => go("login")}>Log in</button>
-              <button type="button" onClick={onGuest}>Continue as guest</button>
-            </div>
           </>
         ) : (
           <>
@@ -2057,6 +2104,7 @@ function AuthOnboarding({ configured, loading, onGuest, onSession, onProfileSave
         )}
         {(message || error) && <div className={`mg2-auth-banner ${error ? "error" : ""}`}>{error || message}</div>}
       </section>
+      )}
     </main>
   );
 }
@@ -2893,7 +2941,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
-        <p>Discover movies, shows, and hidden gems worth watching next.</p>
+        <p>Find binge-worthy movies, shows, and hidden gems made for your next watch.</p>
       </section>
       <div className="mg2-chips">
         {exploreTabs.map((tab) => (
@@ -4140,13 +4188,30 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     stopPlayerEvent(event);
     setIsPlaying(false);
     sendYouTubeCommand(activeIndex, "pauseVideo");
-    onReelActivity?.("details_open", item, {
+    const posterPath = item?.poster_path
+      || reel?.poster_path
+      || reel?.item_poster_path
+      || reel?.metadata?.poster_path
+      || reel?.item?.poster_path
+      || "";
+    const backdropPath = item?.backdrop_path || reel?.backdrop_path || reel?.item?.backdrop_path || "";
+    const enrichedItem = {
+      ...item,
+      media_type: mediaType(item),
+      poster_path: posterPath,
+      backdrop_path: backdropPath
+    };
+    onReelActivity?.("details_open", enrichedItem, {
       reelId: reelIdentity(reel),
       source: reel.source || reelSourceFromUrl("", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "") || "youtube",
-      poster_path: item?.poster_path || "",
-      item_key: keyOf(item)
+      title: titleOf(enrichedItem),
+      item_key: keyOf(enrichedItem),
+      tmdb_id: enrichedItem.id || null,
+      media_type: mediaType(enrichedItem),
+      poster_path: posterPath,
+      backdrop_path: backdropPath
     });
-    onOpen?.(item, { source: "reels", reelId: reelIdentity(reel) });
+    onOpen?.(enrichedItem, { source: "reels", reelId: reelIdentity(reel) });
   }
 
   function submitReelComment(event) {
@@ -5559,7 +5624,10 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
                     <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <span>
                       <strong>{titleOf(item)}</strong>
-                      <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {note || (rating ? `Rating only ${formatUserRating(rating)}` : "Rating only")}</small>
+                      <small>
+                        <b>{mediaType(item) === "tv" ? "TV" : "Movie"}</b>
+                        <i>{note || "Rating only"}{rating ? ` - ${formatUserRating(rating)}` : ""}</i>
+                      </small>
                     </span>
                   </button>
                 ))}
@@ -6507,6 +6575,8 @@ export default function Home() {
   const latestLocalState = useRef(DEFAULT_LOCAL_STATE);
   const librarySyncLogged = useRef(false);
   const detailsOpenActivityRef = useRef({});
+  const remoteSyncTimer = useRef(null);
+  const remoteSyncSuppressed = useRef(false);
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -6650,6 +6720,7 @@ export default function Home() {
       setSupabaseSession(session || null);
       setSupabaseUser(user);
       if (!user) {
+        remoteSyncSuppressed.current = false;
         remoteHydrating.current = false;
         if (activeDataOwner.current !== "guest") {
           persistOwnedLocalState(activeDataOwner.current, latestLocalState.current, { writeLegacy: false });
@@ -6684,6 +6755,7 @@ export default function Home() {
         return;
       }
       try {
+        remoteSyncSuppressed.current = false;
         remoteHydrating.current = true;
         setRemoteReady(false);
         if (localStateHydrated.current) {
@@ -6941,12 +7013,13 @@ export default function Home() {
   useEffect(() => {
     if (!supabaseUser || !remoteReady) return;
     if (remoteHydrating.current) return;
+    if (remoteSyncSuppressed.current) return;
     persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
     setSyncStatus("syncing");
     const timer = window.setTimeout(async () => {
       if (remoteHydrating.current) return;
       try {
-        await saveMovieGramRemoteState(supabaseUser.id, {
+        const result = await saveMovieGramRemoteState(supabaseUser.id, {
           watchlist,
           watched,
           favorites,
@@ -6955,9 +7028,16 @@ export default function Home() {
           episodeProgress,
           customLists
         });
+        if (result?.failed) {
+          remoteSyncSuppressed.current = true;
+          console.warn("MovieGram remote autosync paused for this session", { failed: result.failed, skippedTables: result.skippedTables || [] });
+          setSyncStatus("local");
+          return;
+        }
         setSyncStatus("synced");
       } catch (error) {
-        console.error("MovieGram own library save error", error);
+        remoteSyncSuppressed.current = true;
+        console.warn("MovieGram own library save skipped", { message: error?.message, table: error?.table });
         setSyncStatus("local");
       }
     }, 900);
@@ -7594,7 +7674,7 @@ export default function Home() {
   }
 
   function syncTrackingNow(actionName, overrides = {}) {
-    if (!supabaseUser?.id || !remoteReady || remoteHydrating.current) return;
+    if (!supabaseUser?.id || !remoteReady || remoteHydrating.current || remoteSyncSuppressed.current) return;
     const nextState = normalizeLocalState({
       watchlist,
       watched,
@@ -7608,12 +7688,24 @@ export default function Home() {
     });
     latestLocalState.current = nextState;
     persistOwnedLocalState(supabaseUser.id, nextState, { writeLegacy: false });
-    saveMovieGramRemoteState(supabaseUser.id, nextState)
-      .then(() => setSyncStatus("synced"))
-      .catch((error) => {
-        console.error("MovieGram tracking action save error", { action: actionName, message: error?.message, table: error?.table, error });
-        setSyncStatus("local");
-      });
+    if (remoteSyncTimer.current) window.clearTimeout(remoteSyncTimer.current);
+    remoteSyncTimer.current = window.setTimeout(() => {
+      saveMovieGramRemoteState(supabaseUser.id, nextState)
+        .then((result) => {
+          if (result?.failed) {
+            remoteSyncSuppressed.current = true;
+            console.warn("MovieGram remote sync paused for this session", { action: actionName, failed: result.failed, skippedTables: result.skippedTables || [] });
+            setSyncStatus("local");
+            return;
+          }
+          setSyncStatus("synced");
+        })
+        .catch((error) => {
+          remoteSyncSuppressed.current = true;
+          console.warn("MovieGram tracking action save skipped", { action: actionName, message: error?.message, table: error?.table });
+          setSyncStatus("local");
+        });
+    }, 650);
   }
 
   function toggleWatchlist(item) {
