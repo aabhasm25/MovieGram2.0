@@ -823,7 +823,10 @@ function compactStoredItem(item = {}) {
     watchedDateUnknown: item.watchedDateUnknown || undefined,
     savedAt: item.savedAt || undefined,
     likedAt: item.likedAt || undefined,
-    rating: item.rating || undefined
+    rating: item.rating || undefined,
+    watch_asap: item.watch_asap || item.watchAsap || undefined,
+    watchAsap: item.watchAsap || item.watch_asap || undefined,
+    watch_asap_at: item.watch_asap_at || item.watchAsapAt || undefined
   };
   if (type === "tv") {
     compact.name = item.name || item.title || "";
@@ -1464,6 +1467,7 @@ function Icon({ name }) {
     bell: "M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 21h4",
     bookmark: "M6 4h12v17l-6-4-6 4z",
     check: "m5 12 4 4L19 6",
+    clock: "M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
     heart: "M12 21s-7-4.4-9-9a5 5 0 0 1 8-5 5 5 0 0 1 8 5c-2 4.6-9 9-9 9z",
     play: "m8 5 11 7-11 7z",
     pause: "M7 5h4v14H7zM13 5h4v14h-4z",
@@ -1506,7 +1510,6 @@ function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, 
         <header className="mg2-topbar">
           <div>
             {activeTab === "home" ? <h1 className="mg2-brand">Movie<span>Gram</span></h1> : <h1>{title}</h1>}
-            {process.env.NODE_ENV !== "production" && <small className="mg2-version-badge">CP19 - cache-first</small>}
           </div>
           <div className="mg2-top-actions">
             <button type="button" aria-label="Messages" onClick={onOpenMessages}>
@@ -1711,7 +1714,7 @@ function WatchedDateSheet({ action, onChoose, onCancel }) {
   );
 }
 
-function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, onWatchlist, onFavorite, onOpen }) {
+function QuickActionSheet({ item, saved, watched, watchAsap, favorite, onClose, onWatched, onWatchlist, onWatchAsap, onFavorite, onOpen }) {
   if (!item) return null;
   const released = isReleased(item);
   return (
@@ -1727,6 +1730,7 @@ function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, 
         </div>
         <button type="button" disabled={!watched && !released} onClick={() => { onWatched(item); onClose(); }}><Icon name="check" /> {watched ? "Mark unwatched" : released ? "Mark watched" : releaseMessage(item)}</button>
         <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
+        <button type="button" onClick={() => { onWatchAsap(item); onClose(); }}><Icon name="clock" /> {watchAsap ? "Remove Watch ASAP" : "Watch ASAP"}</button>
         <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
         <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
       </section>
@@ -2834,15 +2838,6 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
     .map((event) => event.item)
     .filter((item) => item?.poster_path)
     .slice(0, 18), [profileActivity]);
-  const ratedValues = Object.values(ratings || {}).map(normalizeUserRating).filter(Boolean);
-  const averageRating = ratedValues.length ? (ratedValues.reduce((sum, value) => sum + value, 0) / ratedValues.length).toFixed(1) : "NR";
-  const dashboardCards = [
-    { label: "Watched", value: Object.keys(watched || {}).length },
-    { label: "Saved", value: Object.keys(watchlist || {}).length },
-    { label: "Favorites", value: Object.keys(favorites || {}).length },
-    { label: "Avg Rating", value: averageRating },
-    { label: "Opened", value: recentlyOpened.length }
-  ];
   return (
     <>
       <div className="mg2-stories">
@@ -2853,19 +2848,6 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
           </div>
         ))}
       </div>
-
-      <section className="mg2-home-dashboard" aria-label="Your MovieGram dashboard">
-        <div>
-          <span>{user ? "Synced dashboard" : "Guest dashboard"}</span>
-          <strong>Your MovieGram</strong>
-          <small>{recentlyOpened.length ? "Pick up from recent details, saves, and ratings." : "Open a title to start shaping your dashboard."}</small>
-        </div>
-        <div>
-          {dashboardCards.map((card) => (
-            <b key={card.label}>{card.value}<small>{card.label}</small></b>
-          ))}
-        </div>
-      </section>
 
       <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} useMockFallback={!user} />
 
@@ -2887,8 +2869,23 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, onLoadMoreExplore, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
+  useEffect(() => {
+    if (!hasMoreExplore) return;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking || tabLoading) return;
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        ticking = false;
+        const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 700;
+        if (nearBottom) onLoadMoreExplore?.();
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [hasMoreExplore, onLoadMoreExplore, tabLoading]);
 
   return (
     <>
@@ -2896,7 +2893,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
-        <p>Live TMDB trends, curated collections, genres, and people picks in one place.</p>
+        <p>Discover movies, shows, and hidden gems worth watching next.</p>
       </section>
       <div className="mg2-chips">
         {exploreTabs.map((tab) => (
@@ -2904,7 +2901,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
         ))}
       </div>
       <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
-      <button className="mg2-wide-button" type="button" disabled={tabLoading} onClick={onLoadMoreExplore}>{tabLoading ? "Loading..." : "Load more from this tab"}</button>
+      {tabLoading && tabResults.length > 0 && <div className="mg2-empty compact">Loading more...</div>}
       {exploreHubSections.map((section) => (
         <ContentRow
           key={section.id}
@@ -4527,7 +4524,6 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 onClick={(event) => togglePlayPause(event, index)}
               >
                 {renderReelMedia(reel, item, index, active)}
-                {active && <span className={`mg2-reel-layout-badge ${aspectModeClassForReel(reel)}`}>{aspectModeLabelForReel(reel)}</span>}
                 {heartBurst === reelIdentity(reel) && <span className="mg2-reel-heart-burst"><Icon name="heart" /></span>}
                 {speeding && index === activeIndex && <span className="mg2-reel-speed">2x</span>}
                 {isPlayableYouTube && (
@@ -4728,6 +4724,7 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
   const [genreFilter, setGenreFilter] = useState("all");
   const watchedCollection = normalizeTrackingCollection(watched);
   const saved = Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection));
+  const watchAsapItems = saved.filter((item) => item.watch_asap || item.watchAsap);
   const watchedItems = Object.values(watchedCollection).filter((item) => isReleased(item));
   const favoriteItems = Object.values(favorites);
   const userListCards = Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [] }));
@@ -4791,12 +4788,27 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
           ))}
         </div>
       ) : filteredItems.length ? (
-        <div className="mg2-log-grid">
-          {filteredItems.map((item) => {
-            const userRating = ratingForItem(item, ratings);
-            return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
-          })}
-        </div>
+        <>
+          {logTab === "watchlist" && watchAsapItems.length > 0 && (
+            <section className="mg2-watch-asap-shelf" aria-label="Watch ASAP">
+              <div className="mg2-section-head"><h2>Watch ASAP</h2><span>{watchAsapItems.length}</span></div>
+              <div className="mg2-watch-asap-row">
+                {watchAsapItems.map((item) => (
+                  <button key={`log-asap-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+                    <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                    <span>{titleOf(item)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          <div className="mg2-log-grid">
+            {filteredItems.map((item) => {
+              const userRating = ratingForItem(item, ratings);
+              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+            })}
+          </div>
+        </>
       ) : (
         <div className="mg2-empty">{logTab === "watchlist" ? "Your watchlist is empty. Save titles from Home, Explore, or Details." : logTab === "watched" ? "Mark titles watched from Details to build your history." : "No titles match your current filters."}</div>
       )}
@@ -5243,7 +5255,6 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { label: "Watched", value: profileData.watchedItems.length, action: () => openProfileTab("watched") },
     { label: "Watchlist", value: profileData.watchlistItems.length, action: () => openProfileTab("watchlist") },
     { label: "Reviews", value: profileData.reviewItems.length, action: () => openProfileTab("reviews") },
-    { label: "Lists", value: profileData.listItems.length, action: () => { setProfilePanel("lists"); setSelectedList(null); } },
     { label: "Followers", value: user ? profileData.followers : "0", action: () => { setPeopleQuery(""); setProfilePanel("followers"); } },
     { label: "Following", value: user ? profileData.following : "0", action: () => { setPeopleQuery(""); setProfilePanel("following"); } }
   ];
@@ -5270,6 +5281,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { id: "reviews", label: "Reviews" }
   ];
   const gridItems = profileTab === "activity" ? profileData.activityItems.map((event) => event.item) : profileTab === "watched" ? profileData.watchedItems : profileData.watchlistItems;
+  const profileWatchAsapItems = profileData.watchlistItems.filter((item) => item.watch_asap || item.watchAsap);
   const relationshipProfiles = profilePanel === "followers" ? followerProfiles : followingProfiles;
   const filteredRelationshipProfiles = relationshipProfiles.filter((entry) => {
     const search = peopleQuery.trim().toLowerCase();
@@ -5516,11 +5528,26 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
 
           {!profilePanel && profileTab !== "reviews" && profileTab !== "activity" && (
             gridItems.length ? (
-              <div className="mg2-profile-poster-grid">
-                {gridItems.map((item) => (
-                  <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} compact />
-                ))}
-              </div>
+              <>
+                {profileTab === "watchlist" && profileWatchAsapItems.length > 0 && (
+                  <section className="mg2-watch-asap-shelf" aria-label="Watch ASAP">
+                    <div className="mg2-section-head"><h2>Watch ASAP</h2><span>{profileWatchAsapItems.length}</span></div>
+                    <div className="mg2-watch-asap-row">
+                      {profileWatchAsapItems.map((item) => (
+                        <button key={`profile-asap-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+                          <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                          <span>{titleOf(item)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                <div className="mg2-profile-poster-grid">
+                  {gridItems.map((item) => (
+                    <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} compact />
+                  ))}
+                </div>
+              </>
             ) : <div className="mg2-empty">Add titles to this section from Home, Explore, or Details.</div>
           )}
 
@@ -6048,7 +6075,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, onWatched, rating, onRate, onOpen, onOpenReels, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -6182,6 +6209,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                   <div className="mg2-detail-status">
                     {watched && <span><Icon name="check" /> Watched</span>}
                     {saved && <span><Icon name="bookmark" /> Watchlist</span>}
+                    {watchAsap && <span><Icon name="clock" /> Watch ASAP</span>}
                     {favorite && <span><Icon name="heart" /> Favorite</span>}
                   </div>
                   {genres.length > 0 && <div className="mg2-detail-hero-genres">{genres.slice(0, 3).map((genre) => <span key={genre.id}>{genre.name}</span>)}</div>}
@@ -6200,8 +6228,8 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
             <div className="mg2-detail-actions">
               <button className={watched ? "active watched" : ""} type="button" disabled={!watched && !released} onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : released ? "Mark watched" : releaseMessage(shown)}><Icon name="check" /><span>{watched ? "Watched" : released ? "Watch" : "Unreleased"}</span></button>
               <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
+              <button className={watchAsap ? "active asap" : ""} type="button" disabled={watched} onClick={() => onWatchAsap(shown)} aria-label={watched ? "Already watched" : watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /><span>Watch ASAP</span></button>
               <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
-              <button type="button" onClick={() => onOpenReels?.(shown)} aria-label={`Open reels for ${titleOf(shown)}`}><Icon name="play" /><span>Reels</span></button>
             </div>
             <section className="mg2-detail-panel">
               <h3>Overview</h3>
@@ -6391,6 +6419,7 @@ export default function Home() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [tabResults, setTabResults] = useState([]);
   const [tabLoading, setTabLoading] = useState(false);
+  const [exploreHasMore, setExploreHasMore] = useState(true);
   const [exploreRows, setExploreRows] = useState({
     today: fallbackRows.trending,
     week: fallbackRows.trending,
@@ -6964,12 +6993,16 @@ export default function Home() {
       const tab = exploreTabs.find((item) => item.id === activeExplore);
       if (!tab) return;
       setActiveExplorePage(1);
+      setExploreHasMore(true);
       setTabLoading(true);
       try {
         const data = await apiFetch(tab.endpoint, { page: 1 });
-        setTabResults(sortResults(dedupe(normalize(data.results))).slice(0, 20));
+        const results = normalize(data.results);
+        setTabResults(sortResults(dedupe(results)).slice(0, 20));
+        setExploreHasMore(results.length > 0 && (!data.total_pages || data.total_pages > 1));
       } catch {
         setTabResults([]);
+        setExploreHasMore(false);
       } finally {
         setTabLoading(false);
       }
@@ -6979,19 +7012,22 @@ export default function Home() {
 
   const loadMoreExplore = useCallback(async () => {
     const tab = exploreTabs.find((item) => item.id === activeExplore);
-    if (!tab || tabLoading) return;
+    if (!tab || tabLoading || !exploreHasMore) return;
     const nextPage = activeExplorePage + 1;
     setTabLoading(true);
     try {
       const data = await apiFetch(tab.endpoint, { page: nextPage });
-      setTabResults((current) => sortResults(dedupe([...current, ...normalize(data.results)])).slice(0, 60));
+      const results = normalize(data.results);
+      setTabResults((current) => sortResults(dedupe([...current, ...results])).slice(0, 60));
       setActiveExplorePage(nextPage);
+      setExploreHasMore(results.length > 0 && (!data.total_pages || nextPage < data.total_pages));
     } catch {
       // Keep the existing results visible if pagination fails.
+      setExploreHasMore(false);
     } finally {
       setTabLoading(false);
     }
-  }, [activeExplore, activeExplorePage, apiFetch, tabLoading]);
+  }, [activeExplore, activeExplorePage, apiFetch, exploreHasMore, tabLoading]);
 
   useEffect(() => {
     async function loadExploreHub() {
@@ -7609,6 +7645,30 @@ export default function Home() {
     }
   }
 
+  function toggleWatchAsap(item) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    if (hasStoredItem(normalized, normalizeTrackingCollection(watched))) return;
+    const key = keyOf(normalized);
+    const normalizedWatchlist = normalizeTrackingCollection(watchlist);
+    const existing = Object.values(normalizedWatchlist).find((entry) => itemMatches(entry, normalized));
+    const isAsap = Boolean(existing?.watch_asap || existing?.watchAsap);
+    const nextWatchlist = removeMatchingItem(normalizedWatchlist, normalized);
+    const nextItem = {
+      ...(existing || normalized),
+      ...normalized,
+      watch_asap: !isAsap,
+      watchAsap: !isAsap,
+      watch_asap_at: !isAsap ? (existing?.watch_asap_at || new Date().toISOString()) : undefined
+    };
+    nextWatchlist[key] = Object.fromEntries(Object.entries(nextItem).filter(([, value]) => value !== undefined));
+    setWatchlist(nextWatchlist);
+    persist("moviegram.watchlist", nextWatchlist);
+    if (supabaseUser?.id) addToSupabaseWatchlist(supabaseUser.id, nextWatchlist[key]);
+    if (!existing) setProfileStats((current) => current ? { ...current, watchlist: (current.watchlist || 0) + 1 } : current);
+    syncTrackingNow(isAsap ? "watch_asap_remove" : "watch_asap_add", { watchlist: nextWatchlist });
+    if (!isAsap) logActivity("watch_asap", normalized, { watch_asap: true });
+  }
+
   function knownEpisodeKeysForShow(show) {
     const source = details?.id === show.id && mediaType(show) === "tv" ? details : show;
     return normalSeasonsOf(source).flatMap((season) => (
@@ -8101,6 +8161,7 @@ export default function Home() {
   const releasedWatched = libraryState.watched;
   const isItemWatched = useCallback((item) => hasStoredItem(item, libraryState.watched), [libraryState.watched]);
   const isItemWatchlisted = useCallback((item) => hasStoredItem(item, libraryState.watchlist), [libraryState.watchlist]);
+  const isItemWatchAsap = useCallback((item) => Boolean(Object.values(libraryState.watchlist).find((entry) => itemMatches(entry, item))?.watch_asap || Object.values(libraryState.watchlist).find((entry) => itemMatches(entry, item))?.watchAsap), [libraryState.watchlist]);
   const isItemReviewed = useCallback((item) => Boolean(item && libraryState.reviews[keyOf({ ...item, media_type: mediaType(item) })]), [libraryState.reviews]);
   const getItemRating = useCallback((item) => ratingForItem(item, libraryState.ratings), [libraryState.ratings]);
 
@@ -8196,6 +8257,7 @@ export default function Home() {
         queryProps={queryProps}
         tabResults={tabResults}
         tabLoading={tabLoading}
+        hasMoreExplore={exploreHasMore}
         onLoadMoreExplore={loadMoreExplore}
         exploreRows={exploreRows}
         exploreLoading={exploreLoading}
@@ -8258,11 +8320,12 @@ export default function Home() {
           onWatchlist={toggleWatchlist}
           saved={isItemWatchlisted(selected)}
           watched={isItemWatched(selected)}
+          watchAsap={isItemWatchAsap(selected)}
+          onWatchAsap={toggleWatchAsap}
           onWatched={toggleWatched}
           rating={getItemRating(selected)}
           onRate={rateItem}
           onOpen={openItem}
-          onOpenReels={() => { setSelected(null); setActiveTab("reels"); }}
           onOpenPerson={openPerson}
           onOpenPublicProfile={(profile) => { setSelected(null); openPublicProfile(profile); }}
           externalRatings={externalRatings}
@@ -8299,10 +8362,12 @@ export default function Home() {
         item={quickActionItem}
         saved={quickActionItem ? isItemWatchlisted(quickActionItem) : false}
         watched={quickActionItem ? isItemWatched(quickActionItem) : false}
+        watchAsap={quickActionItem ? isItemWatchAsap(quickActionItem) : false}
         favorite={quickActionItem ? hasStoredItem(quickActionItem, favorites) : false}
         onClose={() => setQuickActionItem(null)}
         onWatched={toggleWatched}
         onWatchlist={toggleWatchlist}
+        onWatchAsap={toggleWatchAsap}
         onFavorite={toggleFavorite}
         onOpen={openItem}
       />
