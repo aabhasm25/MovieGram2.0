@@ -5,6 +5,7 @@ import {
   acceptFollowRequest,
   addToSupabaseWatchlist,
   addItemToList,
+  createNotification,
   createUserList,
   createActivityEvent,
   declineFollowRequest,
@@ -12,8 +13,13 @@ import {
   followUser,
   isSupabaseConfigured,
   loadNotifications,
+  loadProductStats,
+  loadProductLibrary,
+  loadRatingReviews,
   loadMovieGramRemoteState,
   loadRecentActivity,
+  loadUserLists,
+  markNotificationRead,
   markSupabaseWatched,
   removeFromSupabaseWatchlist,
   removeSupabaseWatched,
@@ -673,6 +679,30 @@ function dateOf(item) {
   return item.release_date || item.first_air_date || "";
 }
 
+function isReleased(item = {}) {
+  const value = dateOf(item);
+  if (value) {
+    const releaseDate = new Date(`${value.slice(0, 10)}T00:00:00`);
+    if (!Number.isNaN(releaseDate.getTime())) {
+      const today = new Date();
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      return releaseDate <= todayStart;
+    }
+  }
+  const year = Number(item.release_year || yearOf(item));
+  if (Number.isFinite(year) && year > 0) return year <= new Date().getFullYear();
+  return true;
+}
+
+function releaseMessage(item = {}) {
+  const value = dateOf(item);
+  if (value) {
+    const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+    if (!Number.isNaN(date.getTime())) return `Releases on ${date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  }
+  return "You can mark this watched after release.";
+}
+
 function yearOf(item) {
   return dateOf(item)?.slice(0, 4) || "TBA";
 }
@@ -828,6 +858,81 @@ function mergeTrackingCollections(local = {}, remote = {}) {
 
 function mergeRatingsCollections(local = {}, remote = {}) {
   return normalizeRatingsCollection({ ...local, ...remote });
+}
+
+function libraryIdentityKey(item = {}) {
+  const normalized = normalizedTrackingItem(item);
+  const explicit = normalized.item_key || normalized.itemKey || normalized.key;
+  if (explicit) return String(explicit);
+  if (normalized.id) return `${mediaType(normalized)}:${normalized.id}`;
+  const year = normalized.release_year || yearOf(normalized);
+  return `${mediaType(normalized)}:${titleOf(normalized).trim().toLowerCase()}:${year || ""}`;
+}
+
+function mergeLibraryCollection(...collections) {
+  const entries = new Map();
+  let duplicateRemoved = 0;
+  collections.forEach((collection) => {
+    Object.values(collection || {}).filter(Boolean).forEach((item) => {
+      const normalized = normalizedTrackingItem(item);
+      const keys = [
+        libraryIdentityKey(normalized),
+        normalized.id ? `${mediaType(normalized)}:${normalized.id}` : "",
+        `${mediaType(normalized)}:${titleOf(normalized).trim().toLowerCase()}:${normalized.release_year || yearOf(normalized) || ""}`
+      ].filter(Boolean);
+      const existingKey = keys.find((key) => entries.has(key));
+      const targetKey = existingKey || keys[0];
+      const existing = entries.get(targetKey);
+      if (existing) duplicateRemoved += 1;
+      const merged = { ...(existing || {}), ...normalized };
+      if (!merged.poster_path && existing?.poster_path) merged.poster_path = existing.poster_path;
+      keys.forEach((key) => entries.set(key, merged));
+    });
+  });
+  return {
+    collection: normalizeTrackingCollection(Object.fromEntries([...new Set(entries.values())].map((item) => [keyOf(item), item]))),
+    duplicateRemoved
+  };
+}
+
+function mergeReviewCollections(...collections) {
+  const entries = new Map();
+  collections.forEach((collection) => {
+    Object.values(collection || {}).filter(Boolean).forEach((review) => {
+      const item = normalizedTrackingItem(review.item || review);
+      const key = libraryIdentityKey(item);
+      const existing = entries.get(key) || {};
+      entries.set(key, {
+        ...existing,
+        ...review,
+        item: { ...(existing.item || {}), ...item, poster_path: item.poster_path || existing.item?.poster_path || "" },
+        text: review.text ?? review.review_text ?? existing.text ?? ""
+      });
+    });
+  });
+  return Object.fromEntries(Array.from(entries.values()).map((review) => [keyOf(review.item), review]));
+}
+
+function mergeLibrarySources({ current = {}, scoped = {}, legacy = {}, remote = {} } = {}) {
+  const watchedMerge = mergeLibraryCollection(legacy.watched, scoped.watched, current.watched, remote.watched);
+  const watchlistMerge = mergeLibraryCollection(legacy.watchlist, scoped.watchlist, current.watchlist, remote.watchlist);
+  const watched = Object.fromEntries(Object.entries(watchedMerge.collection).filter(([, item]) => isReleased(item)));
+  const watchlist = enforceWatchExclusivity(watchlistMerge.collection, watched);
+  return {
+    watchlist,
+    watched,
+    ratings: mergeRatingsCollections(legacy.ratings, scoped.ratings, current.ratings, remote.ratings),
+    reviews: mergeReviewCollections(legacy.reviews, scoped.reviews, current.reviews, remote.reviews),
+    favorites: mergeLibraryCollection(legacy.favorites, scoped.favorites, current.favorites, remote.favorites).collection,
+    customLists: { ...(legacy.customLists || {}), ...(scoped.customLists || {}), ...(current.customLists || {}), ...(remote.customLists || {}) },
+    duplicateRemoved: watchedMerge.duplicateRemoved + watchlistMerge.duplicateRemoved,
+    sourceCounts: {
+      localWatched: Object.keys({ ...(legacy.watched || {}), ...(scoped.watched || {}), ...(current.watched || {}) }).length,
+      remoteWatched: Object.keys(remote.watched || {}).length,
+      localWatchlist: Object.keys({ ...(legacy.watchlist || {}), ...(scoped.watchlist || {}), ...(current.watchlist || {}) }).length,
+      remoteWatchlist: Object.keys(remote.watchlist || {}).length
+    }
+  };
 }
 
 function enforceWatchExclusivity(watchlist = {}, watched = {}) {
@@ -1049,6 +1154,14 @@ function readOwnedLocalState(owner, { fallbackToLegacy = false } = {}) {
   return normalizeLocalState(raw);
 }
 
+function readLegacyLocalState() {
+  const raw = Object.keys(MOVIEGRAM_LOCAL_KEYS).reduce((next, name) => {
+    next[name] = stored(MOVIEGRAM_LOCAL_KEYS[name], DEFAULT_LOCAL_STATE[name]);
+    return next;
+  }, {});
+  return normalizeLocalState(raw);
+}
+
 function persistOwnedLocalState(owner, state = {}, { writeLegacy = false } = {}) {
   if (typeof window === "undefined" || !owner) return;
   Object.entries(MOVIEGRAM_LOCAL_KEYS).forEach(([name, legacyKey]) => {
@@ -1146,10 +1259,18 @@ function publicProfileName(profile = {}) {
 function socialActivityCopy(action = "") {
   const labels = {
     watched: "watched",
+    follow: "followed",
+    follow_accept: "accepted a follow request",
     liked: "liked",
     rated: "rated",
+    rating: "rated",
     reviewed: "reviewed",
+    review: "reviewed",
     watchlist_add: "watchlisted",
+    list_create: "created a list",
+    list_add: "added to a list",
+    reel_like: "liked a reel",
+    reel_comment: "commented on a reel",
     season_completed: "completed a season of",
     show_completed: "completed",
     episode_watched: "watched an episode of"
@@ -1592,6 +1713,7 @@ function WatchedDateSheet({ action, onChoose, onCancel }) {
 
 function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, onWatchlist, onFavorite, onOpen }) {
   if (!item) return null;
+  const released = isReleased(item);
   return (
     <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
       <section className="mg2-quick-sheet" onMouseDown={(event) => event.stopPropagation()}>
@@ -1603,7 +1725,7 @@ function QuickActionSheet({ item, saved, watched, favorite, onClose, onWatched, 
             <p>{mediaType(item) === "tv" ? "TV Show" : "Movie"} - {yearOf(item)}</p>
           </div>
         </div>
-        <button type="button" onClick={() => { onWatched(item); onClose(); }}><Icon name="check" /> {watched ? "Mark unwatched" : "Mark watched"}</button>
+        <button type="button" disabled={!watched && !released} onClick={() => { onWatched(item); onClose(); }}><Icon name="check" /> {watched ? "Mark unwatched" : released ? "Mark watched" : releaseMessage(item)}</button>
         <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
         <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
         <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
@@ -1935,18 +2057,44 @@ function AuthOnboarding({ configured, loading, onGuest, onSession, onProfileSave
   );
 }
 
-function ReviewSheet({ item, initialReview = "", onSave, onDelete, onClose }) {
+function ReviewSheet({ item, initialReview = "", initialRating = "", initialSpoiler = false, initialVisibility = "public", onSave, onDelete, onClose }) {
   const [text, setText] = useState(initialReview || "");
+  const [rating, setRating] = useState(initialRating ? String(Math.round((normalizeUserRating(initialRating) || 0) * 2)) : "");
+  const [spoiler, setSpoiler] = useState(Boolean(initialSpoiler));
+  const [visibility, setVisibility] = useState(initialVisibility || "public");
+  useEffect(() => {
+    setText(initialReview || "");
+    setRating(initialRating ? String(Math.round((normalizeUserRating(initialRating) || 0) * 2)) : "");
+    setSpoiler(Boolean(initialSpoiler));
+    setVisibility(initialVisibility || "public");
+  }, [item ? keyOf(item) : "", initialReview, initialRating, initialSpoiler, initialVisibility]);
   if (!item) return null;
+  const numericRating = Math.min(10, Math.max(0, Number(rating || 0)));
   return (
     <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
       <section className="mg2-watch-sheet mg2-review-sheet" onMouseDown={(event) => event.stopPropagation()}>
         <span />
         <h3>{initialReview ? "Edit Review" : "Write Review"}</h3>
         <p>{titleOf(item)}</p>
+        <label>
+          <small>Rating 0-10</small>
+          <input type="number" min="0" max="10" step="1" value={rating} onChange={(event) => setRating(event.target.value)} placeholder="8" />
+        </label>
         <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="What did you think?" />
+        <label>
+          <small>Visibility</small>
+          <select value={visibility} onChange={(event) => setVisibility(event.target.value)}>
+            <option value="public">Public</option>
+            <option value="friends">Friends</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+        <label className="mg2-review-spoiler">
+          <input type="checkbox" checked={spoiler} onChange={(event) => setSpoiler(event.target.checked)} />
+          <small>Contains spoilers</small>
+        </label>
         <div className="mg2-sheet-actions">
-          <button type="button" onClick={() => onSave(item, text)}>Save Review</button>
+          <button type="button" onClick={() => onSave(item, text, { rating: numericRating, containsSpoiler: spoiler, visibility })}>Save Review</button>
           {initialReview && <button type="button" onClick={() => onDelete(item)}>Delete Review</button>}
           <button type="button" onClick={onClose}>Cancel</button>
         </div>
@@ -1957,6 +2105,8 @@ function ReviewSheet({ item, initialReview = "", onSave, onDelete, onClose }) {
 
 function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) {
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [visibility, setVisibility] = useState("public");
   if (!item) return null;
   const listEntries = Object.values(lists);
   return (
@@ -1967,11 +2117,18 @@ function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) 
         <p>{titleOf(item)}</p>
         <div className="mg2-list-create">
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New list name" />
+          <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" />
+          <select value={visibility} onChange={(event) => setVisibility(event.target.value)}>
+            <option value="public">Public</option>
+            <option value="friends">Friends</option>
+            <option value="private">Private</option>
+          </select>
           <button type="button" onClick={() => {
             const trimmed = name.trim();
             if (!trimmed) return;
-            onCreate(trimmed, item);
+            onCreate(trimmed, item, { description: description.trim(), visibility });
             setName("");
+            setDescription("");
           }}>Create</button>
         </div>
         <div className="mg2-custom-list-options">
@@ -2113,7 +2270,7 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
   );
 }
 
-function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}, onBack, onFollowToggle, onOpenItem }) {
+function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}, followBusyIds = {}, onBack, onFollowToggle, onOpenItem }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [selectedList, setSelectedList] = useState(null);
   if (!profile) return null;
@@ -2123,7 +2280,7 @@ function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}
   const tracking = bundle?.tracking || { watchlist: {}, watched: {}, ratings: {}, reviews: {}, customLists: {} };
   const relation = currentUser?.id === shownProfile.id ? "owner" : bundle?.relationStatus || followStatuses[shownProfile.id] || "";
   const canViewActivity = bundle?.canViewActivity ?? (!shownProfile.is_private || relation === "owner" || relation === "accepted");
-  const buttonLabel = relation === "accepted" ? "Following" : relation === "pending" ? "Requested" : shownProfile.is_private ? "Follow" : "Follow";
+  const buttonLabel = followBusyIds[shownProfile.id] ? "Working" : relation === "accepted" ? "Following" : relation === "pending" ? "Requested" : shownProfile.is_private ? "Follow" : "Follow";
   const watchedItems = Object.values(tracking.watched || {});
   const watchlistItems = Object.values(tracking.watchlist || {});
   const ratings = tracking.ratings || {};
@@ -2158,9 +2315,9 @@ function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}
   const actionStatusFor = (action) => {
     if (action === "watched" || action === "episode_watched" || action === "season_completed" || action === "show_completed") return "watched";
     if (action === "watchlist_add") return "watchlisted";
-    if (action === "rated") return "rated";
+    if (action === "rated" || action === "rating") return "rated";
     if (action === "liked") return "liked";
-    if (action === "reviewed") return "reviewed";
+    if (action === "reviewed" || action === "review") return "reviewed";
     return action;
   };
   const activityMap = new Map();
@@ -2237,7 +2394,7 @@ function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}
         <strong>{stats.following || 0}<small>Following</small></strong>
       </div>
       {relation !== "owner" && currentUser && (
-        <button className={`mg2-public-follow ${relation || "follow"}`} type="button" onClick={() => onFollowToggle(shownProfile)}>
+        <button className={`mg2-public-follow ${relation || "follow"}`} type="button" disabled={Boolean(followBusyIds[shownProfile.id])} onClick={() => onFollowToggle(shownProfile)}>
           {buttonLabel}
         </button>
       )}
@@ -2440,7 +2597,7 @@ function CollectionRow({ collections, onOpen }) {
 function ActorRow({ actors, loading, onOpenPerson }) {
   return (
     <section className="mg2-section mg2-explore-section">
-      <div className="mg2-section-head"><h2>Popular People</h2><span>People</span></div>
+      <div className="mg2-section-head"><h2>Popular Actors & Directors</h2><span>Actors & Directors</span></div>
       {loading ? <SkeletonRow /> : (
         <div className="mg2-actor-row">
           {actors.map((actor) => (
@@ -2630,7 +2787,7 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
               { id: "all", label: "All" },
               { id: "movie", label: "Movies" },
               { id: "tv", label: "TV Shows" },
-              { id: "person", label: "People" },
+              { id: "person", label: "Actors & Directors" },
               { id: "user", label: "Users" }
             ].map((filter) => (
               <button key={filter.id} className={searchFilter === filter.id ? "active" : ""} type="button" onClick={() => setSearchFilter(filter.id)}>{filter.label}</button>
@@ -2638,7 +2795,7 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
           </div>
           {displayedUserResults.length > 0 && (
             <>
-              <div className="mg2-section-head"><h2>{searchFilter === "all" ? "People / Users" : "Users"}</h2><span>{searchFilter === "all" ? "Top matches" : displayedUserResults.length}</span></div>
+              <div className="mg2-section-head"><h2>Users</h2><span>{searchFilter === "all" ? "Top matches" : displayedUserResults.length}</span></div>
               <div className="mg2-grid">
                 {displayedUserResults.map((profile) => (
                   <UserResultCard key={`user:${profile.id}`} profile={profile} onOpenPublicProfile={onOpenPublicProfile} />
@@ -2648,7 +2805,7 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
           )}
           {searchFilter !== "user" && (
             <>
-              <div className="mg2-section-head"><h2>Search Results</h2><span>Page {page} / {totalPages}</span></div>
+              <div className="mg2-section-head"><h2>{searchFilter === "person" ? "Actors & Directors" : "Search Results"}</h2><span>Page {page} / {totalPages}</span></div>
               <div className="mg2-grid">
                 {visibleResults.map((item) => {
                   if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
@@ -3167,7 +3324,7 @@ async function submitExternalReelLink({ item, url, reason, userId, approved }) {
   return { success: approved ? "Reel link saved and approved." : "Reel link submitted for review." };
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", onOpen, onWatchlist, onWatched, onFavorite, onReelActivity }) {
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", detailsOpen = false, onOpen, onWatchlist, onWatched, onFavorite, onReelActivity }) {
   const [reelTab, setReelTab] = useState("forYou");
   const [reels, setReels] = useState([]);
   const [loadingReels, setLoadingReels] = useState(true);
@@ -3747,12 +3904,18 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   useEffect(() => {
     reels.forEach((reel, index) => {
       if (!isYouTubeReel(reel)) return;
-      sendYouTubeCommand(index, index === activeIndex && isPlaying ? "playVideo" : "pauseVideo");
+      sendYouTubeCommand(index, index === activeIndex && isPlaying && !detailsOpen ? "playVideo" : "pauseVideo");
       if (index !== activeIndex) sendYouTubeCommand(index, "setPlaybackRate", [1]);
       if (index === activeIndex) sendYouTubeCommand(index, isMuted ? "mute" : "unMute");
     });
     setSpeeding(false);
-  }, [activeIndex, isMuted, isPlaying, reels]);
+  }, [activeIndex, detailsOpen, isMuted, isPlaying, reels]);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    setIsPlaying(false);
+    iframeRefs.current.forEach((_, index) => sendYouTubeCommand(index, "pauseVideo"));
+  }, [detailsOpen]);
 
   useEffect(() => {
     setIsPlaying(true);
@@ -3976,6 +4139,19 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     setCommentText("");
   }
 
+  function openReelDetails(event, reel, item) {
+    stopPlayerEvent(event);
+    setIsPlaying(false);
+    sendYouTubeCommand(activeIndex, "pauseVideo");
+    onReelActivity?.("details_open", item, {
+      reelId: reelIdentity(reel),
+      source: reel.source || reelSourceFromUrl("", reel.sourceUrl || reel.watchUrl || reel.embedUrl || "") || "youtube",
+      poster_path: item?.poster_path || "",
+      item_key: keyOf(item)
+    });
+    onOpen?.(item, { source: "reels", reelId: reelIdentity(reel) });
+  }
+
   function submitReelComment(event) {
     event.preventDefault();
     if (!commentReel || !commentText.trim()) return;
@@ -4128,7 +4304,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }}
       />
     );
-    if (!active || reel.isFallbackPreview || failedEmbeds[failureKey] || (youtubeVideoId && failedYouTubeVideoIdsRef.current.has(youtubeVideoId))) return preview;
+    if (detailsOpen || !active || reel.isFallbackPreview || failedEmbeds[failureKey] || (youtubeVideoId && failedYouTubeVideoIdsRef.current.has(youtubeVideoId))) return preview;
 
     if (isYouTube) {
       const src = buildYouTubeEmbedUrl(youtubeVideoId, isMuted);
@@ -4375,8 +4551,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 <div className="mg2-reel-actions">
                   <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
-                  <button className={watchedTitle ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : "Mark watched"}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : "Watch"}</span>
-                  <button className="mg2-reel-details-button" type="button" onClick={(event) => { stopPlayerEvent(event); onOpen(item); }} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
+                  <button className={watchedTitle ? "active" : ""} type="button" disabled={!watchedTitle && !isReleased(item)} onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : isReleased(item) ? "Mark watched" : releaseMessage(item)}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : isReleased(item) ? "Watch" : "Soon"}</span>
+                  <button className="mg2-reel-details-button" type="button" onClick={(event) => openReelDetails(event, reel, item)} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
                   <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
                   <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
                 </div>
@@ -4550,8 +4726,9 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
   const [logQuery, setLogQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [genreFilter, setGenreFilter] = useState("all");
-  const saved = Object.values(watchlist);
-  const watchedItems = Object.values(watched);
+  const watchedCollection = normalizeTrackingCollection(watched);
+  const saved = Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection));
+  const watchedItems = Object.values(watchedCollection).filter((item) => isReleased(item));
   const favoriteItems = Object.values(favorites);
   const userListCards = Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [] }));
   const listCards = userListCards.length ? userListCards : [
@@ -4848,60 +5025,227 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   );
 }
 
-function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, recentActivity = [], loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower, onDeleteCustomList, onRenameCustomList, onShareList }) {
+function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, savedBlendLists = {}, profileActivity = {}, recentActivity = [], recentReviews = [], profileStats = null, loading, user, profile, socialCounts = {}, pendingRequests = [], followerProfiles = [], followingProfiles = [], followStatuses = {}, authLoading, syncStatus, profileSaving, profileMessage, onOpen, onOpenBlend, onOpenStats, onOpenDiary, onOpenAuth, onLogout, onSaveProfile, onRespondFollowRequest, onOpenPublicProfile, onFollowToggle, onRemoveFollower, onDeleteCustomList, onRenameCustomList, onShareList }) {
   const [profileTab, setProfileTab] = useState("activity");
   const [profilePanel, setProfilePanel] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const [peopleQuery, setPeopleQuery] = useState("");
   const [profileDraft, setProfileDraft] = useState(() => profile || defaultProfileForUser(user));
   const [profileError, setProfileError] = useState("");
+  const profileRestoreLogged = useRef(false);
   useEffect(() => {
     setProfileDraft(profile || defaultProfileForUser(user));
     setProfileError("");
   }, [profile, user?.id]);
-  const saved = Object.values(watchlist);
-  const watchedItems = Object.values(watched);
-  const ratedKeys = Object.keys(ratings);
-  const likedItems = Object.values(favorites);
-  const reviewedItems = Object.values(reviews || {}).map((entry) => entry.item).filter(Boolean);
-  const localItems = dedupe([...watchedItems, ...saved, ...likedItems, ...reviewedItems]);
   const fallbackItems = [...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.trending];
-  const favoriteItems = likedItems;
+  const profileKeyFor = (item = {}) => {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const stableKey = normalized.item_key || normalized.itemKey || normalized.key || keyOf(normalized);
+    if (stableKey && !String(stableKey).includes("undefined")) return String(stableKey);
+    if (normalized.id) return `${mediaType(normalized)}:${normalized.id}`;
+    return `${mediaType(normalized)}:${titleOf(normalized).toLowerCase()}`;
+  };
+  const dedupeProfileItems = (items = []) => {
+    const map = new Map();
+    items.filter(Boolean).forEach((item) => {
+      const normalized = { ...item, media_type: mediaType(item) };
+      const keys = [
+        profileKeyFor(normalized),
+        normalized.id ? `${mediaType(normalized)}:${normalized.id}` : "",
+        titleOf(normalized) ? `${mediaType(normalized)}:${titleOf(normalized).toLowerCase()}` : ""
+      ].filter(Boolean);
+      const existingKey = keys.find((key) => map.has(key));
+      const targetKey = existingKey || keys[0];
+      const existing = map.get(targetKey) || {};
+      const merged = { ...existing, ...normalized };
+      if (!merged.poster_path && existing.poster_path) merged.poster_path = existing.poster_path;
+      keys.forEach((key) => map.set(key, merged));
+    });
+    return [...new Set(Array.from(map.values()))];
+  };
+  const localReviewTextFor = (item) => reviews[keyOf({ ...item, media_type: mediaType(item) })]?.text || item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
+  const localLibrary = dedupeProfileItems([
+    ...Object.values(watched || {}),
+    ...Object.values(watchlist || {}),
+    ...Object.values(favorites || {}),
+    ...Object.values(reviews || {}).map((entry) => entry.item).filter(Boolean),
+    ...Object.values(profileActivity || {}).map((entry) => entry.item).filter(Boolean),
+    ...Object.values(customLists || {}).flatMap((list) => list.items || []),
+    ...Object.values(savedBlendLists || {}).flatMap((list) => list.items || []),
+    ...(recentActivity || []).map((event) => ({
+      ...(event.item_data || {}),
+      id: event.tmdb_id,
+      media_type: event.media_type,
+      title: event.title,
+      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || ""
+    })),
+    ...(recentReviews || []).map((row) => ({
+      id: row.tmdb_id,
+      item_key: row.item_key,
+      media_type: row.media_type,
+      title: row.title,
+      name: row.media_type === "tv" ? row.title : undefined,
+      poster_path: row.poster_path || "",
+      release_date: row.release_year && row.media_type === "movie" ? `${row.release_year}-01-01` : "",
+      first_air_date: row.release_year && row.media_type === "tv" ? `${row.release_year}-01-01` : ""
+    })),
+    ...fallbackItems
+  ]);
+  const hydrateProfileItem = (item = {}) => {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const match = localLibrary.find((entry) => (
+      profileKeyFor(entry) === profileKeyFor(normalized) ||
+      (entry.id && normalized.id && mediaType(entry) === mediaType(normalized) && String(entry.id) === String(normalized.id)) ||
+      (titleOf(entry).toLowerCase() === titleOf(normalized).toLowerCase() && mediaType(entry) === mediaType(normalized))
+    ));
+    const hydrated = { ...(match || {}), ...normalized };
+    if (!hydrated.poster_path && match?.poster_path) hydrated.poster_path = match.poster_path;
+    return hydrated;
+  };
+  const canonicalWatched = dedupeProfileItems(Object.values(watched || {}).map(hydrateProfileItem)).filter((item) => isReleased(item));
+  const watchedKeySet = new Set(canonicalWatched.map(profileKeyFor));
+  const canonicalWatchlist = dedupeProfileItems(Object.values(watchlist || {}).map(hydrateProfileItem)).filter((item) => !watchedKeySet.has(profileKeyFor(item)));
+  const localRatingCards = Object.entries(ratings || {}).map(([key, value]) => {
+    const item = localLibrary.find((entry) => keyOf({ ...entry, media_type: mediaType(entry) }) === key || profileKeyFor(entry) === key);
+    if (!item) return null;
+    return {
+      item: hydrateProfileItem(item),
+      rating: normalizeUserRating(value),
+      note: localReviewTextFor(item),
+      createdAt: reviews[key]?.reviewedAt || reviews[key]?.created_at || item.watchedAt || item.savedAt || ""
+    };
+  }).filter(Boolean);
+  const localReviewCards = Object.values(reviews || {}).map((entry) => {
+    const item = hydrateProfileItem(entry.item || {});
+    return {
+      item,
+      rating: ratingForItem(item, ratings) || normalizeUserRating(entry.rating) || null,
+      note: entry.text || "",
+      createdAt: entry.reviewedAt || entry.updated_at || entry.created_at || ""
+    };
+  });
+  const remoteReviewCards = (recentReviews || []).map((row) => {
+    const item = hydrateProfileItem({
+      id: row.tmdb_id,
+      item_key: row.item_key,
+      media_type: row.media_type,
+      title: row.title,
+      name: row.media_type === "tv" ? row.title : undefined,
+      poster_path: row.poster_path || "",
+      release_date: row.release_year && row.media_type === "movie" ? `${row.release_year}-01-01` : "",
+      first_air_date: row.release_year && row.media_type === "tv" ? `${row.release_year}-01-01` : ""
+    });
+    return {
+      item,
+      rating: row.rating,
+      note: row.review_text || "",
+      spoiler: row.contains_spoiler,
+      visibility: row.visibility,
+      createdAt: row.updated_at || row.created_at || ""
+    };
+  });
+  const reviewCards = dedupeProfileItems([...remoteReviewCards, ...localReviewCards, ...localRatingCards].map((card) => card.item))
+    .map((item) => {
+      const card = [...remoteReviewCards, ...localReviewCards, ...localRatingCards].find((entry) => itemMatches(entry.item, item) || profileKeyFor(entry.item) === profileKeyFor(item)) || {};
+      return {
+        item: hydrateProfileItem(item),
+        rating: card.rating || ratingForItem(item, ratings) || null,
+        note: card.note || localReviewTextFor(item),
+        createdAt: card.createdAt || ""
+      };
+    });
+  const favoriteItems = dedupeProfileItems(Object.values(favorites || {}).map(hydrateProfileItem));
   const blendListItems = Object.values(savedBlendLists || {});
   const userLists = Object.values(customLists || {});
+  const profileDataSource = user && (recentReviews.length || recentActivity.length || profileStats) ? "merged" : "local";
+  const fallbackTimestamp = (index) => new Date(Date.now() - (index + 1) * 5400000).toISOString();
+  const profileTimeLabel = (timestamp) => {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+  const remoteActivityEvents = (recentActivity || []).slice(0, 30).map((event, index) => {
+    const item = hydrateProfileItem({
+      ...(event.item_data || {}),
+      id: event.tmdb_id,
+      media_type: event.media_type,
+      title: event.title,
+      name: event.media_type === "tv" ? event.title : undefined,
+      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || ""
+    });
+    const type = event.action || event.type || "activity";
+    return {
+      id: event.id || event.event_key || `${profileKeyFor(item)}-${event.created_at || index}`,
+      type,
+      statuses: [type === "watchlist_add" ? "watchlisted" : type === "review" ? "reviewed" : type === "rating" ? "rated" : type === "watched" ? "watched" : type === "list_create" || type === "list_add" ? "listed" : type],
+      item,
+      timestamp: event.created_at || fallbackTimestamp(index),
+      rating: event.metadata?.rating || null,
+      review: event.metadata?.review || ""
+    };
+  });
+  const localActivityEvents = [
+    ...canonicalWatched.map((item, index) => ({ id: `watched:${profileKeyFor(item)}`, type: "watched", statuses: ["watched"], item, timestamp: item.watchedAt || fallbackTimestamp(index) })),
+    ...canonicalWatchlist.map((item, index) => ({ id: `watchlist:${profileKeyFor(item)}`, type: "watchlist_add", statuses: ["watchlisted"], item, timestamp: item.savedAt || item.addedAt || fallbackTimestamp(index + canonicalWatched.length) })),
+    ...reviewCards.map((card, index) => ({ id: `review:${profileKeyFor(card.item)}`, type: card.note ? "review" : "rating", statuses: [card.note ? "reviewed" : "rated"], item: card.item, timestamp: card.createdAt || fallbackTimestamp(index + canonicalWatched.length + canonicalWatchlist.length), rating: card.rating, review: card.note }))
+  ];
+  const rawActivityEvents = user && remoteActivityEvents.length ? remoteActivityEvents : localActivityEvents;
+  const activityMissingPostersBefore = rawActivityEvents.filter((event) => !event.item?.poster_path).length;
+  const activityEvents = dedupeProfileItems((user && remoteActivityEvents.length ? remoteActivityEvents : localActivityEvents).map((event) => event.item))
+    .map((item) => {
+      const event = (user && remoteActivityEvents.length ? remoteActivityEvents : localActivityEvents).find((entry) => itemMatches(entry.item, item) || profileKeyFor(entry.item) === profileKeyFor(item));
+      return { ...event, item: hydrateProfileItem(item) };
+    })
+    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+    .slice(0, 30);
+  const profileData = {
+    source: profileDataSource,
+    watchedItems: canonicalWatched,
+    watchlistItems: canonicalWatchlist,
+    reviewItems: reviewCards,
+    activityItems: activityEvents,
+    listItems: userLists,
+    followers: profileStats?.followers ?? socialCounts.followers ?? followerProfiles.length ?? 0,
+    following: profileStats?.following ?? socialCounts.following ?? followingProfiles.length ?? 0,
+    missingPosters: {
+      watched: canonicalWatched.filter((item) => !item.poster_path).length,
+      watchlist: canonicalWatchlist.filter((item) => !item.poster_path).length,
+      reviews: reviewCards.filter((card) => !card.item?.poster_path).length,
+      activity: activityEvents.filter((event) => !event.item?.poster_path).length
+    }
+  };
+  useEffect(() => {
+    if (profileRestoreLogged.current || loading) return;
+    profileRestoreLogged.current = true;
+    console.info("Profile restore summary", {
+      statsRowVisible: true,
+      watched: profileData.watchedItems.length,
+      watchlist: profileData.watchlistItems.length,
+      reviews: profileData.reviewItems.length,
+      activityShown: profileData.activityItems.length,
+      activityMissingPostersBefore: activityMissingPostersBefore,
+      activityMissingPostersAfter: profileData.missingPosters.activity,
+      detailsOpenActivities: profileData.activityItems.filter((event) => event.type === "details_open" || event.type === "viewed_details").length,
+      reelBackgroundPausedOnDetails: true
+    });
+  }, [activityMissingPostersBefore, loading, profileData]);
   const profileLists = [
-    { id: "watchlist", title: "Watchlist", subtitle: `${saved.length} saved`, items: saved, action: () => { setProfilePanel(null); setSelectedList(null); setProfileTab("watchlist"); } },
+    { id: "watchlist", title: "Watchlist", subtitle: `${profileData.watchlistItems.length} saved`, items: profileData.watchlistItems, action: () => { setProfilePanel(null); setSelectedList(null); setProfileTab("watchlist"); } },
     { id: "favorites", title: "Favorites", subtitle: `${favoriteItems.length} favorites`, items: favoriteItems, action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
     ...blendListItems.map((list, index) => ({ id: list.id || `blend-${index}`, title: "Blend List", subtitle: `${(list.items || []).length} shared picks`, items: list.items || [], type: "blend", privacy: "shared", action: () => { setSelectedList({ id: list.id || `blend-${index}`, type: "blend", title: "Blend List", subtitle: "Saved from Blend", privacy: "shared", items: list.items || [] }); setProfilePanel("list-detail"); } })),
     ...userLists.map((list) => ({ ...list, type: "custom", privacy: list.privacy || "private", subtitle: `${list.privacy || "private"} custom list`, action: () => { setSelectedList({ id: list.id, type: "custom", title: list.title, subtitle: "Custom list", privacy: list.privacy || "private", items: list.items || [] }); setProfilePanel("list-detail"); } }))
   ];
-  const reviewItems = ratedKeys
-    .map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key))
-    .filter(Boolean);
-  const watchedGrid = watchedItems;
-  const watchlistGrid = saved;
-  const reviewTextFor = (item) => reviews[keyOf(item)]?.text || item?.review || item?.reviewText || item?.userReview || item?.note || item?.notes || "";
-  const realReviewItems = localItems.filter((item) => reviewTextFor(item).trim());
-  const ratingReviewItems = dedupe([
-    ...ratedKeys.map((key) => localItems.find((item) => keyOf(item) === key) || fallbackItems.find((item) => keyOf(item) === key)).filter(Boolean),
-    ...realReviewItems
-  ]);
-  const reviewCards = ratingReviewItems.map((item) => ({
-    item,
-    rating: ratingForItem(item, ratings) || normalizeUserRating(item.rating) || null,
-    note: reviewTextFor(item)
-  }));
   const openProfileTab = (tab) => {
     setProfilePanel(null);
     setSelectedList(null);
     setProfileTab(tab);
   };
   const statCards = [
-    { label: "Watched", value: watchedItems.length, action: () => openProfileTab("watched") },
-    { label: "Watchlist", value: saved.length, action: () => openProfileTab("watchlist") },
-    { label: "Reviews", value: reviewCards.length, action: () => openProfileTab("reviews") },
-    { label: "Followers", value: user ? (socialCounts.followers || 0) : "0", action: () => { setPeopleQuery(""); setProfilePanel("followers"); } },
-    { label: "Following", value: user ? (socialCounts.following || 0) : "0", action: () => { setPeopleQuery(""); setProfilePanel("following"); } }
+    { label: "Watched", value: profileData.watchedItems.length, action: () => openProfileTab("watched") },
+    { label: "Watchlist", value: profileData.watchlistItems.length, action: () => openProfileTab("watchlist") },
+    { label: "Reviews", value: profileData.reviewItems.length, action: () => openProfileTab("reviews") },
+    { label: "Lists", value: profileData.listItems.length, action: () => { setProfilePanel("lists"); setSelectedList(null); } },
+    { label: "Followers", value: user ? profileData.followers : "0", action: () => { setPeopleQuery(""); setProfilePanel("followers"); } },
+    { label: "Following", value: user ? profileData.following : "0", action: () => { setPeopleQuery(""); setProfilePanel("following"); } }
   ];
   const shortcuts = [
     { label: "Favorites", icon: "heart", action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
@@ -4925,74 +5269,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { id: "watchlist", label: "Watchlist" },
     { id: "reviews", label: "Reviews" }
   ];
-  const fallbackTimestamp = (index) => new Date(Date.now() - (index + 1) * 5400000).toISOString();
-  const profileTimeLabel = (timestamp) => {
-    const date = timestamp ? new Date(timestamp) : new Date();
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const diff = Math.round((today - target) / 86400000);
-    const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    if (diff === 0) return `Today, ${time}`;
-    if (diff === 1) return `Yesterday, ${time}`;
-    return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
-  };
-  const statusMap = new Map();
-  const addProfileStatus = ({ item, type, timestamp, rating, review }) => {
-    if (!item) return;
-    const normalized = { ...item, media_type: mediaType(item) };
-    const key = keyOf(normalized);
-    const existing = statusMap.get(key) || { item: normalized, statuses: [], timestamp: timestamp || fallbackTimestamp(statusMap.size), rating: null, review: "" };
-    if (!existing.statuses.includes(type)) existing.statuses.push(type);
-    if (rating) existing.rating = rating;
-    if (review) existing.review = review;
-    if (new Date(timestamp || 0) > new Date(existing.timestamp || 0)) existing.timestamp = timestamp;
-    statusMap.set(key, existing);
-  };
-  watchedItems.forEach((item, index) => addProfileStatus({ type: "watched", item, timestamp: item.watchedAt || fallbackTimestamp(index) }));
-  saved.forEach((item, index) => addProfileStatus({ type: "watchlisted", item, timestamp: item.savedAt || fallbackTimestamp(index + watchedItems.length) }));
-  recentActivity.slice(0, 30).forEach((event, index) => {
-    const item = event.item_data || {
-      id: event.tmdb_id,
-      media_type: event.media_type,
-      title: event.title,
-      name: event.media_type === "tv" ? event.title : undefined,
-      poster_path: event.poster_path
-    };
-    const type = event.action || event.type || "activity";
-    addProfileStatus({
-      type: type === "watchlist_add" ? "watchlisted" : type === "review" ? "reviewed" : type === "rating" ? "rated" : type === "rated" ? "rated" : type === "reviewed" ? "reviewed" : type,
-      item,
-      timestamp: event.created_at || fallbackTimestamp(index),
-      rating: event.metadata?.rating || null,
-      review: event.metadata?.review || ""
-    });
-  });
-  Object.values(profileActivity || {}).forEach((event, index) => addProfileStatus({ type: event.type || "opened", item: event.item, timestamp: event.timestamp || fallbackTimestamp(index + watchedItems.length + saved.length), rating: event.rating || null }));
-  ratedKeys.forEach((key, index) => {
-      const item = localItems.find((entry) => keyOf(entry) === key) || fallbackItems.find((entry) => keyOf(entry) === key);
-      if (item) addProfileStatus({ type: "rated", item, timestamp: item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length), rating: normalizeUserRating(ratings[key]) });
-    });
-  realReviewItems.forEach((item, index) => addProfileStatus({ type: "reviewed", item, timestamp: item.reviewedAt || item.reviewAt || item.updatedAt || item.watchedAt || fallbackTimestamp(index + watchedItems.length + saved.length + ratedKeys.length), rating: ratingForItem(item, ratings), review: reviewTextFor(item) }));
-  const activityEvents = Array.from(statusMap.values())
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const activityGroupLabel = (timestamp) => {
-    const date = timestamp ? new Date(timestamp) : new Date();
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const diff = Math.round((today - target) / 86400000);
-    if (diff === 0) return "Today";
-    if (diff === 1) return "Yesterday";
-    return "Older";
-  };
-  const groupedActivityEvents = activityEvents.reduce((acc, event) => {
-    const label = activityGroupLabel(event.timestamp);
-    acc[label] = acc[label] || [];
-    acc[label].push(event);
-    return acc;
-  }, {});
-  const gridItems = profileTab === "activity" ? activityEvents.map((event) => event.item) : profileTab === "watched" ? watchedGrid : watchlistGrid;
+  const gridItems = profileTab === "activity" ? profileData.activityItems.map((event) => event.item) : profileTab === "watched" ? profileData.watchedItems : profileData.watchlistItems;
   const relationshipProfiles = profilePanel === "followers" ? followerProfiles : followingProfiles;
   const filteredRelationshipProfiles = relationshipProfiles.filter((entry) => {
     const search = peopleQuery.trim().toLowerCase();
@@ -5013,7 +5290,6 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     setProfilePanel(null);
     setProfileError("");
   };
-
   if (profilePanel === "followers" || profilePanel === "following") {
     const title = profilePanel === "followers" ? "Followers" : "Following";
     const emptyCopy = profilePanel === "followers" ? "No followers yet" : "Not following anyone yet";
@@ -5118,7 +5394,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
         ))}
       </div>
 
-      {loading && activityEvents.length === 0 ? (
+      {loading && profileData.activityItems.length === 0 ? (
         <div className="mg2-profile-skeleton" aria-label="Loading profile">
           <span /><span /><span />
         </div>
@@ -5218,31 +5494,24 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
           )}
 
           {!profilePanel && profileTab === "activity" && (
-            activityEvents.length ? (
-              <div className="mg2-profile-activity-groups">
-                {["Today", "Yesterday", "Older"].filter((group) => groupedActivityEvents[group]?.length).map((group) => (
-                  <section key={group}>
-                    <h3>{group}</h3>
-                    <div className="mg2-profile-activity-grid">
-                      {groupedActivityEvents[group].map((event, index) => (
-                        <button key={`${keyOf(event.item)}-${group}-${index}`} type="button" onClick={() => onOpen(event.item)}>
-                          <img src={posterUrl(event.item.poster_path, "w185")} alt={titleOf(event.item)} loading="lazy" onError={(imageEvent) => { imageEvent.currentTarget.src = POSTER_FALLBACK; }} />
-                          <span className="mg2-activity-badges">
-                            {event.statuses.map((status) => (
-                              <i key={status} className={`mg2-activity-badge ${status}`}>
-                                {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "opened" ? <Icon name="play" /> : status === "reel_liked" ? <Icon name="heart" /> : status === "reel_shared" ? <Icon name="send" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
-                              </i>
-                            ))}
-                          </span>
-                          <em>{profileTimeLabel(event.timestamp)}</em>
-                          <strong>{titleOf(event.item)}</strong>
-                        </button>
+            profileData.activityItems.length ? (
+              <div className="mg2-profile-activity-grid">
+                {profileData.activityItems.map((event, index) => (
+                  <button key={`${event.id || keyOf(event.item)}-${index}`} type="button" onClick={() => onOpen(event.item)}>
+                    <img src={posterUrl(event.item.poster_path, "w185")} alt={titleOf(event.item)} loading="lazy" onError={(imageEvent) => { imageEvent.currentTarget.src = POSTER_FALLBACK; }} />
+                    <span className="mg2-activity-badges">
+                      {event.statuses.map((status) => (
+                        <i key={status} className={`mg2-activity-badge ${status}`}>
+                          {status === "watched" ? <Icon name="check" /> : status === "watchlisted" ? <Icon name="bookmark" /> : status === "reviewed" ? <Icon name="feed" /> : status === "listed" ? <Icon name="list" /> : status === "opened" ? <Icon name="play" /> : status === "reel_liked" ? <Icon name="heart" /> : status === "reel_shared" ? <Icon name="send" /> : event.rating ? formatUserRating(event.rating) : "\u2605"}
+                        </i>
                       ))}
-                    </div>
-                  </section>
+                    </span>
+                    <em>{profileTimeLabel(event.timestamp)}</em>
+                    <strong>{titleOf(event.item)}</strong>
+                  </button>
                 ))}
               </div>
-            ) : <div className="mg2-empty">Watch, rate, review, or save titles to build your activity.</div>
+            ) : <div className="mg2-empty">No activity yet. Start by watching, rating, or adding something to your watchlist.</div>
           )}
 
           {!profilePanel && profileTab !== "reviews" && profileTab !== "activity" && (
@@ -5256,16 +5525,15 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
           )}
 
           {!profilePanel && profileTab === "reviews" && (
-            reviewCards.length ? (
+            profileData.reviewItems.length ? (
               <div className="mg2-profile-review-cards">
-                {reviewCards.map(({ item, rating, note }) => (
+                {profileData.reviewItems.map(({ item, rating, note }) => (
                   <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
                     <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <span>
                       <strong>{titleOf(item)}</strong>
-                      <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {note || "Rating only"}</small>
+                      <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {note || (rating ? `Rating only ${formatUserRating(rating)}` : "Rating only")}</small>
                     </span>
-                    <em>{formatUserRating(rating)}</em>
                   </button>
                 ))}
               </div>
@@ -5277,7 +5545,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
   );
 }
 
-function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, socialProfiles = [], userResults = [], userSearch, setUserSearch, userSearchLoading, followingIds = [], followStatuses = {}, onFollowToggle, onOpenPublicProfile }) {
+function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, socialProfiles = [], userResults = [], userSearch, setUserSearch, userSearchLoading, followingIds = [], followerProfiles = [], followStatuses = {}, followBusyIds = {}, onFollowToggle, onOpenPublicProfile }) {
   const [friendQuery, setFriendQuery] = useState("");
   const [previewFriend, setPreviewFriend] = useState(null);
   const filteredFriends = socialFriendProfiles.filter((friend) => `${friend.name} ${friend.handle} ${friend.genres.join(" ")}`.toLowerCase().includes(friendQuery.trim().toLowerCase()));
@@ -5299,7 +5567,8 @@ function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, social
           {!userSearchLoading && realProfiles.length ? realProfiles.map((profile) => {
             const following = followingIds.includes(profile.id);
             const status = followStatuses[profile.id] || "";
-            const label = status === "accepted" ? "Following" : status === "pending" ? "Requested" : profile.is_private ? "Request" : "Follow";
+            const followsMe = followerProfiles.some((entry) => entry.id === profile.id);
+            const label = followBusyIds[profile.id] ? "Working" : status === "accepted" ? "Following" : status === "pending" ? "Requested" : followsMe ? "Follow back" : profile.is_private ? "Request" : "Follow";
             return (
               <article key={profile.id}>
                 <button className="mg2-friend-main" type="button" onClick={() => onOpenPublicProfile(profile)}>
@@ -5310,7 +5579,7 @@ function FriendsScreen({ friendStates, onFriendAction, onOpenBlend, user, social
                     <i>{profile.follower_count || 0} followers - {profile.following_count || 0} following</i>
                   </span>
                 </button>
-                {profile.id !== user.id && <button className={following ? "friends" : status === "pending" ? "requested" : ""} type="button" onClick={() => onFollowToggle(profile)}>{label}</button>}
+                {profile.id !== user.id && <button className={following ? "friends" : status === "pending" ? "requested" : ""} type="button" disabled={Boolean(followBusyIds[profile.id])} onClick={() => onFollowToggle(profile)}>{label}</button>}
               </article>
             );
           }) : !userSearchLoading && <div className="mg2-empty">{userSearch.trim() ? "No users found." : "Follow users to build your social graph."}</div>}
@@ -5614,7 +5883,7 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
   );
 }
 
-function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onOpenBlend, onClose, user, socialProfiles, userResults, userSearch, setUserSearch, userSearchLoading, followingIds, followStatuses, onFollowToggle, onOpenPublicProfile }) {
+function MessagesScreen({ selectedConversation, setSelectedConversation, friendStates, onFriendAction, onOpenBlend, onClose, user, socialProfiles, userResults, userSearch, setUserSearch, userSearchLoading, followingIds, followerProfiles, followStatuses, followBusyIds, onFollowToggle, onOpenPublicProfile }) {
   const [socialTab, setSocialTab] = useState("messages");
   const [chatId, setChatId] = useState(null);
   const conversation = conversations.find((item) => item.id === chatId) || conversations.find((item) => item.id === selectedConversation) || conversations[0];
@@ -5634,7 +5903,7 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
         </>
       )}
       {socialTab === "friends" ? (
-        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} onOpenBlend={onOpenBlend} user={user} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followStatuses={followStatuses} onFollowToggle={onFollowToggle} onOpenPublicProfile={onOpenPublicProfile} />
+        <FriendsScreen friendStates={friendStates} onFriendAction={onFriendAction} onOpenBlend={onOpenBlend} user={user} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followerProfiles={followerProfiles} followStatuses={followStatuses} followBusyIds={followBusyIds} onFollowToggle={onFollowToggle} onOpenPublicProfile={onOpenPublicProfile} />
       ) : chatId ? (
         <div className="mg2-chat native">
           <div className="mg2-chat-head">
@@ -5671,16 +5940,32 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
   );
 }
 
-function NotificationsScreen({ pendingRequests = [], notifications = [], onRespondFollowRequest }) {
+function NotificationsScreen({ pendingRequests = [], notifications = [], onRespondFollowRequest, onMarkRead }) {
+  const requestNotificationByActor = Object.fromEntries(
+    notifications
+      .filter((notification) => notification.type === "follow_request" && notification.actor_id)
+      .map((notification) => [notification.actor_id, notification])
+  );
+  const fallbackRequests = pendingRequests.filter((request) => !requestNotificationByActor[request.id]);
+  const hasRealNotifications = fallbackRequests.length > 0 || notifications.length > 0;
   const remoteItems = notifications.map((notification) => ({
+    id: notification.id,
     type: notification.type,
-    friend: { name: "MovieGram", handle: "", avatar_url: "" },
+    isRead: notification.is_read,
+    friend: notification.actor ? {
+      name: notification.actor.display_name || notification.actor.username || "MovieGram user",
+      handle: notification.actor.username ? `@${notification.actor.username}` : "",
+      avatar_url: notification.actor.avatar_url
+    } : { name: "MovieGram", handle: "", avatar_url: "" },
     title: notification.message || notification.type?.replaceAll("_", " ") || "Notification",
-    detail: notification.entity_type ? `${notification.entity_type}${notification.entity_id ? ` - ${notification.entity_id}` : ""}` : "MovieGram update",
-    time: publicActivityDate(notification.created_at)
+    detail: notification.metadata?.action_state ? `Status: ${notification.metadata.action_state}` : notification.entity_type ? `${notification.entity_type}${notification.entity_id ? ` - ${notification.entity_id}` : ""}` : "MovieGram update",
+    time: publicActivityDate(notification.created_at),
+    requesterId: notification.actor_id,
+    notification
   }));
   const groups = [
-    { label: "Requests", items: pendingRequests.map((request) => ({
+    { label: "Requests", items: fallbackRequests.map((request) => ({
+      id: `request-${request.id}`,
       type: "follow_request",
       friend: { name: request.display_name || request.username || "MovieGram user", handle: request.username ? `@${request.username}` : "", avatar_url: request.avatar_url },
       title: `${request.display_name || request.username || "Someone"} requested to follow you`,
@@ -5689,38 +5974,32 @@ function NotificationsScreen({ pendingRequests = [], notifications = [], onRespo
       requesterId: request.id
     })) },
     { label: "Recent", items: remoteItems },
-    { label: "Today", items: [
-      { friend: socialFriendProfiles[0], title: "Shruti followed you", detail: "You both love sci-fi and prestige drama.", time: "20m" },
-      { friend: socialFriendProfiles[1], title: "Rohan liked your Joker review", detail: "Your review is getting attention.", time: "2h" },
-      { friend: socialFriendProfiles[2], title: "New Blend ready", detail: "Arjun has 81% taste overlap with you.", time: "5h" }
-    ] },
-    { label: "This Week", items: [
-      { friend: socialFriendProfiles[3], title: "Meera watched Friends", detail: "Comfort episode unlocked.", time: "1d" },
-      { friend: socialFriendProfiles[0], title: "Shruti reviewed Interstellar", detail: "Rated it 5.0 after a weekend rewatch.", time: "2d" },
-      { friend: friends[0], title: "Recommendation for you", detail: "Because you saved Dune, try Foundation next.", time: "3d" }
-    ] },
-    { label: "Earlier", items: [
-      { friend: socialFriendProfiles[1], title: "Rohan added The Batman", detail: "Added to a neo-noir watchlist.", time: "1w" },
-      { friend: socialFriendProfiles[2], title: "Arjun liked your list", detail: "Best rainy-night movies got a new like.", time: "2w" }
-    ] }
+    { label: "Today", items: [] },
+    { label: "This Week", items: [] },
+    { label: "Earlier", items: [] }
   ];
 
   return (
     <section className="mg2-notifications-screen">
+      {hasRealNotifications === false && <div className="mg2-empty">No notifications yet.</div>}
       {groups.filter((group) => group.items.length).map((group) => (
         <div key={group.label} className="mg2-notification-group">
           <h3>{group.label}</h3>
           {group.items.map((notification) => (
-            <article key={`${group.label}-${notification.title}`}>
+            <article key={`${group.label}-${notification.id || notification.title}`}>
               <Avatar friend={notification.friend} size="sm" />
               <span>
                 <strong>{notification.title}</strong>
                 <small>{notification.detail}</small>
               </span>
-              {notification.type === "follow_request" ? (
+              {notification.type === "follow_request" && notification.notification?.metadata?.action_state !== "accepted" && notification.notification?.metadata?.action_state !== "declined" ? (
                 <div className="mg2-notification-actions">
-                  <button type="button" onClick={() => onRespondFollowRequest?.(notification.requesterId, "accepted")}>Accept</button>
-                  <button type="button" className="ghost" onClick={() => onRespondFollowRequest?.(notification.requesterId, "declined")}>Decline</button>
+                  <button type="button" onClick={() => onRespondFollowRequest?.(notification.requesterId, "accepted", notification.notification)}>Accept</button>
+                  <button type="button" className="ghost" onClick={() => onRespondFollowRequest?.(notification.requesterId, "declined", notification.notification)}>Decline</button>
+                </div>
+              ) : notification.notification && !notification.isRead ? (
+                <div className="mg2-notification-actions">
+                  <button type="button" className="ghost" onClick={() => onMarkRead?.(notification.notification)}>Mark read</button>
                 </div>
               ) : null}
               <em>{notification.time}</em>
@@ -5799,6 +6078,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
       : actorSource.filter((person) => person?.name).slice(0, 40))
     : actorSource.filter((person) => person?.name).slice(0, 40);
   const userRating = normalizeUserRating(rating);
+  const released = isReleased(shown);
   const externalRatingMeta = (entry) => {
     if (entry.source === "IMDb") return { className: "imdb", icon: "IMDb", value: String(entry.value || "").replace(/\/10$/, "") };
     if (entry.source === "RT Critics") return { className: "tomato", icon: "🍅", value: entry.value };
@@ -5812,8 +6092,8 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     { id: "buy", label: "Buy", items: watchProviders?.buy || [] }
   ].filter((group) => group.items.length > 0);
   const realSocialForTitle = socialActivity.filter((entry) => entry.item && itemMatches(entry.item, shown));
-  const realWatchedByFriends = realSocialForTitle.filter((entry) => ["watched", "rated", "reviewed", "watchlist_add", "liked"].includes(entry.action)).slice(0, 4);
-  const realFriendReviews = realSocialForTitle.filter((entry) => entry.action === "reviewed").slice(0, 4);
+  const realWatchedByFriends = realSocialForTitle.filter((entry) => ["watched", "rated", "rating", "reviewed", "review", "watchlist_add", "liked"].includes(entry.action)).slice(0, 4);
+  const realFriendReviews = realSocialForTitle.filter((entry) => entry.action === "reviewed" || entry.action === "review").slice(0, 4);
   const watchedByFriends = realWatchedByFriends;
   const friendReviews = realFriendReviews;
   const hasBackdrop = Boolean(shown.backdrop_path);
@@ -5918,13 +6198,14 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
               </div>
             </div>
             <div className="mg2-detail-actions">
-              <button className={watched ? "active watched" : ""} type="button" onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : "Mark watched"}><Icon name="check" /><span>{watched ? "Watched" : "Watch"}</span></button>
+              <button className={watched ? "active watched" : ""} type="button" disabled={!watched && !released} onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : released ? "Mark watched" : releaseMessage(shown)}><Icon name="check" /><span>{watched ? "Watched" : released ? "Watch" : "Unreleased"}</span></button>
               <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
               <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
               <button type="button" onClick={() => onOpenReels?.(shown)} aria-label={`Open reels for ${titleOf(shown)}`}><Icon name="play" /><span>Reels</span></button>
             </div>
             <section className="mg2-detail-panel">
               <h3>Overview</h3>
+              {!released && <p className="mg2-overview">{releaseMessage(shown)} You can mark this watched after release.</p>}
               <p className="mg2-overview">{visibleOverview}</p>
               {overviewLong && <button className="mg2-read-more" type="button" onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? "Show less" : "Read more"}</button>}
               <div className="mg2-genre-list">
@@ -6064,15 +6345,15 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
             )}
             <section className="mg2-detail-panel">
               <div className="mg2-detail-panel-head">
-                <h3>Private Review</h3>
-                <button type="button" onClick={() => onEditReview(shown)}>{review ? "Edit private review" : "Write a private review"}</button>
+                <h3>Your Review</h3>
+                <button type="button" onClick={() => onEditReview(shown)}>{review ? "Edit review" : "Write review"}</button>
               </div>
               {review ? (
                 <div className="mg2-user-review">
                   <p>{review}</p>
                   <button type="button" onClick={() => onDeleteReview(shown)}>Delete Review</button>
                 </div>
-              ) : <p className="mg2-overview">Write a private review. Ratings still work separately.</p>}
+              ) : <p className="mg2-overview">Write a review with rating, spoiler, and visibility controls.</p>}
               <button className="mg2-season-toggle" type="button" onClick={() => onOpenListSheet(shown)}>Add to custom list</button>
             </section>
             {friendReviews.length > 0 && (
@@ -6163,7 +6444,10 @@ export default function Home() {
   const [followingProfiles, setFollowingProfiles] = useState([]);
   const [socialActivity, setSocialActivity] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
+  const [recentReviews, setRecentReviews] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [profileStats, setProfileStats] = useState(null);
+  const [followBusyIds, setFollowBusyIds] = useState({});
   const [followingIds, setFollowingIds] = useState([]);
   const [pendingFollowIds, setPendingFollowIds] = useState([]);
   const [followStatuses, setFollowStatuses] = useState({});
@@ -6192,6 +6476,8 @@ export default function Home() {
   const localStateHydrated = useRef(false);
   const remoteHydrating = useRef(false);
   const latestLocalState = useRef(DEFAULT_LOCAL_STATE);
+  const librarySyncLogged = useRef(false);
+  const detailsOpenActivityRef = useRef({});
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -6272,23 +6558,42 @@ export default function Home() {
   const applyRemoteState = useCallback((remote, userId) => {
     if (!remote || !userId) return;
     const userCache = readOwnedLocalState(userId, { fallbackToLegacy: false });
-    const nextWatched = normalizeTrackingCollection(remote.watched || {});
-    const nextWatchlist = enforceWatchExclusivity(normalizeTrackingCollection(remote.watchlist || {}), nextWatched);
-    const nextFavorites = normalizeTrackingCollection(remote.favorites || {});
-    const nextRatings = normalizeRatingsCollection(remote.ratings || {});
-    const nextReviews = remote.reviews || {};
+    const legacyCache = readLegacyLocalState();
+    const mergedLibrary = mergeLibrarySources({
+      current: latestLocalState.current,
+      scoped: userCache,
+      legacy: legacyCache,
+      remote
+    });
     const nextEpisodes = remote.episodeProgress || {};
-    const nextLists = remote.customLists || {};
     applyLocalState({
       ...userCache,
-      watchlist: nextWatchlist,
-      watched: nextWatched,
-      favorites: nextFavorites,
-      ratings: nextRatings,
-      reviews: nextReviews,
+      watchlist: mergedLibrary.watchlist,
+      watched: mergedLibrary.watched,
+      favorites: mergedLibrary.favorites,
+      ratings: mergedLibrary.ratings,
+      reviews: mergedLibrary.reviews,
       episodeProgress: nextEpisodes,
-      customLists: nextLists
+      customLists: mergedLibrary.customLists
     }, userId);
+    if (!librarySyncLogged.current) {
+      librarySyncLogged.current = true;
+      console.info("MovieGram library sync summary", {
+        localWatched: mergedLibrary.sourceCounts.localWatched,
+        supabaseWatched: mergedLibrary.sourceCounts.remoteWatched,
+        mergedWatched: Object.keys(mergedLibrary.watched).length,
+        localWatchlist: mergedLibrary.sourceCounts.localWatchlist,
+        supabaseWatchlist: mergedLibrary.sourceCounts.remoteWatchlist,
+        mergedWatchlist: Object.keys(mergedLibrary.watchlist).length,
+        reviews: Object.keys(mergedLibrary.reviews).length,
+        missingPosters: {
+          watched: Object.values(mergedLibrary.watched).filter((item) => !item.poster_path).length,
+          watchlist: Object.values(mergedLibrary.watchlist).filter((item) => !item.poster_path).length,
+          reviews: Object.values(mergedLibrary.reviews).filter((review) => !review.item?.poster_path).length
+        },
+        duplicateRemoved: mergedLibrary.duplicateRemoved
+      });
+    }
   }, [applyLocalState]);
 
   useEffect(() => {
@@ -6330,7 +6635,10 @@ export default function Home() {
         setFollowingProfiles([]);
         setSocialActivity([]);
         setRecentActivity([]);
+        setRecentReviews([]);
         setNotifications([]);
+        setProfileStats(null);
+        setFollowBusyIds({});
         setFollowingIds([]);
         setPendingFollowIds([]);
         setFollowStatuses({});
@@ -6364,7 +6672,10 @@ export default function Home() {
         setFollowingProfiles([]);
         setSocialActivity([]);
         setRecentActivity([]);
+        setRecentReviews([]);
         setNotifications([]);
+        setProfileStats(null);
+        setFollowBusyIds({});
         setFollowingIds([]);
         setPendingFollowIds([]);
         setFollowStatuses({});
@@ -6462,7 +6773,10 @@ export default function Home() {
       setFollowingProfiles([]);
       setSocialActivity([]);
       setRecentActivity([]);
+      setRecentReviews([]);
       setNotifications([]);
+      setProfileStats(null);
+      setFollowBusyIds({});
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -6476,12 +6790,68 @@ export default function Home() {
       setFollowerProfiles(social.followerProfiles || []);
       setFollowingProfiles(social.followingProfiles || []);
       setSocialActivity(social.activity);
-      const [activityRows, notificationRows] = await Promise.all([
+      const [activityRows, notificationRows, statsRows, productLibrary] = await Promise.all([
         loadRecentActivity(supabaseUser.id, 30),
-        loadNotifications(supabaseUser.id, 30)
+        loadNotifications(supabaseUser.id, 30),
+        loadProductStats(supabaseUser.id),
+        loadProductLibrary(supabaseUser.id)
       ]);
       setRecentActivity(activityRows);
       setNotifications(notificationRows);
+      if (productLibrary) {
+        const scopedCache = readOwnedLocalState(supabaseUser.id, { fallbackToLegacy: false });
+        const legacyCache = readLegacyLocalState();
+        const mergedLibrary = mergeLibrarySources({
+          current: latestLocalState.current,
+          scoped: scopedCache,
+          legacy: legacyCache,
+          remote: productLibrary
+        });
+        setWatched(mergedLibrary.watched);
+        setWatchlist(mergedLibrary.watchlist);
+        setRatings(mergedLibrary.ratings);
+        setReviews(mergedLibrary.reviews);
+        setCustomLists(mergedLibrary.customLists);
+        persistOwnedLocalState(supabaseUser.id, {
+          ...latestLocalState.current,
+          watchlist: mergedLibrary.watchlist,
+          watched: mergedLibrary.watched,
+          ratings: mergedLibrary.ratings,
+          reviews: mergedLibrary.reviews,
+          favorites: mergedLibrary.favorites,
+          customLists: mergedLibrary.customLists
+        }, { writeLegacy: true });
+        setRecentReviews(productLibrary.reviewRows || []);
+        setProfileStats({
+          watched: Object.keys(mergedLibrary.watched).length,
+          watchlist: Object.keys(mergedLibrary.watchlist).length,
+          reviews: Object.keys(mergedLibrary.reviews).length,
+          lists: Object.keys(mergedLibrary.customLists || {}).length,
+          followers: statsRows?.followers ?? social.counts.followers ?? 0,
+          following: statsRows?.following ?? social.counts.following ?? 0
+        });
+        if (!librarySyncLogged.current) {
+          librarySyncLogged.current = true;
+          console.info("MovieGram library sync summary", {
+            localWatched: mergedLibrary.sourceCounts.localWatched,
+            supabaseWatched: mergedLibrary.sourceCounts.remoteWatched,
+            mergedWatched: Object.keys(mergedLibrary.watched).length,
+            localWatchlist: mergedLibrary.sourceCounts.localWatchlist,
+            supabaseWatchlist: mergedLibrary.sourceCounts.remoteWatchlist,
+            mergedWatchlist: Object.keys(mergedLibrary.watchlist).length,
+            reviews: Object.keys(mergedLibrary.reviews).length,
+            missingPosters: {
+              watched: Object.values(mergedLibrary.watched).filter((item) => !item.poster_path).length,
+              watchlist: Object.values(mergedLibrary.watchlist).filter((item) => !item.poster_path).length,
+              reviews: Object.values(mergedLibrary.reviews).filter((review) => !review.item?.poster_path).length
+            },
+            duplicateRemoved: mergedLibrary.duplicateRemoved
+          });
+        }
+      } else {
+        setProfileStats(statsRows);
+        setRecentReviews([]);
+      }
       setFollowingIds(social.followingIds);
       setPendingFollowIds(social.pendingIds || []);
       setFollowStatuses(social.followStatuses || {});
@@ -6495,7 +6865,10 @@ export default function Home() {
       setFollowingProfiles([]);
       setSocialActivity([]);
       setRecentActivity([]);
+      setRecentReviews([]);
       setNotifications([]);
+      setProfileStats(null);
+      setFollowBusyIds({});
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -6947,7 +7320,10 @@ export default function Home() {
       setFollowingProfiles([]);
       setSocialActivity([]);
       setRecentActivity([]);
+      setRecentReviews([]);
       setNotifications([]);
+      setProfileStats(null);
+      setFollowBusyIds({});
       setFollowingIds([]);
       setPendingFollowIds([]);
       setFollowStatuses({});
@@ -7008,8 +7384,10 @@ export default function Home() {
 
   async function toggleFollow(profile) {
     if (!supabase || !supabaseUser || !profile?.id || profile.id === supabaseUser.id) return;
+    if (followBusyIds[profile.id]) return;
     const currentStatus = followStatuses[profile.id] || "";
     const shouldRemove = currentStatus === "accepted" || currentStatus === "pending";
+    setFollowBusyIds((current) => ({ ...current, [profile.id]: true }));
     try {
       if (shouldRemove) {
         const { error } = await supabase
@@ -7021,6 +7399,20 @@ export default function Home() {
       } else {
         const result = await followUser(supabaseUser.id, profile);
         if (!result) throw new Error("Follow table is unavailable.");
+        const actorName = profileIdentity?.username || profileIdentity?.display_name || "Someone";
+        const isRequest = result.status === "pending";
+        await createNotification({
+          userId: profile.id,
+          actorId: supabaseUser.id,
+          type: isRequest ? "follow_request" : "follow",
+          entityType: isRequest ? "follow" : "profile",
+          entityId: isRequest ? result.id : supabaseUser.id,
+          message: isRequest ? `${actorName} requested to follow you` : `${actorName} started following you`,
+          metadata: { action_state: isRequest ? "pending" : "sent", follower_id: supabaseUser.id }
+        });
+        if (!isRequest) {
+          createActivityEvent(supabaseUser.id, "follow", null, { entityId: profile.id, title: publicProfileName(profile), username: profile.username }).catch(() => {});
+        }
       }
       const nextStatus = shouldRemove ? "" : profile.is_private ? "pending" : "accepted";
       setFollowStatuses((current) => {
@@ -7038,23 +7430,49 @@ export default function Home() {
     } catch (error) {
       console.error("MovieGram follow action error", error);
       setSocialError("Follow action is unavailable until the follows table/RLS is ready.");
+    } finally {
+      setFollowBusyIds((current) => {
+        const next = { ...current };
+        delete next[profile.id];
+        return next;
+      });
     }
   }
 
-  async function respondFollowRequest(requesterId, status) {
+  async function respondFollowRequest(requesterId, status, notification = null) {
     if (!supabase || !supabaseUser || !requesterId) return;
     try {
       if (status === "accepted") {
         const result = await acceptFollowRequest(supabaseUser.id, requesterId);
         if (!result) throw new Error("Follow request table is unavailable.");
+        await createNotification({
+          userId: requesterId,
+          actorId: supabaseUser.id,
+          type: "follow_accept",
+          entityType: "follow",
+          entityId: result.id,
+          message: `${profileIdentity?.username || profileIdentity?.display_name || "Someone"} accepted your follow request`,
+          metadata: { action_state: "accepted", following_id: supabaseUser.id }
+        });
       } else {
         await declineFollowRequest(supabaseUser.id, requesterId);
       }
+      if (notification?.id) {
+        await markNotificationRead(notification.id, { ...(notification.metadata || {}), action_state: status });
+        setNotifications((current) => current.map((entry) => entry.id === notification.id ? { ...entry, is_read: true, metadata: { ...(entry.metadata || {}), action_state: status } } : entry));
+      }
+      setPendingRequests((current) => current.filter((request) => request.id !== requesterId));
       await refreshSocialFoundation();
     } catch (error) {
       console.error("MovieGram follow request action error", error);
       setSocialError("Follow request action is unavailable until follow request RLS is ready.");
     }
+  }
+
+  async function markSingleNotificationRead(notification) {
+    if (!notification?.id) return;
+    setNotifications((current) => current.map((entry) => entry.id === notification.id ? { ...entry, is_read: true } : entry));
+    await markNotificationRead(notification.id, notification.metadata || {});
   }
 
   async function removeFollower(profile) {
@@ -7091,8 +7509,22 @@ export default function Home() {
   }
 
   function logActivity(action, item, metadata = {}) {
+    if (!item) return;
+    const normalized = { ...item, media_type: mediaType(item) };
+    const activityKey = `${action}:${keyOf(normalized)}:${metadata.source || ""}`;
+    if (action === "details_open" || action === "viewed_details") {
+      const last = detailsOpenActivityRef.current[activityKey] || 0;
+      if (Date.now() - last < 30 * 60 * 1000) return;
+      detailsOpenActivityRef.current[activityKey] = Date.now();
+    }
+    const activityMetadata = {
+      poster_path: normalized.poster_path || metadata.poster_path || "",
+      item_key: keyOf(normalized),
+      ...metadata
+    };
+    recordProfileActivity(action, normalized, activityMetadata.source || "app");
     if (!supabaseUser) return;
-    createActivityEvent(supabaseUser.id, action, { ...item, media_type: mediaType(item) }, metadata)
+    createActivityEvent(supabaseUser.id, action, normalized, activityMetadata)
       .then(() => refreshSocialFoundation())
       .catch((error) => console.error("MovieGram activity save error", { table: "activity_events", action, message: error?.message, error }));
   }
@@ -7158,6 +7590,7 @@ export default function Home() {
       setWatchlist(removed);
       persist("moviegram.watchlist", removed);
       if (supabaseUser?.id) removeFromSupabaseWatchlist(supabaseUser.id, normalized);
+      setProfileStats((current) => current ? { ...current, watchlist: Math.max(0, (current.watchlist || 0) - 1) } : current);
       syncTrackingNow("watchlist_remove", { watchlist: removed });
     } else {
       nextWatchlist[key] = normalized;
@@ -7170,6 +7603,7 @@ export default function Home() {
         addToSupabaseWatchlist(supabaseUser.id, normalized);
         removeSupabaseWatched(supabaseUser.id, normalized);
       }
+      setProfileStats((current) => current ? { ...current, watchlist: (current.watchlist || 0) + 1 } : current);
       syncTrackingNow("watchlist_add", { watchlist: nextWatchlist, watched: nextWatched });
       logActivity("watchlist_add", normalized);
     }
@@ -7216,6 +7650,10 @@ export default function Home() {
       unmarkWatched(normalized);
       return;
     }
+    if (!isReleased(normalized)) {
+      if (typeof window !== "undefined") window.alert(releaseMessage(normalized));
+      return;
+    }
     const knownEpisodeKeys = normalized.media_type === "tv" ? knownEpisodeKeysForShow(normalized) : [];
     const source = details?.id === normalized.id ? details : normalized;
     const knownEpisodeCount = knownEpisodeKeys.length || normalSeasonsOf(source).reduce((total, season) => total + (season.episode_count || 0), 0) || source.number_of_episodes || 0;
@@ -7249,11 +7687,13 @@ export default function Home() {
       }
       syncTrackingNow("watched_remove", { watched: removed, episodeProgress: nextEpisodesForSync });
       if (supabaseUser?.id) removeSupabaseWatched(supabaseUser.id, normalized);
+      setProfileStats((current) => current ? { ...current, watched: Math.max(0, (current.watched || 0) - 1) } : current);
     }
   }
 
   function applyWatchedItem(item, watchedAt) {
     const normalized = { ...item, media_type: mediaType(item) };
+    if (!isReleased(normalized)) return;
     const key = keyOf(normalized);
     const nextWatched = { ...normalizeTrackingCollection(watched), [key]: watchedPayload(normalized, watchedAt) };
     const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
@@ -7265,6 +7705,7 @@ export default function Home() {
       markSupabaseWatched(supabaseUser.id, normalized, watchedAt);
       removeFromSupabaseWatchlist(supabaseUser.id, normalized);
     }
+    setProfileStats((current) => current ? { ...current, watched: (current.watched || 0) + 1, watchlist: hasStoredItem(normalized, watchlist) ? Math.max(0, (current.watchlist || 0) - 1) : current.watchlist } : current);
     let nextEpisodesForSync = episodeProgress;
     if (normalized.media_type === "tv") {
       const keys = knownEpisodeKeysForShow(normalized);
@@ -7290,6 +7731,10 @@ export default function Home() {
 
   function toggleSeasonWatched(show, season, showDetails) {
     const normalized = { ...show, media_type: "tv" };
+    if (!isReleased(normalized)) {
+      if (typeof window !== "undefined") window.alert(releaseMessage(normalized));
+      return;
+    }
     const keys = seasonEpisodeKeys(normalized, season);
     const complete = keys.length > 0 && keys.every((keyName) => episodeProgress[keyName]);
     if (complete) {
@@ -7319,6 +7764,7 @@ export default function Home() {
 
   function applySeasonWatched(show, season, showDetails, watchedAt) {
     const normalized = { ...show, media_type: "tv" };
+    if (!isReleased(normalized)) return;
     const keys = seasonEpisodeKeys(normalized, season);
     const nextEpisodes = { ...episodeProgress };
     keys.forEach((keyName) => {
@@ -7355,6 +7801,11 @@ export default function Home() {
 
   function toggleEpisodeWatched(show, episode, season, showDetails) {
     const normalized = { ...show, media_type: "tv" };
+    const episodeRelease = episode?.air_date ? { ...normalized, first_air_date: episode.air_date, release_date: "" } : normalized;
+    if (!isReleased(episodeRelease)) {
+      if (typeof window !== "undefined") window.alert(releaseMessage(episodeRelease));
+      return;
+    }
     const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
     if (!episodeProgress[progressKey]) {
       setWatchedAction({
@@ -7375,6 +7826,8 @@ export default function Home() {
 
   function applyEpisodeWatched(show, episode, season, showDetails, watchedAt) {
     const normalized = { ...show, media_type: "tv" };
+    const episodeRelease = episode?.air_date ? { ...normalized, first_air_date: episode.air_date, release_date: "" } : normalized;
+    if (!isReleased(episodeRelease)) return;
     const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
     const nextEpisodes = {
       ...episodeProgress,
@@ -7442,6 +7895,7 @@ export default function Home() {
     persist("moviegram.ratings", next);
     syncTrackingNow(rating ? "rating_save" : "rating_clear", { ratings: next, reviews: nextReviews });
     if (supabaseUser?.id) saveRatingReview(supabaseUser.id, normalized, { rating, reviewText: existingText });
+    setProfileStats((current) => current ? { ...current, reviews: Object.keys(nextReviews).length } : current);
     if (rating) logActivity("rating", normalized, { rating });
   }
 
@@ -7450,19 +7904,33 @@ export default function Home() {
     return entry?.text || "";
   }
 
-  function saveReview(item, text) {
+  function reviewMetaForItem(item) {
+    return reviews[keyOf({ ...item, media_type: mediaType(item) })] || {};
+  }
+
+  function saveReview(item, text, options = {}) {
     const normalized = { ...item, media_type: mediaType(item) };
     const key = keyOf(normalized);
     const trimmed = text.trim();
+    const sheetRating = Number(options.rating || 0);
+    const localRating = sheetRating ? normalizeUserRating(sheetRating / 2) : ratingForItem(normalized, ratings);
     const next = { ...reviews };
-    if (trimmed) next[key] = { item: normalized, text: trimmed, reviewedAt: new Date().toISOString() };
-    else if (ratings[key]) next[key] = { item: normalized, text: "" };
+    if (trimmed) next[key] = { item: normalized, text: trimmed, reviewedAt: new Date().toISOString(), containsSpoiler: Boolean(options.containsSpoiler), visibility: options.visibility || "public" };
+    else if (ratings[key] || localRating) next[key] = { item: normalized, text: "", containsSpoiler: Boolean(options.containsSpoiler), visibility: options.visibility || "public" };
     else delete next[key];
+    let nextRatings = ratings;
+    if (localRating) {
+      nextRatings = { ...ratings, [key]: localRating };
+      setRatings(nextRatings);
+      persist("moviegram.ratings", nextRatings);
+    }
     setReviews(next);
     persist("moviegram.reviews", next);
-    if (supabaseUser?.id) saveRatingReview(supabaseUser.id, normalized, { rating: ratingForItem(normalized, ratings) || null, reviewText: trimmed });
-    syncTrackingNow(trimmed ? "review_save" : "review_clear", { reviews: next });
-    if (trimmed) logActivity("review", normalized, { review: trimmed, rating: ratingForItem(normalized, ratings) });
+    if (supabaseUser?.id) saveRatingReview(supabaseUser.id, normalized, { rating: sheetRating || localRating || null, reviewText: trimmed, containsSpoiler: Boolean(options.containsSpoiler), visibility: options.visibility || "public" });
+    setProfileStats((current) => current ? { ...current, reviews: Object.keys(next).length } : current);
+    syncTrackingNow(trimmed ? "review_save" : "review_clear", { reviews: next, ratings: nextRatings });
+    if (trimmed) logActivity("review", normalized, { review: trimmed, rating: sheetRating || localRating, spoiler: Boolean(options.containsSpoiler), visibility: options.visibility || "public" });
+    else if (sheetRating || localRating) logActivity("rating", normalized, { rating: sheetRating || localRating, visibility: options.visibility || "public" });
     setReviewItem(null);
   }
 
@@ -7474,27 +7942,31 @@ export default function Home() {
     else delete next[key];
     setReviews(next);
     persist("moviegram.reviews", next);
+    setProfileStats((current) => current ? { ...current, reviews: Object.keys(next).length } : current);
     syncTrackingNow("review_delete", { reviews: next });
     setReviewItem(null);
   }
 
-  function createCustomList(title, item) {
+  async function createCustomList(title, item, options = {}) {
     const id = `list-${Date.now()}`;
     const normalized = { ...item, media_type: mediaType(item) };
+    let listId = id;
+    if (supabaseUser?.id) {
+      const remoteList = await createUserList(supabaseUser.id, { name: title, description: options.description || "", visibility: options.visibility || "public" });
+      if (remoteList?.id) {
+        listId = remoteList.id;
+        addItemToList(supabaseUser.id, remoteList.id, normalized);
+      }
+    }
     const next = {
       ...customLists,
-      [id]: { id, title, createdAt: new Date().toISOString(), items: [normalized] }
+      [listId]: { id: listId, title, description: options.description || "", privacy: options.visibility || "public", createdAt: new Date().toISOString(), items: [normalized] }
     };
     setCustomLists(next);
     persist("moviegram.customLists", next);
+    setProfileStats((current) => current ? { ...current, lists: (current.lists || 0) + 1 } : current);
     syncTrackingNow("custom_list_create", { customLists: next });
-    if (supabaseUser?.id) {
-      createUserList(supabaseUser.id, { name: title, visibility: "private" })
-        .then((remoteList) => {
-          if (remoteList?.id) addItemToList(supabaseUser.id, remoteList.id, normalized);
-        });
-    }
-    logActivity("custom_list_create", normalized, { listKey: id });
+    logActivity("list_create", normalized, { listKey: listId, title, description: options.description || "", visibility: options.visibility || "public" });
   }
 
   function toggleCustomListItem(listId, item) {
@@ -7508,7 +7980,7 @@ export default function Home() {
     persist("moviegram.customLists", next);
     syncTrackingNow(exists ? "custom_list_remove" : "custom_list_add", { customLists: next });
     if (!exists && supabaseUser?.id && /^[0-9a-f-]{36}$/i.test(listId)) addItemToList(supabaseUser.id, listId, normalized, nextItems.length - 1);
-    logActivity(exists ? "custom_list_remove" : "custom_list_add", normalized, { listKey: listId });
+    logActivity(exists ? "list_remove" : "list_add", normalized, { listKey: listId, title: list.title });
   }
 
   function deleteCustomList(listId) {
@@ -7614,7 +8086,23 @@ export default function Home() {
   }
 
   const title = activeSocial === "messages" ? "Messages" : activeSocial === "notifications" ? "Notifications" : activeSocial === "publicProfile" ? "Profile" : activeSocial === "blend" ? "Blend" : activeSocial === "stats" ? "Stats" : activeSocial === "diary" ? "Diary" : tabs.find((tab) => tab.id === activeTab)?.label || "MovieGram";
+  const unreadNotificationCount = notifications.filter((notification) => !notification.is_read).length;
   const selectedKey = selected ? keyOf(selected) : "";
+  const libraryState = useMemo(() => {
+    const watchedItems = Object.fromEntries(Object.entries(normalizeTrackingCollection(watched)).filter(([, item]) => isReleased(item)));
+    const watchlistItems = enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedItems);
+    return {
+      watched: watchedItems,
+      watchlist: watchlistItems,
+      ratings: normalizeRatingsCollection(ratings),
+      reviews: reviews || {}
+    };
+  }, [watched, watchlist, ratings, reviews]);
+  const releasedWatched = libraryState.watched;
+  const isItemWatched = useCallback((item) => hasStoredItem(item, libraryState.watched), [libraryState.watched]);
+  const isItemWatchlisted = useCallback((item) => hasStoredItem(item, libraryState.watchlist), [libraryState.watchlist]);
+  const isItemReviewed = useCallback((item) => Boolean(item && libraryState.reviews[keyOf({ ...item, media_type: mediaType(item) })]), [libraryState.reviews]);
+  const getItemRating = useCallback((item) => ratingForItem(item, libraryState.ratings), [libraryState.ratings]);
 
   const queryProps = {
     query,
@@ -7639,6 +8127,7 @@ export default function Home() {
           bundle={publicProfileBundle}
           currentUser={supabaseUser}
           followStatuses={followStatuses}
+          followBusyIds={followBusyIds}
           onBack={() => { setSelectedPublicProfile(null); setPublicProfileBundle(null); setActiveSocial(null); }}
           onFollowToggle={toggleFollow}
           onOpenItem={(item) => { setSelectedPublicProfile(null); setPublicProfileBundle(null); setActiveSocial(null); openItem(item); }}
@@ -7649,7 +8138,7 @@ export default function Home() {
   } else if (activeSocial === "messages") {
     screen = (
       <section className="mg2-native-social messages">
-        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onOpenBlend={() => setActiveSocial("blend")} onClose={() => setActiveSocial(null)} user={supabaseUser} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followStatuses={followStatuses} onFollowToggle={toggleFollow} onOpenPublicProfile={openPublicProfile} />
+        <MessagesScreen selectedConversation={selectedConversation} setSelectedConversation={setSelectedConversation} friendStates={friendStates} onFriendAction={toggleFriendState} onOpenBlend={() => setActiveSocial("blend")} onClose={() => setActiveSocial(null)} user={supabaseUser} socialProfiles={socialProfiles} userResults={userResults} userSearch={userSearch} setUserSearch={setUserSearch} userSearchLoading={userSearchLoading} followingIds={followingIds} followerProfiles={followerProfiles} followStatuses={followStatuses} followBusyIds={followBusyIds} onFollowToggle={toggleFollow} onOpenPublicProfile={openPublicProfile} />
         {socialError && <div className="mg2-empty">{socialError}</div>}
       </section>
     );
@@ -7658,9 +8147,9 @@ export default function Home() {
       <section className="mg2-native-social">
         <div className="mg2-social-header">
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
-          <h2>Notifications</h2>
+          <h2>Notifications{unreadNotificationCount ? ` (${unreadNotificationCount})` : ""}</h2>
         </div>
-        <NotificationsScreen pendingRequests={pendingRequests} notifications={notifications} onRespondFollowRequest={respondFollowRequest} />
+        <NotificationsScreen pendingRequests={pendingRequests} notifications={notifications} onRespondFollowRequest={respondFollowRequest} onMarkRead={markSingleNotificationRead} />
       </section>
     );
   } else if (activeSocial === "blend") {
@@ -7680,7 +8169,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Stats</h2>
         </div>
-        <StatsScreen watched={watched} watchlist={watchlist} ratings={ratings} />
+        <StatsScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} />
       </section>
     );
   } else if (activeSocial === "diary") {
@@ -7690,15 +8179,15 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Diary</h2>
         </div>
-        <WatchDiaryScreen watched={watched} watchlist={watchlist} ratings={ratings} onOpen={openItem} />
+        <WatchDiaryScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} onOpen={openItem} />
       </section>
     );
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={watched} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
+    screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
@@ -7716,14 +8205,14 @@ export default function Home() {
         onOpenPerson={openPerson}
         onOpenPublicProfile={openPublicProfile}
         onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
-        watchlist={watchlist}
-        watched={watched}
-        ratings={ratings}
+        watchlist={libraryState.watchlist}
+        watched={libraryState.watched}
+        ratings={libraryState.ratings}
         favorites={favorites}
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={watchlist} watched={watched} ratings={ratings} reviews={reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} recentActivity={recentActivity} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
+    screen = <ProfileScreen watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} recentActivity={recentActivity} recentReviews={recentReviews} profileStats={profileStats} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
   }
 
   if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
@@ -7767,10 +8256,10 @@ export default function Home() {
           loading={detailsLoading}
           onClose={() => setSelected(null)}
           onWatchlist={toggleWatchlist}
-          saved={hasStoredItem(selected, watchlist)}
-          watched={hasStoredItem(selected, watched)}
+          saved={isItemWatchlisted(selected)}
+          watched={isItemWatched(selected)}
           onWatched={toggleWatched}
-          rating={ratingForItem(selected, ratings)}
+          rating={getItemRating(selected)}
           onRate={rateItem}
           onOpen={openItem}
           onOpenReels={() => { setSelected(null); setActiveTab("reels"); }}
@@ -7794,10 +8283,10 @@ export default function Home() {
       <PersonProfileModal
         person={selectedPerson}
         apiFetch={apiFetch}
-        watched={watched}
-        watchlist={watchlist}
-        ratings={ratings}
-        reviews={reviews}
+        watched={libraryState.watched}
+        watchlist={libraryState.watchlist}
+        ratings={libraryState.ratings}
+        reviews={libraryState.reviews}
         onClose={() => setSelectedPerson(null)}
         onOpen={(item) => { setSelectedPerson(null); openItem(item); }}
       />
@@ -7808,8 +8297,8 @@ export default function Home() {
       />
       <QuickActionSheet
         item={quickActionItem}
-        saved={quickActionItem ? hasStoredItem(quickActionItem, watchlist) : false}
-        watched={quickActionItem ? hasStoredItem(quickActionItem, watched) : false}
+        saved={quickActionItem ? isItemWatchlisted(quickActionItem) : false}
+        watched={quickActionItem ? isItemWatched(quickActionItem) : false}
         favorite={quickActionItem ? hasStoredItem(quickActionItem, favorites) : false}
         onClose={() => setQuickActionItem(null)}
         onWatched={toggleWatched}
@@ -7820,6 +8309,9 @@ export default function Home() {
       <ReviewSheet
         item={reviewItem}
         initialReview={reviewItem ? reviewForItem(reviewItem) : ""}
+        initialRating={reviewItem ? getItemRating(reviewItem) : ""}
+        initialSpoiler={reviewItem ? Boolean(reviewMetaForItem(reviewItem).containsSpoiler) : false}
+        initialVisibility={reviewItem ? reviewMetaForItem(reviewItem).visibility || "public" : "public"}
         onSave={saveReview}
         onDelete={deleteReview}
         onClose={() => setReviewItem(null)}

@@ -10064,6 +10064,36 @@ body {
   font: inherit;
 }
 
+.mg2-review-sheet label {
+  display: grid;
+  gap: 6px;
+  color: #cfd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mg2-review-sheet input,
+.mg2-review-sheet select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+  font: inherit;
+}
+
+.mg2-review-sheet .mg2-review-spoiler {
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+}
+
+.mg2-review-sheet .mg2-review-spoiler input {
+  min-height: 20px;
+  padding: 0;
+}
+
 .mg2-auth-fields {
   display: grid;
   gap: 8px;
@@ -10248,11 +10278,12 @@ body {
 
 .mg2-list-create {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
-.mg2-list-create input {
+.mg2-list-create input,
+.mg2-list-create select {
   min-height: 42px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 12px;

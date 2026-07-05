@@ -115,6 +115,8 @@ create table if not exists public.ratings_reviews (
   tmdb_id integer,
   media_type text check (media_type in ('movie','tv')),
   title text not null,
+  poster_path text,
+  release_year integer,
   rating numeric check (rating >= 0 and rating <= 10),
   review_text text,
   contains_spoiler boolean default false,
@@ -123,6 +125,9 @@ create table if not exists public.ratings_reviews (
   updated_at timestamptz default now(),
   unique(user_id, item_key)
 );
+
+alter table public.ratings_reviews add column if not exists poster_path text;
+alter table public.ratings_reviews add column if not exists release_year integer;
 
 create table if not exists public.activity_events (
   id uuid primary key default gen_random_uuid(),
@@ -245,6 +250,10 @@ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'profiles_select_public_or_own') then
     create policy profiles_select_public_or_own on public.profiles for select
       using (auth.uid() = id or is_private = false);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'profiles_select_authenticated_discovery') then
+    create policy profiles_select_authenticated_discovery on public.profiles for select
+      using (auth.role() = 'authenticated');
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'profiles_insert_own') then
     create policy profiles_insert_own on public.profiles for insert
