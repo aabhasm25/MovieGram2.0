@@ -2775,6 +2775,7 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
   const [expanded, setExpanded] = useState(false);
   const [filmFilter, setFilmFilter] = useState("all");
   const [historyFilter, setHistoryFilter] = useState("all");
+  const [filmSort, setFilmSort] = useState("latest");
   useEffect(() => {
     async function loadPerson() {
       if (!person?.id || !apiFetch) return;
@@ -2792,10 +2793,51 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
   }, [apiFetch, person?.id]);
   if (!person) return null;
   const shown = details || person;
-  const credits = dedupe(normalize((shown.combined_credits?.cast || []).filter((item) => ["movie", "tv"].includes(item.media_type || mediaType(item)))))
-    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
-  const filterCredits = (items, filter) => items.filter((credit) => filter === "all" || mediaType(credit) === filter);
-  const filteredCredits = filterCredits(credits, filmFilter);
+  const creditDate = (credit = {}) => credit.release_date || credit.first_air_date || "";
+  const creditYear = (credit = {}) => creditDate(credit)?.slice(0, 4) || "TBA";
+  const castCredits = normalize(shown.combined_credits?.cast || [])
+    .filter((item) => ["movie", "tv"].includes(item.media_type || mediaType(item)))
+    .map((item) => ({ ...item, creditType: "acting", roleLabel: item.character || "Actor" }));
+  const crewCredits = normalize(shown.combined_credits?.crew || [])
+    .filter((item) => ["movie", "tv"].includes(item.media_type || mediaType(item)))
+    .map((item) => {
+      const job = item.job || item.department || "Crew";
+      const normalizedJob = /director|creator/i.test(job) ? "directing" : /writer|screenplay|story/i.test(job) ? "writing" : "crew";
+      return { ...item, creditType: normalizedJob, roleLabel: job };
+    });
+  const creditMap = new Map();
+  [...castCredits, ...crewCredits].forEach((credit) => {
+    const key = `${mediaType(credit)}:${credit.id}`;
+    const existing = creditMap.get(key);
+    if (!existing) {
+      creditMap.set(key, credit);
+      return;
+    }
+    const roles = new Set([existing.roleLabel, credit.roleLabel].filter(Boolean));
+    const creditTypes = new Set([existing.creditType, credit.creditType].filter(Boolean));
+    creditMap.set(key, { ...existing, ...credit, poster_path: existing.poster_path || credit.poster_path, roleLabel: [...roles].join(", "), creditType: [...creditTypes].join(" ") });
+  });
+  const credits = Array.from(creditMap.values());
+  const filterCredits = (items, filter) => items.filter((credit) => {
+    if (filter === "all") return true;
+    if (filter === "movie" || filter === "tv") return mediaType(credit) === filter;
+    if (filter === "upcoming") return !isReleased(credit);
+    if (filter === "acting") return String(credit.creditType || "").includes("acting");
+    if (filter === "directing") return String(credit.creditType || "").includes("directing");
+    if (filter === "writing") return String(credit.creditType || "").includes("writing");
+    if (filter === "crew") return String(credit.creditType || "").includes("crew");
+    return true;
+  });
+  const sortCredits = (items) => [...items].sort((a, b) => {
+    if (filmSort === "popular") return (b.popularity || 0) - (a.popularity || 0);
+    const aDate = creditDate(a);
+    const bDate = creditDate(b);
+    if (!aDate && !bDate) return (b.popularity || 0) - (a.popularity || 0);
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return filmSort === "oldest" ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
+  });
+  const filteredCredits = sortCredits(filterCredits(credits, filmFilter));
   const history = filterCredits(credits.filter((credit) => (
     hasStoredItem(credit, watched) ||
     hasStoredItem(credit, watchlist) ||
@@ -2805,13 +2847,20 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
   const bio = shown.biography || "Biography unavailable.";
   const longBio = bio.length > 260;
   const birthday = shown.birthday ? new Date(shown.birthday) : null;
-  const age = birthday ? Math.max(0, Math.floor((Date.now() - birthday.getTime()) / 31557600000)) : null;
+  const deathday = shown.deathday ? new Date(shown.deathday) : null;
+  const age = birthday ? Math.max(0, Math.floor(((deathday?.getTime() || Date.now()) - birthday.getTime()) / 31557600000)) : null;
   const bornLabel = birthday ? birthday.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "";
+  const deathLabel = deathday ? deathday.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "";
   const heroPortrait = shown.profile_path ? posterUrl(shown.profile_path, "w780") : "";
   const filterTabs = [
     { id: "all", label: "All" },
     { id: "movie", label: "Movies" },
-    { id: "tv", label: "TV" }
+    { id: "tv", label: "TV Shows" },
+    { id: "upcoming", label: "Upcoming" },
+    { id: "acting", label: "Acting" },
+    { id: "directing", label: "Directing" },
+    { id: "writing", label: "Writing" },
+    { id: "crew", label: "Production/Crew" }
   ];
   return (
     <div className="mg2-modal-backdrop" onMouseDown={onClose}>
@@ -2826,8 +2875,10 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
                 <span>{shown.known_for_department || "Acting"}</span>
                 <h2>{shown.name}</h2>
                 {bornLabel && <p>Born {bornLabel}</p>}
-                {age !== null && <p>Age {age}</p>}
+                {deathLabel && <p>Died {deathLabel}</p>}
+                {age !== null && <p>{deathday ? "Age at death" : "Age"} {age}</p>}
                 {shown.place_of_birth && <p>{shown.place_of_birth}</p>}
+                {shown.popularity && <p>Popularity {Math.round(shown.popularity)}</p>}
               </div>
             </div>
             <section className="mg2-detail-panel">
@@ -2838,18 +2889,31 @@ function PersonProfileModal({ person, apiFetch, watched = {}, watchlist = {}, ra
             <section className="mg2-person-columns">
               <div className="mg2-person-column">
                 <div className="mg2-detail-panel-head"><h3>From Your History</h3><span>{history.length}</span></div>
-                <div className="mg2-person-filters">{filterTabs.map((tab) => <button key={tab.id} className={historyFilter === tab.id ? "active" : ""} type="button" onClick={() => setHistoryFilter(tab.id)}>{tab.label}</button>)}</div>
+                <div className="mg2-person-filters">{filterTabs.slice(0, 3).map((tab) => <button key={tab.id} className={historyFilter === tab.id ? "active" : ""} type="button" onClick={() => setHistoryFilter(tab.id)}>{tab.label}</button>)}</div>
                 {history.length ? (
                   <div className="mg2-person-film-grid history">
-                    {history.slice(0, 16).map((credit) => <PosterCard key={keyOf(credit)} item={credit} onOpen={onOpen} saved={hasStoredItem(credit, watchlist)} watched={hasStoredItem(credit, watched)} rating={ratingForItem(credit, ratings)} compact />)}
+                    {history.filter((credit) => credit.poster_path).slice(0, 16).map((credit) => <PosterCard key={keyOf(credit)} item={credit} onOpen={onOpen} saved={hasStoredItem(credit, watchlist)} watched={hasStoredItem(credit, watched)} rating={ratingForItem(credit, ratings)} compact />)}
                   </div>
                 ) : <div className="mg2-empty">No local history with this actor yet.</div>}
               </div>
               <div className="mg2-person-column">
                 <div className="mg2-detail-panel-head"><h3>Filmography</h3><span>{filteredCredits.length}</span></div>
                 <div className="mg2-person-filters">{filterTabs.map((tab) => <button key={tab.id} className={filmFilter === tab.id ? "active" : ""} type="button" onClick={() => setFilmFilter(tab.id)}>{tab.label}</button>)}</div>
+                <div className="mg2-person-sort">
+                  <button className={filmSort === "latest" ? "active" : ""} type="button" onClick={() => setFilmSort("latest")}>Latest</button>
+                  <button className={filmSort === "oldest" ? "active" : ""} type="button" onClick={() => setFilmSort("oldest")}>Oldest</button>
+                  <button className={filmSort === "popular" ? "active" : ""} type="button" onClick={() => setFilmSort("popular")}>Popular</button>
+                </div>
                 <div className="mg2-person-film-grid">
-                  {filteredCredits.slice(0, 40).map((credit) => <PosterCard key={keyOf(credit)} item={credit} onOpen={onOpen} saved={hasStoredItem(credit, watchlist)} watched={hasStoredItem(credit, watched)} rating={ratingForItem(credit, ratings)} compact />)}
+                  {filteredCredits.slice(0, 80).map((credit) => (
+                    <button key={`${keyOf(credit)}-${credit.roleLabel}`} className="mg2-person-film-card" type="button" onClick={() => onOpen(credit)}>
+                      {credit.poster_path ? <img src={posterUrl(credit.poster_path, "w342")} alt={titleOf(credit)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} /> : <span className="mg2-person-poster-fallback" />}
+                      <strong>{titleOf(credit)}</strong>
+                      <small>{creditYear(credit)} · {mediaType(credit) === "tv" ? "TV" : "Movie"}</small>
+                      <em>{credit.roleLabel || "Credit"}</em>
+                      {hasStoredItem(credit, watched) && <b><Icon name="check" /></b>}
+                    </button>
+                  ))}
                 </div>
               </div>
             </section>
@@ -5405,7 +5469,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   );
 }
 
-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, onOpen, onOpenDiary }) {
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, onOpen, onOpenDiary, onOpenStats }) {
   const [logTab, setLogTab] = useState("watchlist");
   const [logQuery, setLogQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -5451,6 +5515,11 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
         <span><strong>Watch Calendar / Diary</strong><small>See your watched history by date</small></span>
         <Icon name="log" />
       </button>
+      <div className="mg2-log-cp24-actions" aria-label="Personal analytics">
+        <button type="button" onClick={onOpenDiary}><Icon name="book" /><span>Watch History</span></button>
+        <button type="button" onClick={onOpenStats}><Icon name="chart" /><span>Stats</span></button>
+        <button type="button" onClick={onOpenStats}><Icon name="sparkle" /><span>Wrapped</span></button>
+      </div>
       <div className="mg2-log-filters" aria-label="Log filters">
         <button className={typeFilter === "all" ? "active" : ""} type="button" onClick={() => setTypeFilter("all")}>All</button>
         <button className={typeFilter === "movie" ? "active" : ""} type="button" onClick={() => setTypeFilter("movie")}>Movie</button>
@@ -6004,12 +6073,10 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { label: "Following", value: user ? profileData.following : "0", action: () => { setPeopleQuery(""); setProfilePanel("following"); } }
   ];
   const shortcuts = [
-    { label: "Stats", icon: "chart", action: onOpenStats },
-    { label: "Watch History", icon: "book", action: onOpenDiary },
-    { label: "Wrapped", icon: "sparkle", action: onOpenStats },
+    { label: "Favorite", icon: "heart", className: "mg2-shortcut-favorites", action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
     { label: "Lists", icon: "list", action: () => { setProfilePanel("lists"); setSelectedList(null); } },
-    { label: "Watch ASAP", icon: "clock", action: () => openProfileTab("watchlist") },
-    { label: "Reviews", icon: "feed", action: () => openProfileTab("reviews") }
+    { label: "Stats", icon: "chart", action: onOpenStats },
+    { label: "Diary", icon: "book", action: onOpenDiary }
   ];
   const shownProfile = profile || profileDraft || defaultProfileForUser(user);
   const displayName = shownProfile.display_name || shownProfile.username || user?.email?.split("@")[0] || "Aabhas";
@@ -6137,7 +6204,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
         {shortcuts.map((shortcut) => (
           <button
             key={shortcut.label}
-            className={`mg2-shortcut-${shortcut.label.toLowerCase().replace(/\s+/g, "-")}`}
+            className={shortcut.className || `mg2-shortcut-${shortcut.label.toLowerCase().replace(/\s+/g, "-")}`}
             type="button"
             onClick={shortcut.action}
           >
@@ -6577,6 +6644,18 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {},
     const watchedInHub = (hub.items || []).filter((entry) => watchedItems.some((item) => itemMatches(item, entry))).length;
     return { hub, total, watched: watchedInHub };
   }).filter((entry) => entry.total > 1 && entry.watched > 0).sort((a, b) => b.watched - a.watched).slice(0, 4);
+  const countPeople = (items, selector) => {
+    const counts = {};
+    items.forEach((item) => {
+      selector(item).forEach((person) => {
+        const name = person?.name;
+        if (name) counts[name] = (counts[name] || 0) + 1;
+      });
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  };
+  const topActors = countPeople(watchedItems, (item) => item.credits?.cast?.slice(0, 8) || []);
+  const topCreators = countPeople(watchedItems, (item) => (item.credits?.crew || []).filter((person) => /director|creator/i.test(person.job || "")));
   const monthCounts = watchedItems.reduce((acc, item) => {
     const month = item.watchedAt ? new Date(item.watchedAt).toLocaleString("en-US", { month: "long" }) : "Untracked";
     acc[month] = (acc[month] || 0) + 1;
@@ -6664,6 +6743,14 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {},
       <div className="mg2-social-section">
         <h3>Collection Progress</h3>
         {(collectionProgress.length ? collectionProgress : [{ hub: { name: "Watch collection titles to unlock progress" }, watched: 0, total: 0 }]).map((entry) => <p key={entry.hub.name}><span style={{ width: `${entry.total ? Math.max(8, (entry.watched / entry.total) * 100) : 0}%` }} />{entry.hub.shortName || entry.hub.name}<small>{entry.total ? `${entry.watched}/${entry.total}` : "Locked"}</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Top Actors</h3>
+        {(topActors.length ? topActors : [["Watch titles with loaded cast data to unlock this insight", 0]]).map(([name, count]) => <p key={name}><span style={{ width: `${count ? Math.max(8, (count / Math.max(1, watchedCount)) * 100) : 0}%` }} />{name}<small>{count || "Locked"}</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Top Directors / Creators</h3>
+        {(topCreators.length ? topCreators : [["Watch titles with loaded crew data to unlock this insight", 0]]).map(([name, count]) => <p key={name}><span style={{ width: `${count ? Math.max(8, (count / Math.max(1, watchedCount)) * 100) : 0}%` }} />{name}<small>{count || "Locked"}</small></p>)}
       </div>
       <div className="mg2-social-section">
         <h3>Year Preview</h3>
@@ -6897,13 +6984,16 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     : details?.content_ratings?.results?.find((entry) => entry.iso_3166_1 === "US")?.rating;
   const genres = details?.genres || [];
   const actorSource = type === "tv" && details?.aggregate_credits?.cast?.length
-    ? [...details.aggregate_credits.cast].sort((a, b) => (b.total_episode_count || 0) - (a.total_episode_count || 0))
+    ? details.aggregate_credits.cast
     : details?.credits?.cast || [];
-  const cast = type === "tv"
-    ? (actorSource.some((person) => Number.isFinite(person.total_episode_count))
-      ? actorSource.filter((person) => (person.total_episode_count || 0) > 3).slice(0, 40)
-      : actorSource.filter((person) => person?.name).slice(0, 40))
-    : actorSource.filter((person) => person?.name).slice(0, 40);
+  const cast = Array.from(new Map(actorSource
+    .filter((person) => person?.id && person?.name)
+    .sort((a, b) => {
+      const imageScore = (b.profile_path ? 1 : 0) - (a.profile_path ? 1 : 0);
+      if (imageScore) return imageScore;
+      return (a.order ?? 999) - (b.order ?? 999) || (b.total_episode_count || 0) - (a.total_episode_count || 0);
+    })
+    .map((person) => [person.id, person])).values()).slice(0, 35);
   const userRating = normalizeUserRating(rating);
   const released = isReleased(shown);
   const externalRatingMeta = (entry) => {
@@ -6913,11 +7003,25 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
     return { className: "meta", icon: entry.source, value: entry.value };
   };
   const ratingIcon = (entry, meta) => entry.source === "RT Critics" ? "\uD83C\uDF45" : entry.source === "RT Audience" ? "\uD83C\uDF7F" : meta.icon;
-  const providerGroups = [
-    { id: "stream", label: "Stream", items: watchProviders?.stream || [] },
-    { id: "rent", label: "Rent", items: watchProviders?.rent || [] },
-    { id: "buy", label: "Buy", items: watchProviders?.buy || [] }
-  ].filter((group) => group.items.length > 0);
+  const mergedProviders = [];
+  [
+    { label: "Stream", items: watchProviders?.stream || [] },
+    { label: "Rent", items: watchProviders?.rent || [] },
+    { label: "Buy", items: watchProviders?.buy || [] },
+    { label: "Ads", items: watchProviders?.ads || [] },
+    { label: "Subscription", items: watchProviders?.flatrate || [] }
+  ].forEach((group) => {
+    group.items.forEach((provider) => {
+      const key = provider.id || provider.provider_id || provider.name;
+      if (!key) return;
+      let existing = mergedProviders.find((entry) => entry.key === key);
+      if (!existing) {
+        existing = { key, ...provider, actions: [] };
+        mergedProviders.push(existing);
+      }
+      if (!existing.actions.includes(group.label)) existing.actions.push(group.label);
+    });
+  });
   const realSocialForTitle = socialActivity.filter((entry) => entry.item && itemMatches(entry.item, shown));
   const realWatchedByFriends = realSocialForTitle.filter((entry) => ["watched", "rated", "rating", "reviewed", "review", "watchlist_add", "liked"].includes(entry.action)).slice(0, 4);
   const realFriendReviews = realSocialForTitle.filter((entry) => entry.action === "reviewed" || entry.action === "review").slice(0, 4);
@@ -7197,29 +7301,23 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 )}
               </section>
             )}
-            {providerGroups.length > 0 && (
+            {mergedProviders.length > 0 && (
               <section className="mg2-detail-panel">
                 <div className="mg2-detail-panel-head">
                   <h3>Where to Watch</h3>
                 </div>
                 <div className="mg2-provider-list">
-                  {providerGroups.map((group) => (
-                    <div key={group.id}>
-                      <strong>{group.label}</strong>
-                      <span>
-                        {group.items.map((provider) => {
-                          const providerLink = providerSearchUrl(provider, titleOf(shown)) || provider.link || watchProviders?.link;
-                          const providerBody = <>
-                            {provider.logo_path && <img src={`${IMAGE_BASE}/w92${provider.logo_path}`} alt="" loading="lazy" />}
-                            {provider.name}
-                          </>;
-                          return providerLink
-                            ? <a key={`${group.id}-${provider.id || provider.name}`} href={providerLink} target="_blank" rel="noreferrer">{providerBody}</a>
-                            : <em key={`${group.id}-${provider.id || provider.name}`}>{providerBody}</em>;
-                        })}
-                      </span>
-                    </div>
-                  ))}
+                  {mergedProviders.map((provider) => {
+                    const providerLink = providerSearchUrl(provider, titleOf(shown)) || provider.link || watchProviders?.link;
+                    const providerBody = <>
+                      {provider.logo_path && <img src={`${IMAGE_BASE}/w92${provider.logo_path}`} alt="" loading="lazy" />}
+                      <strong>{provider.name || provider.provider_name}</strong>
+                      <small>{provider.actions.join(" · ")}</small>
+                    </>;
+                    return providerLink
+                      ? <a key={provider.key} href={providerLink} target="_blank" rel="noreferrer">{providerBody}</a>
+                      : <em key={provider.key}>{providerBody}</em>;
+                  })}
                 </div>
               </section>
             )}
@@ -9497,7 +9595,7 @@ export default function Home() {
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} />;
+    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
