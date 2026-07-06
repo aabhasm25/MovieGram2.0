@@ -9767,34 +9767,33 @@ body {
 
 .mg2-profile-review-cards {
   display: grid;
-  gap: 10px;
+  gap: 9px;
 }
 
 .mg2-profile-review-cards button {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px;
-  padding: 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 8px 0;
   color: #fff;
-  background: rgba(255,255,255,.035);
+  background: transparent;
   text-align: left;
-  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+  transition: transform .18s ease, background .18s ease;
 }
 
 .mg2-profile-review-cards button:hover {
   transform: translateY(-1px);
-  border-color: rgba(167,139,255,.24);
-  background: rgba(255,255,255,.055);
+  background: rgba(255,255,255,.035);
 }
 
 .mg2-profile-review-cards img {
-  width: 58px;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
+  width: 42px;
+  height: 58px;
+  border-radius: 6px;
   object-fit: cover;
 }
 
@@ -9812,9 +9811,7 @@ body {
 }
 
 .mg2-profile-review-cards small {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  display: block;
   margin-top: 4px;
   overflow: hidden;
   color: #aeb5c1;
@@ -9823,23 +9820,11 @@ body {
   white-space: nowrap;
 }
 
-.mg2-profile-review-cards small b {
-  flex: 0 0 auto;
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 999px;
-  padding: 2px 7px;
-  color: #dfe3ec;
-  background: rgba(255,255,255,.055);
-  font-size: 10px;
-}
-
-.mg2-profile-review-cards small i {
-  min-width: 0;
-  overflow: hidden;
-  color: #b8bfca;
+.mg2-profile-review-cards em {
+  color: #ffd35a;
+  font-size: 12px;
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 900;
 }
 
 .mg2-profile-preview-row {
@@ -10593,19 +10578,26 @@ body {
 
 .mg2-auth-card,
 .mg2-landing {
-  animation: mg2-auth-soft-enter .22s ease both;
+  animation: mg2-auth-soft-enter .2s ease-out both;
   transform-origin: center top;
+  will-change: opacity, transform;
 }
 
 @keyframes mg2-auth-soft-enter {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(.985);
+    transform: translateY(8px) scale(.995);
   }
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+.mg2-auth-card {
+  max-height: calc(100dvh - max(36px, env(safe-area-inset-top)) - max(18px, env(safe-area-inset-bottom)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .mg2-landing {

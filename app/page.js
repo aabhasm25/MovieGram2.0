@@ -4191,7 +4191,9 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     const posterPath = item?.poster_path
       || reel?.poster_path
       || reel?.item_poster_path
+      || reel?.movie_poster_path
       || reel?.metadata?.poster_path
+      || reel?.tmdb_poster_path
       || reel?.item?.poster_path
       || "";
     const backdropPath = item?.backdrop_path || reel?.backdrop_path || reel?.item?.backdrop_path || "";
@@ -4209,7 +4211,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       tmdb_id: enrichedItem.id || null,
       media_type: mediaType(enrichedItem),
       poster_path: posterPath,
-      backdrop_path: backdropPath
+      backdrop_path: backdropPath,
+      source_video_id: reel?.source_video_id || reel?.sourceVideoId || getYouTubeVideoId(reel) || "",
+      metadata: {
+        poster_path: posterPath,
+        backdrop_path: backdropPath,
+        reel_id: reelIdentity(reel),
+        source_video_id: reel?.source_video_id || reel?.sourceVideoId || getYouTubeVideoId(reel) || ""
+      }
     });
     onOpen?.(enrichedItem, { source: "reels", reelId: reelIdentity(reel) });
   }
@@ -5154,7 +5163,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
       id: event.tmdb_id,
       media_type: event.media_type,
       title: event.title,
-      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || ""
+      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || event.metadata?.metadata?.poster_path || ""
     })),
     ...(recentReviews || []).map((row) => ({
       id: row.tmdb_id,
@@ -5247,7 +5256,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
       media_type: event.media_type,
       title: event.title,
       name: event.media_type === "tv" ? event.title : undefined,
-      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || ""
+      poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || event.metadata?.metadata?.poster_path || ""
     });
     const type = event.action || event.type || "activity";
     return {
@@ -5624,11 +5633,9 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
                     <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <span>
                       <strong>{titleOf(item)}</strong>
-                      <small>
-                        <b>{mediaType(item) === "tv" ? "TV" : "Movie"}</b>
-                        <i>{note || "Rating only"}{rating ? ` - ${formatUserRating(rating)}` : ""}</i>
-                      </small>
+                      <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {note || "Rating only"}</small>
                     </span>
+                    {rating && <em>{formatUserRating(rating)}</em>}
                   </button>
                 ))}
               </div>
