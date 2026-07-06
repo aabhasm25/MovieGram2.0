@@ -4047,7 +4047,90 @@ async function submitExternalReelLink({ item, url, reason, userId, approved }) {
   return { success: approved ? "Reel link saved and approved." : "Reel link submitted for review." };
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", detailsOpen = false, onOpen, onWatchlist, onWatched, onFavorite, onReelActivity }) {
+const REEL_GENRE_NAMES = {
+  12: "Adventure",
+  14: "Fantasy",
+  16: "Animation",
+  18: "Drama",
+  27: "Horror",
+  28: "Action",
+  35: "Comedy",
+  53: "Thriller",
+  80: "Crime",
+  878: "Sci-Fi",
+  9648: "Mystery",
+  10749: "Romance",
+  10751: "Family",
+  10759: "Action",
+  10765: "Sci-Fi"
+};
+
+function reelGenreChips(item = {}) {
+  const source = Array.isArray(item.genres) && item.genres.length
+    ? item.genres.map((genre) => genre?.name || genre).filter(Boolean)
+    : (Array.isArray(item.genre_names) ? item.genre_names : []);
+  const fromIds = Array.isArray(item.genre_ids)
+    ? item.genre_ids.map((id) => REEL_GENRE_NAMES[id]).filter(Boolean)
+    : [];
+  return [...new Set([...source, ...fromIds])].slice(0, 3);
+}
+
+function reelSpoilerLevel(reel = {}) {
+  const raw = `${reel.spoiler_level || reel.spoilerLevel || reel.metadata?.spoiler_level || reel.label || ""}`.toLowerCase();
+  const text = `${raw} ${reel.tags || ""} ${reel.kind || ""} ${reel.videoTitle || ""} ${reel.video_title || ""} ${reel.reason || ""}`.toLowerCase();
+  if (text.includes("no spoiler") || text.includes("spoiler-free") || text.includes("official trailer") || text.includes("teaser")) return "none";
+  if (text.includes("major spoiler") || text.includes("spoilers") || text.includes("ending explained") || text.includes("final scene")) return "spoilers";
+  if (text.includes("mild spoiler") || text.includes("scene") || text.includes("clip") || text.includes("edit")) return "mild";
+  return "none";
+}
+
+function reelSpoilerLabel(level = "none") {
+  if (level === "spoilers") return "Spoilers";
+  if (level === "mild") return "Mild spoilers";
+  return "No spoilers";
+}
+
+function scoreReelCandidate(item, context = {}) {
+  const {
+    index = 0,
+    watchedReels = [],
+    watchlistKeys = new Set(),
+    favoriteKeys = new Set(),
+    ratedKeySet = new Set(),
+    friendKeys = new Set()
+  } = context;
+  const key = keyOf(item);
+  let score = 44 - index;
+  let reason = "Trending now";
+  if (watchlistKeys.has(key)) {
+    score += 96;
+    reason = "Because this is in your watchlist";
+  }
+  if (favoriteKeys.has(key) || ratedKeySet.has(key)) {
+    score += 74;
+    reason = "Based on your ratings";
+  }
+  const itemGenres = new Set(reelGenreChips(item).map((genre) => genre.toLowerCase()));
+  const genreMatch = watchedReels.some((watchedItem) => reelGenreChips(watchedItem).some((genre) => itemGenres.has(String(genre).toLowerCase())));
+  const sameTypeMatch = watchedReels.some((watchedItem) => mediaType(watchedItem) === mediaType(item));
+  if (genreMatch) {
+    score += 48;
+    reason = `Because you watched ${titleOf(watchedReels.find((watchedItem) => reelGenreChips(watchedItem).some((genre) => itemGenres.has(String(genre).toLowerCase()))) || item)}`;
+  } else if (sameTypeMatch) {
+    score += 28;
+    reason = `Similar to your watched ${mediaType(item) === "tv" ? "shows" : "movies"}`;
+  }
+  if (friendKeys.has(key)) {
+    score += 34;
+    reason = "Friends are into this";
+  }
+  if (item.popularity || item.vote_count) score += 10;
+  if (item.poster_path || item.backdrop_path) score += 12;
+  else score -= 30;
+  return { score, reason };
+}
+
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", detailsOpen = false, onOpen, onWatchlist, onWatchAsap, onWatched, onFavorite, onReelActivity }) {
   const [reelTab, setReelTab] = useState("forYou");
   const [reels, setReels] = useState([]);
   const [loadingReels, setLoadingReels] = useState(true);
@@ -4080,6 +4163,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [reelComments, setReelComments] = useState(() => readReelComments());
   const [commentReel, setCommentReel] = useState(null);
   const [commentText, setCommentText] = useState("");
+  const [shareSheet, setShareSheet] = useState(null);
   const [heartBurst, setHeartBurst] = useState("");
   const reelRefs = useRef([]);
   const iframeRefs = useRef([]);
@@ -4118,7 +4202,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const canOpenReelAdmin = isReelAdmin || process.env.NODE_ENV !== "production" || localReelAdminEnabled;
   const canSubmitReels = isReelAdmin;
   const reelTabs = [
-    { id: "forYou", label: "For You" },
+    { id: "forYou", label: "Recommended" },
     { id: "watched", label: "Watched" },
     { id: "friends", label: "Friends" }
   ];
@@ -4164,25 +4248,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
     watchlistReels.forEach((item, index) => addCandidate(item, 170 - index * 2, "Because this is in your watchlist"));
     favoriteReels.forEach((item, index) => addCandidate(item, 160 - index * 2, "Based on your favorites"));
+    const friendKeys = new Set(friendActivityItems.map(keyOf));
     baseReels.forEach((item, index) => {
       const key = keyOf(item);
       if (watchedKeys.has(key)) return;
-      let score = 44 - index;
-      let reason = "Trending now";
-      if (watchlistKeys.has(key)) {
-        score += 90;
-        reason = "Because this is in your watchlist";
-      }
-      if (favoriteKeys.has(key) || ratedKeySet.has(key)) {
-        score += 70;
-        reason = "Based on your ratings";
-      }
-      const hasWatchedSameType = watchedReels.some((watchedItem) => mediaType(watchedItem) === mediaType(item));
-      if (hasWatchedSameType) {
-        score += 34;
-        reason = `Similar to your watched ${mediaType(item) === "tv" ? "shows" : "movies"}`;
-      }
-      if (item.poster_path || item.backdrop_path) score += 12;
+      const { score, reason } = scoreReelCandidate(item, { index, watchedReels, watchlistKeys, favoriteKeys, ratedKeySet, friendKeys });
       addCandidate(item, score, reason);
     });
     return [...candidates.values()].sort((a, b) => b.score - a.score);
@@ -4523,14 +4593,22 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
   function reelEmptyMessage() {
     if (reelTab === "watched") return "Mark movies or shows watched to see edits here.";
-    if (reelTab === "friends") return "Follow friends to see their movie reels. Try For You while your friend feed warms up.";
+    if (reelTab === "friends") return "Follow friends to see their movie reels. Try Recommended while your friend feed warms up.";
     return "Reels will appear when MovieGram has titles to show.";
   }
 
+  const watchedKeySet = useMemo(() => new Set(watchedReels.map(keyOf)), [watchedReels]);
   const eligibleReels = useMemo(() => {
-    if (!reels.length || reelTab === "forYou") return reels;
+    if (!reels.length) return reels;
+    if (reelTab === "forYou") {
+      return reels.filter((reel) => {
+        const itemKey = keyOf(reel.item || {});
+        if (watchedKeySet.has(itemKey)) return false;
+        return reelSpoilerLevel(reel) !== "spoilers";
+      });
+    }
     return reels.filter((reel) => currentReelCandidateKeys.has(keyOf(reel.item || {})));
-  }, [currentReelCandidateKeys, reelTab, reels]);
+  }, [currentReelCandidateKeys, reelTab, reels, watchedKeySet]);
   const missingCandidateFallbacks = useMemo(() => {
     if (reelTab === "forYou") return [];
     const representedKeys = new Set(eligibleReels.map((reel) => keyOf(reel.item || {})));
@@ -4847,13 +4925,26 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     stopPlayerEvent(event);
     const url = reel.watchUrl || reel.sourceUrl || (typeof window !== "undefined" ? window.location.href : "");
     const title = `${titleOf(item)} on MovieGram`;
-    if (typeof navigator !== "undefined" && navigator.share) {
-      navigator.share({ title, url }).catch(() => {});
-    } else if (typeof navigator !== "undefined" && navigator.clipboard && url) {
-      navigator.clipboard.writeText(url).catch(() => {});
-    }
+    setShareSheet({ reel, item, url, title, message: "" });
     onReelActivity?.("reel_shared", item, { reelId: reelIdentity(reel), source: reel.source || "youtube" });
     saveReelSocialRemote("reel_shares", reelSocialPayload(reel, item, { share_url: url }), "reel_shared");
+  }
+
+  function copySharedReelLink() {
+    if (!shareSheet?.url) return;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(shareSheet.url).catch(() => {});
+    }
+    setShareSheet((current) => current ? { ...current, message: "Link copied." } : current);
+  }
+
+  function sendSharedReelToFriend() {
+    setShareSheet((current) => current ? { ...current, message: "Friend sharing will be ready when your friend graph has matches." } : current);
+  }
+
+  function addSharedReelToList() {
+    if (shareSheet?.item) onWatchlist?.(shareSheet.item);
+    setShareSheet((current) => current ? { ...current, message: "Added to your list." } : current);
   }
 
   function openReelComments(event, reel, item) {
@@ -5261,12 +5352,17 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             const item = { ...reel.item, media_type: mediaType(reel.item) };
             const itemKey = keyOf(item);
             const saved = Boolean(watchlist[itemKey]);
+            const watchlistEntry = watchlist[itemKey] || {};
+            const watchAsap = Boolean(watchlistEntry.watch_asap || watchlistEntry.watchAsap);
             const watchedTitle = Boolean(watched[itemKey]);
             const reelLiked = Boolean(reelLikes[reelIdentity(reel)]);
             const active = activeIndex === index;
             const youtubeVideoId = getYouTubeVideoId(reel);
             const isPlayableYouTube = Boolean(active && isYouTubeReel(reel) && youtubeVideoId && !reel.isFallbackPreview);
             const typeCapsule = reelTypeLabel(reel);
+            const genreChips = reelGenreChips(item);
+            const spoilerLevel = reelSpoilerLevel(reel);
+            const poster = posterUrl(item.poster_path || reel.poster_path || reel.item_poster_path || reel.metadata?.poster_path, "w154");
             return (
               <article
                 key={`${reel.id}-${itemKey}`}
@@ -5297,23 +5393,28 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   </div>
                 )}
                 <div className="mg2-reel-actions">
-                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
-                  <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
-                  <button className={watchedTitle ? "active" : ""} type="button" disabled={!watchedTitle && !isReleased(item)} onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : isReleased(item) ? "Mark watched" : releaseMessage(item)}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : isReleased(item) ? "Watch" : "Soon"}</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => openReelDetails(event, reel, item)} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
-                  <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Reviews</span>
-                  <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share placeholder"><Icon name="send" /></button><span>Share</span>
+                  <button className={watchedTitle ? "active" : ""} type="button" disabled={!watchedTitle && !isReleased(item)} onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : isReleased(item) ? "Mark watched" : releaseMessage(item)}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : isReleased(item) ? "Watch" : "Soon"}</span>
+                  <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist?.(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
+                  <button className={watchAsap ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchAsap?.(item); }} aria-label={watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /></button><span>ASAP</span>
+                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
+                  <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share reel"><Icon name="send" /></button><span>Share</span>
                 </div>
                 {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
                 <div className="mg2-reel-copy">
                   <b>{reel.reason}</b>
                   {typeCapsule && <em className={typeCapsule.toLowerCase().includes("trailer") ? "trailer" : ""}>{typeCapsule}</em>}
+                  <img className="mg2-reel-poster-thumb" src={poster} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                   <h2>{titleOf(item)}</h2>
                   <p><Avatar friend={friends[index % friends.length]} size="sm" /> <strong>{reel.channelTitle || sourceWatermarkLabel(reel.source)}</strong></p>
                   <div className="mg2-reel-meta">
                     <span>{mediaType(item) === "tv" ? "TV Show" : "Movie"}</span>
                     <span>{item.vote_average ? item.vote_average.toFixed(1) : "NR"}/10</span>
                     <span>{yearOf(item)}</span>
+                  </div>
+                  <div className="mg2-reel-genres">
+                    {genreChips.map((genre) => <span key={genre}>{genre}</span>)}
+                    <span className={`spoiler ${spoilerLevel}`}>{reelSpoilerLabel(spoilerLevel)}</span>
                   </div>
                   <small>{reel.videoTitle || (reel.isFallbackPreview ? (reelError || "Title preview from MovieGram.") : "Title preview from MovieGram.")}</small>
                 </div>
@@ -5347,6 +5448,21 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             <input value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Add a comment..." />
             <button type="submit" disabled={!commentText.trim()}>Post</button>
           </form>
+        </div>
+      )}
+      {shareSheet && (
+        <div className="mg2-reel-comments-sheet mg2-reel-share-sheet" role="dialog" aria-modal="true" aria-label="Share reel" onClick={(event) => event.stopPropagation()}>
+          <div>
+            <strong>Share Reel</strong>
+            <button type="button" onClick={() => setShareSheet(null)}>Close</button>
+          </div>
+          <p>{shareSheet.title}</p>
+          <div className="mg2-reel-share-actions">
+            <button type="button" onClick={sendSharedReelToFriend}>Send to friend</button>
+            <button type="button" onClick={copySharedReelLink}>Copy link</button>
+            <button type="button" onClick={addSharedReelToList}>Add to list</button>
+          </div>
+          {shareSheet.message && <small>{shareSheet.message}</small>}
         </div>
       )}
       {submitOpen && (
@@ -9593,7 +9709,7 @@ export default function Home() {
   } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
+    screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
   } else if (activeTab === "explore") {

@@ -331,7 +331,7 @@
 
 .mg2-provider-list {
   display: flex;
-  gap: 10px;
+  gap: 14px;
   overflow-x: auto;
   padding: 2px 0 4px;
   scrollbar-width: none;
@@ -343,18 +343,18 @@
 
 .mg2-provider-list a,
 .mg2-provider-list em {
-  min-width: 92px;
-  max-width: 108px;
+  min-width: 68px;
+  max-width: 84px;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 14px;
-  padding: 8px;
-  background: rgba(255,255,255,.045);
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
   color: #eef2f8;
-  font-size: 10px;
+  font-size: 9px;
   font-style: normal;
   font-weight: 800;
   text-align: center;
@@ -362,11 +362,11 @@
 }
 
 .mg2-provider-list img {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
   object-fit: cover;
-  box-shadow: 0 8px 20px rgba(0,0,0,.24);
+  box-shadow: 0 10px 24px rgba(0,0,0,.34);
 }
 
 .mg2-provider-list strong,
@@ -378,7 +378,7 @@
 }
 
 .mg2-provider-list small {
-  color: #aeb5c1;
+  color: #b7bdc9;
   font-size: 9px;
   white-space: normal;
 }
@@ -7632,6 +7632,16 @@ body {
   -webkit-box-orient: vertical;
 }
 
+.mg2-reel-poster-thumb {
+  float: left;
+  width: 42px;
+  aspect-ratio: 2 / 3;
+  margin: 10px 9px 6px 0;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(0,0,0,.42);
+}
+
 .mg2-reel-copy button {
   display: inline-flex;
   align-items: center;
@@ -7704,6 +7714,21 @@ body {
   background: rgba(155,124,255,.22);
 }
 
+.mg2-reel-genres span.spoiler {
+  color: #e9f6ff;
+  background: rgba(61,153,255,.18);
+}
+
+.mg2-reel-genres span.spoiler.mild {
+  color: #fff3cf;
+  background: rgba(255,190,78,.18);
+}
+
+.mg2-reel-genres span.spoiler.spoilers {
+  color: #ffd9df;
+  background: rgba(255,79,135,.18);
+}
+
 .mg2-reel-actions {
   position: absolute;
   z-index: 2;
@@ -7716,8 +7741,8 @@ body {
 
 .mg2-reel-actions button,
 .mg2-reel-actions a {
-  width: 48px;
-  height: 44px;
+  width: 50px;
+  height: 42px;
   display: grid;
   place-items: center;
   border: 0;
@@ -7743,8 +7768,8 @@ body {
 }
 
 .mg2-reel-actions .mg2-reel-details-button svg {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
 }
 
 .mg2-reel-actions svg {
@@ -8508,6 +8533,29 @@ body {
   color: #fff;
   background: rgba(255,255,255,.08);
   outline: none;
+}
+
+.mg2-reel-share-sheet p {
+  margin: 0;
+  color: #dce2ed;
+  font-weight: 850;
+}
+
+.mg2-reel-share-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mg2-reel-share-actions button {
+  min-height: 42px;
+  padding: 0 8px;
+  white-space: normal;
+}
+
+.mg2-reel-share-sheet small {
+  color: #bfc5d1;
+  font-weight: 800;
 }
 
 .mg2-profile-avatar-img {
