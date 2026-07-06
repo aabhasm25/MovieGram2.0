@@ -90,6 +90,98 @@ const exploreHubSections = [
   { id: "sitcoms", title: "Sitcoms", endpoint: "/discover/tv", params: { with_genres: "35", sort_by: "popularity.desc" } }
 ];
 
+const franchiseHubs = [
+  {
+    hub_key: "mcu",
+    name: "Marvel Cinematic Universe",
+    shortName: "MCU",
+    description: "Marvel's connected superhero saga across phases, teams, and multiverse stories.",
+    aliases: ["mcu", "marvel", "avengers", "iron man", "captain america", "thor", "black panther", "doctor strange"],
+    listTitles: ["MCU Release Order", "Avengers Essentials"],
+    items: [
+      { id: 1726, media_type: "movie", title: "Iron Man", release_date: "2008-04-30", release_order: 1, chronological_order: 3, phase_label: "Phase One" },
+      { id: 299536, media_type: "movie", title: "Avengers: Infinity War", release_date: "2018-04-25", release_order: 19, chronological_order: 22, phase_label: "Phase Three" },
+      { id: 299534, media_type: "movie", title: "Avengers: Endgame", release_date: "2019-04-24", release_order: 22, chronological_order: 23, phase_label: "Phase Three" },
+      { id: 284054, media_type: "movie", title: "Black Panther", release_date: "2018-02-13", release_order: 18, chronological_order: 18, phase_label: "Phase Three" },
+      { id: 453395, media_type: "movie", title: "Doctor Strange in the Multiverse of Madness", release_date: "2022-05-04", release_order: 28, chronological_order: 30, phase_label: "Phase Four" }
+    ]
+  },
+  {
+    hub_key: "dcu",
+    name: "DC Universe",
+    shortName: "DCU",
+    description: "DC heroes, teams, and alternate timelines from Gotham to Metropolis.",
+    aliases: ["dcu", "dc", "batman", "superman", "justice league", "wonder woman", "aquaman"],
+    listTitles: ["DC Universe Watch Order", "Gotham and Metropolis"],
+    items: [
+      { id: 155, media_type: "movie", title: "The Dark Knight", release_date: "2008-07-16", release_order: 1, chronological_order: 1 },
+      { id: 272, media_type: "movie", title: "Batman Begins", release_date: "2005-06-10", release_order: 2, chronological_order: 1 },
+      { id: 49521, media_type: "movie", title: "Man of Steel", release_date: "2013-06-12", release_order: 3, chronological_order: 3 },
+      { id: 297762, media_type: "movie", title: "Wonder Woman", release_date: "2017-05-30", release_order: 4, chronological_order: 2 },
+      { id: 791373, media_type: "movie", title: "Zack Snyder's Justice League", release_date: "2021-03-18", release_order: 5, chronological_order: 5 }
+    ]
+  },
+  {
+    hub_key: "wizarding-world",
+    name: "Wizarding World",
+    shortName: "Harry Potter",
+    description: "Harry Potter and Fantastic Beasts stories in release and story order.",
+    aliases: ["harry potter", "wizarding world", "fantastic beasts", "hogwarts", "potter"],
+    listTitles: ["Harry Potter Collection", "Best Wizard Movies"],
+    items: [
+      { id: 671, media_type: "movie", title: "Harry Potter and the Philosopher's Stone", release_date: "2001-11-16", release_order: 1, chronological_order: 1 },
+      { id: 672, media_type: "movie", title: "Harry Potter and the Chamber of Secrets", release_date: "2002-11-13", release_order: 2, chronological_order: 2 },
+      { id: 673, media_type: "movie", title: "Harry Potter and the Prisoner of Azkaban", release_date: "2004-05-31", release_order: 3, chronological_order: 3 },
+      { id: 674, media_type: "movie", title: "Harry Potter and the Goblet of Fire", release_date: "2005-11-16", release_order: 4, chronological_order: 4 },
+      { id: 12445, media_type: "movie", title: "Harry Potter and the Deathly Hallows: Part 2", release_date: "2011-07-12", release_order: 8, chronological_order: 8 }
+    ]
+  },
+  {
+    hub_key: "star-wars",
+    name: "Star Wars",
+    shortName: "Star Wars",
+    description: "Skywalker saga, spin-offs, and galaxy-spanning series.",
+    aliases: ["star wars", "skywalker", "jedi", "mandalorian"],
+    listTitles: ["Star Wars Release Order", "Jedi and Sith Essentials"],
+    items: [
+      { id: 11, media_type: "movie", title: "Star Wars", release_date: "1977-05-25", release_order: 1, chronological_order: 4 },
+      { id: 1891, media_type: "movie", title: "The Empire Strikes Back", release_date: "1980-05-20", release_order: 2, chronological_order: 5 },
+      { id: 1892, media_type: "movie", title: "Return of the Jedi", release_date: "1983-05-25", release_order: 3, chronological_order: 6 },
+      { id: 140607, media_type: "movie", title: "Star Wars: The Force Awakens", release_date: "2015-12-15", release_order: 7, chronological_order: 7 },
+      { id: 82856, media_type: "tv", title: "The Mandalorian", name: "The Mandalorian", first_air_date: "2019-11-12", release_order: 10, chronological_order: 9 }
+    ]
+  },
+  {
+    hub_key: "fast-furious",
+    name: "Fast & Furious",
+    shortName: "Fast Saga",
+    description: "Street racing, heists, family, and globe-trotting action.",
+    aliases: ["fast furious", "fast and furious", "fast saga", "f9", "fast x"],
+    listTitles: ["Fast & Furious Watch Order"],
+    items: [
+      { id: 9799, media_type: "movie", title: "The Fast and the Furious", release_date: "2001-06-22", release_order: 1, chronological_order: 1 },
+      { id: 82992, media_type: "movie", title: "Fast & Furious 6", release_date: "2013-05-21", release_order: 6, chronological_order: 6 },
+      { id: 337339, media_type: "movie", title: "The Fate of the Furious", release_date: "2017-04-12", release_order: 8, chronological_order: 8 },
+      { id: 385128, media_type: "movie", title: "F9", release_date: "2021-05-19", release_order: 9, chronological_order: 9 },
+      { id: 385687, media_type: "movie", title: "Fast X", release_date: "2023-05-17", release_order: 10, chronological_order: 10 }
+    ]
+  },
+  {
+    hub_key: "conjuring",
+    name: "The Conjuring Universe",
+    shortName: "Conjuring",
+    description: "Haunted cases and connected horror stories from The Conjuring world.",
+    aliases: ["conjuring", "annabelle", "nun", "conjuring universe"],
+    listTitles: ["The Conjuring Universe Order"],
+    items: [
+      { id: 138843, media_type: "movie", title: "The Conjuring", release_date: "2013-07-18", release_order: 1, chronological_order: 3 },
+      { id: 250546, media_type: "movie", title: "Annabelle", release_date: "2014-10-02", release_order: 2, chronological_order: 1 },
+      { id: 259693, media_type: "movie", title: "The Conjuring 2", release_date: "2016-06-08", release_order: 3, chronological_order: 5 },
+      { id: 439079, media_type: "movie", title: "The Nun", release_date: "2018-09-05", release_order: 5, chronological_order: 1 }
+    ]
+  }
+];
+
 const friends = [
   { id: "aabhas", name: "Aabhas", handle: "@aabhas_07", avatar: "avatar-one" },
   { id: "shruti", name: "Shruti", handle: "@shruti", avatar: "avatar-two" },
@@ -743,6 +835,31 @@ function itemMatches(a, b) {
   return fallbackKeyOf(a) === fallbackKeyOf(b);
 }
 
+function franchiseMatchesQuery(hub, query = "") {
+  const text = query.trim().toLowerCase();
+  if (!text) return false;
+  return [hub.name, hub.shortName, ...(hub.aliases || [])].some((alias) => String(alias || "").toLowerCase().includes(text) || text.includes(String(alias || "").toLowerCase()));
+}
+
+function franchisesForQuery(query = "") {
+  return franchiseHubs.filter((hub) => franchiseMatchesQuery(hub, query));
+}
+
+function franchisesForItem(item = {}) {
+  if (!item) return [];
+  const key = keyOf(item);
+  const title = titleOf(item).toLowerCase();
+  return franchiseHubs.filter((hub) => hub.items.some((entry) => (
+    keyOf(entry) === key ||
+    (entry.id && item.id && mediaType(entry) === mediaType(item) && String(entry.id) === String(item.id)) ||
+    titleOf(entry).toLowerCase() === title
+  )));
+}
+
+function franchisePosterItems(hub = {}) {
+  return (hub.items || []).slice(0, 4);
+}
+
 function hasStoredItem(item, collection = {}) {
   if (!item) return false;
   if (collection[keyOf(item)]) return true;
@@ -778,9 +895,10 @@ function normalizeRatingsCollection(collection = {}) {
   }, {});
 }
 
-function externalRatingCacheKey(item) {
+function externalRatingCacheKey(item, imdbId = "") {
   const type = mediaType(item);
-  return item?.id ? `moviegram.externalRatings.v2.${type}:${item.id}` : `moviegram.externalRatings.v2.${keyOf(item)}`;
+  const idPart = item?.id ? `${type}:${item.id}` : keyOf(item);
+  return `moviegram.externalRatings.v3.${idPart}:${imdbId || "no-imdb"}`;
 }
 
 function episodeKey(showId, seasonNumber, episodeNumber) {
@@ -2841,17 +2959,42 @@ function SocialHomeFeed({ likedFeed, toggleFeedLike, socialActivity = [], useMoc
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
+function FranchiseHubCard({ hub, onOpenFranchise }) {
+  const posters = franchisePosterItems(hub);
+  return (
+    <button className="mg2-franchise-card" type="button" onClick={() => onOpenFranchise?.(hub)}>
+      <span className="mg2-franchise-collage">
+        {posters.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+      </span>
+      <span>
+        <strong>{hub.name}</strong>
+        <small>{hub.items.length} titles - {hub.description}</small>
+      </span>
+      <em>Open Collection</em>
+    </button>
+  );
+}
+
+function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions }) {
   const [searchFilter, setSearchFilter] = useState("all");
-  const visibleResults = results.filter((item) => (
-    searchFilter === "all" ||
-    (searchFilter === "movie" && item.media_type === "movie") ||
-    (searchFilter === "tv" && item.media_type === "tv") ||
-    (searchFilter === "person" && item.media_type === "person")
-  ));
+  const peopleResults = results.filter((item) => item.media_type === "person");
+  const contentResults = results.filter((item) => item.media_type === "movie" || item.media_type === "tv");
+  const knownForContent = dedupe(peopleResults.flatMap((person) => normalizeSearch(person.known_for || []).filter((item) => item.media_type === "movie" || item.media_type === "tv")));
+  const franchiseResults = franchisesForQuery(query);
+  const allContentResults = dedupe([...franchiseResults.flatMap((hub) => hub.items), ...contentResults, ...knownForContent]);
+  const visibleResults = searchFilter === "movie"
+    ? contentResults.filter((item) => item.media_type === "movie")
+    : searchFilter === "tv"
+      ? contentResults.filter((item) => item.media_type === "tv")
+      : searchFilter === "person"
+        ? peopleResults
+        : searchFilter === "all"
+          ? allContentResults
+          : [];
   const visibleUserResults = (searchFilter === "all" || searchFilter === "user") ? userResults : [];
   const displayedUserResults = searchFilter === "all" ? visibleUserResults.slice(0, 3) : visibleUserResults;
-  const hasVisibleResults = visibleResults.length > 0 || displayedUserResults.length > 0;
+  const displayedPeople = searchFilter === "all" ? peopleResults.slice(0, 8) : peopleResults;
+  const hasVisibleResults = visibleResults.length > 0 || displayedUserResults.length > 0 || displayedPeople.length > 0 || franchiseResults.length > 0;
   return (
     <section className="mg2-search-panel">
       <div className="mg2-search">
@@ -2875,16 +3018,32 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
           {displayedUserResults.length > 0 && (
             <>
               <div className="mg2-section-head"><h2>Users</h2><span>{searchFilter === "all" ? "Top matches" : displayedUserResults.length}</span></div>
-              <div className="mg2-grid">
+              <div className={searchFilter === "all" ? "mg2-compact-shelf" : "mg2-grid"}>
                 {displayedUserResults.map((profile) => (
                   <UserResultCard key={`user:${profile.id}`} profile={profile} onOpenPublicProfile={onOpenPublicProfile} />
                 ))}
               </div>
             </>
           )}
+          {searchFilter === "all" && displayedPeople.length > 0 && (
+            <>
+              <div className="mg2-section-head"><h2>Actors & Directors</h2><span>Top matches</span></div>
+              <div className="mg2-compact-shelf">
+                {displayedPeople.map((person) => <PersonCard key={`person:${person.id}`} person={person} onOpenPerson={onOpenPerson} />)}
+              </div>
+            </>
+          )}
+          {searchFilter === "all" && franchiseResults.length > 0 && (
+            <>
+              <div className="mg2-section-head"><h2>Collections & Universes</h2><span>{franchiseResults.length}</span></div>
+              <div className="mg2-franchise-results">
+                {franchiseResults.map((hub) => <FranchiseHubCard key={hub.hub_key} hub={hub} onOpenFranchise={onOpenFranchise} />)}
+              </div>
+            </>
+          )}
           {searchFilter !== "user" && (
             <>
-              <div className="mg2-section-head"><h2>{searchFilter === "person" ? "Actors & Directors" : "Search Results"}</h2><span>Page {page} / {totalPages}</span></div>
+              <div className="mg2-section-head"><h2>{searchFilter === "person" ? "Actors & Directors" : "Main Content"}</h2><span>{searchFilter === "all" ? `${visibleResults.length} picks` : `Page ${page} / ${totalPages}`}</span></div>
               <div className="mg2-grid">
                 {visibleResults.map((item) => {
                   if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
@@ -2892,11 +3051,13 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
                   return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
                 })}
               </div>
-              <div ref={sentinelRef} className="mg2-sentinel" />
-              <div className="mg2-page-controls">
-                <button type="button" disabled={page <= 1 || loading} onClick={loadPrevious}>Previous</button>
-                <button type="button" disabled={page >= totalPages || loading} onClick={loadNext}>Next</button>
-              </div>
+              {searchFilter !== "all" && <div ref={sentinelRef} className="mg2-sentinel" />}
+              {searchFilter !== "all" && (
+                <div className="mg2-page-controls">
+                  <button type="button" disabled={page <= 1 || loading} onClick={loadPrevious}>Previous</button>
+                  <button type="button" disabled={page >= totalPages || loading} onClick={loadNext}>Next</button>
+                </div>
+              )}
             </>
           )}
           {!loading && !userLoading && !hasVisibleResults && <div className="mg2-empty">No matches yet. Try another title, username, or filter.</div>}
@@ -2944,7 +3105,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
   const chartRows = [
     { id: "mostWatched", title: communityCharts.mostWatched?.length ? "Most Watched This Week" : "Popular Right Now", items: communityCharts.mostWatched?.length ? communityCharts.mostWatched : (exploreRows.week || []) },
@@ -2970,7 +3131,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -6197,7 +6358,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [], reminderSet = false, ottReminderSet = false, onToggleReminder }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, onAddFranchiseToWatchlist, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [], reminderSet = false, ottReminderSet = false, onToggleReminder }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -6205,7 +6366,15 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const shown = details || item;
   const similar = normalize(details?.similar?.results || []).slice(0, 8);
   const recs = normalize(details?.recommendations?.results || []).slice(0, 8);
-  const similarContent = dedupe([...similar, ...recs]).slice(0, 12);
+  const franchiseMemberships = franchisesForItem(shown);
+  const franchiseContent = franchiseMemberships.flatMap((hub) => hub.items).filter((entry) => !itemMatches(entry, shown));
+  const similarContent = dedupe([...franchiseContent, ...similar, ...recs]).slice(0, 12);
+  const primaryFranchise = franchiseMemberships[0];
+  const popularLists = primaryFranchise ? [
+    `${primaryFranchise.name} Release Order`,
+    ...(primaryFranchise.listTitles || []),
+    `Movies like ${titleOf(shown)}`
+  ].slice(0, 3) : [];
   const trailer = details?.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
     details?.videos?.results?.find((video) => video.site === "YouTube");
   const type = mediaType(shown);
@@ -6372,6 +6541,28 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 {genres.length ? genres.map((genre) => <span key={genre.id}>{genre.name}</span>) : <span>Genre unavailable</span>}
               </div>
             </section>
+            {primaryFranchise && (
+              <section className="mg2-detail-panel">
+                <div className="mg2-detail-panel-head">
+                  <h3>Collection</h3>
+                  <span>{primaryFranchise.items.length} titles</span>
+                </div>
+                <div className="mg2-collection-card">
+                  <span className="mg2-franchise-collage">
+                    {franchisePosterItems(primaryFranchise).map((entry) => <img key={keyOf(entry)} src={posterUrl(entry.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+                  </span>
+                  <span>
+                    <strong>{primaryFranchise.name}</strong>
+                    <small>{primaryFranchise.description}</small>
+                  </span>
+                  <em>{primaryFranchise.items.length} titles</em>
+                </div>
+                <div className="mg2-collection-actions">
+                  <button type="button" onClick={() => onOpenFranchise?.(primaryFranchise)}>Open Collection</button>
+                  <button type="button" onClick={() => onAddFranchiseToWatchlist?.(primaryFranchise)}>Add Collection</button>
+                </div>
+              </section>
+            )}
             <section className="mg2-detail-panel">
               <div className="mg2-detail-panel-head">
                 <h3>Actors</h3>
@@ -6533,9 +6724,92 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 </div>
               </section>
             )}
+            {popularLists.length > 0 && (
+              <section className="mg2-detail-panel">
+                <div className="mg2-detail-panel-head">
+                  <h3>Popular Lists</h3>
+                  <span>MovieGram</span>
+                </div>
+                <div className="mg2-franchise-results">
+                  {popularLists.map((title) => (
+                    <button key={title} className="mg2-list-card" type="button" onClick={() => onOpenFranchise?.(primaryFranchise)}>
+                      <span className="mg2-franchise-collage">
+                        {franchisePosterItems(primaryFranchise).map((entry) => <img key={`${title}-${keyOf(entry)}`} src={posterUrl(entry.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+                      </span>
+                      <span><strong>{title}</strong><small>MovieGram curated watch order</small></span>
+                      <em>Open List</em>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
             {similarContent.length > 0 && <ContentRow title="Similar Content" items={similarContent} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
           </>
         )}
+      </section>
+    </div>
+  );
+}
+
+function FranchiseCollectionModal({ hub, onClose, onOpen, onAddItem, onAddCollection, watchlist = {}, watched = {}, ratings = {}, apiFetch }) {
+  const [orderMode, setOrderMode] = useState("release");
+  const [items, setItems] = useState(hub?.items || []);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!hub) return;
+    let alive = true;
+    async function hydrateHubItems() {
+      setLoading(true);
+      try {
+        const settled = await Promise.allSettled((hub.items || []).map(async (entry) => {
+          if (!entry.id || !apiFetch) return entry;
+          const data = await apiFetch(`/${mediaType(entry)}/${entry.id}`);
+          return { ...entry, ...data, media_type: mediaType(entry) };
+        }));
+        if (!alive) return;
+        setItems(settled.map((result, index) => result.status === "fulfilled" ? result.value : hub.items[index]));
+      } catch {
+        if (alive) setItems(hub.items || []);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    hydrateHubItems();
+    return () => {
+      alive = false;
+    };
+  }, [apiFetch, hub]);
+
+  if (!hub) return null;
+  const sortedItems = [...items].sort((a, b) => {
+    const key = orderMode === "chronological" ? "chronological_order" : "release_order";
+    return (a[key] || 999) - (b[key] || 999);
+  });
+
+  return (
+    <div className="mg2-modal-backdrop" onMouseDown={onClose}>
+      <section className="mg2-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <button className="mg2-back" type="button" onClick={onClose}><Icon name="back" /> Back</button>
+        <section className="mg2-detail-panel">
+          <div className="mg2-detail-panel-head">
+            <h3>{hub.name}</h3>
+            <span>{hub.items.length} titles</span>
+          </div>
+          <div className="mg2-collection-card">
+            <span className="mg2-franchise-collage">
+              {franchisePosterItems({ ...hub, items: sortedItems }).map((entry) => <img key={keyOf(entry)} src={posterUrl(entry.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+            </span>
+            <span><strong>{hub.shortName || hub.name}</strong><small>{hub.description}</small></span>
+            <em>{loading ? "Loading" : "MovieGram"}</em>
+          </div>
+          <div className="mg2-collection-actions">
+            <button className={orderMode === "release" ? "active" : ""} type="button" onClick={() => setOrderMode("release")}>Release Order</button>
+            <button className={orderMode === "chronological" ? "active" : ""} type="button" onClick={() => setOrderMode("chronological")}>Chronological</button>
+          </div>
+          <button className="mg2-season-toggle" type="button" onClick={() => onAddCollection?.({ ...hub, items: sortedItems })}>Add Collection to Watchlist</button>
+        </section>
+        <ContentRow title={orderMode === "release" ? "Release Order" : "Chronological Order"} items={sortedItems} loading={loading} onOpen={(item) => { onClose(); onOpen(item); }} onQuickActions={onAddItem} watchlist={watchlist} watched={watched} ratings={ratings} />
       </section>
     </div>
   );
@@ -6607,6 +6881,7 @@ export default function Home() {
   const [listItem, setListItem] = useState(null);
   const [preferencesOpen, setPreferencesOpen] = useState(() => typeof window !== "undefined" && !window.localStorage.getItem("moviegram.preferencesDone"));
   const [selectedPerson, setSelectedPerson] = useState(null);
+  const [selectedFranchise, setSelectedFranchise] = useState(null);
   const [feedPage, setFeedPage] = useState(2);
   const [likedFeed, setLikedFeed] = useState({});
   const [savedFeed, setSavedFeed] = useState({});
@@ -6655,6 +6930,7 @@ export default function Home() {
   const latestLocalState = useRef(DEFAULT_LOCAL_STATE);
   const librarySyncLogged = useRef(false);
   const detailsOpenActivityRef = useRef({});
+  const ratingDebugRef = useRef({});
   const remoteSyncTimer = useRef(null);
   const remoteSyncSuppressed = useRef(false);
 
@@ -7381,15 +7657,46 @@ export default function Home() {
         return;
       }
       const normalized = { ...selected, media_type: mediaType(selected) };
-      const cached = stored(externalRatingCacheKey(normalized), null);
+      const imdbId = details?.external_ids?.imdb_id;
+      const cacheKey = externalRatingCacheKey(normalized, imdbId);
+      const cached = imdbId ? stored(cacheKey, null) : null;
       if (cached) {
         setExternalRatings(cached);
+        if (!ratingDebugRef.current[cacheKey]) {
+          ratingDebugRef.current[cacheKey] = true;
+          console.info("MovieGram ratings debug", {
+            title: titleOf(normalized),
+            media_type: mediaType(normalized),
+            tmdb_id: normalized.id,
+            imdb_id: imdbId,
+            cacheKey,
+            source: "cache",
+            imdb: cached.find((entry) => entry.source === "IMDb")?.value || "N/A",
+            rottenTomatoes: cached.find((entry) => entry.source === "RT Critics")?.value || "N/A",
+            metacritic: cached.find((entry) => entry.source === "Metacritic")?.value || "N/A",
+            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+          });
+        }
         return;
       }
-      const imdbId = details?.external_ids?.imdb_id;
       const apiKey = process.env.NEXT_PUBLIC_OMDB_API_KEY;
       if (!imdbId || !apiKey || typeof window === "undefined") {
         setExternalRatings([]);
+        if (!ratingDebugRef.current[cacheKey]) {
+          ratingDebugRef.current[cacheKey] = true;
+          console.info("MovieGram ratings debug", {
+            title: titleOf(normalized),
+            media_type: mediaType(normalized),
+            tmdb_id: normalized.id,
+            imdb_id: imdbId || "N/A",
+            cacheKey,
+            source: imdbId ? "omdb-unavailable" : "missing-imdb-id",
+            imdb: "N/A",
+            rottenTomatoes: "N/A",
+            metacritic: "N/A",
+            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+          });
+        }
         return;
       }
       try {
@@ -7397,7 +7704,22 @@ export default function Home() {
         if (!response.ok) throw new Error("OMDb request failed.");
         const parsed = parseOmdbRatings(await response.json(), imdbId);
         setExternalRatings(parsed);
-        persist(externalRatingCacheKey(normalized), parsed);
+        persist(cacheKey, parsed);
+        if (!ratingDebugRef.current[cacheKey]) {
+          ratingDebugRef.current[cacheKey] = true;
+          console.info("MovieGram ratings debug", {
+            title: titleOf(normalized),
+            media_type: mediaType(normalized),
+            tmdb_id: normalized.id,
+            imdb_id: imdbId,
+            cacheKey,
+            source: "omdb-imdb-id",
+            imdb: parsed.find((entry) => entry.source === "IMDb")?.value || "N/A",
+            rottenTomatoes: parsed.find((entry) => entry.source === "RT Critics")?.value || "N/A",
+            metacritic: parsed.find((entry) => entry.source === "Metacritic")?.value || "N/A",
+            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+          });
+        }
       } catch {
         setExternalRatings([]);
       }
@@ -7576,6 +7898,35 @@ export default function Home() {
 
   function openPerson(person) {
     setSelectedPerson({ ...person, media_type: "person" });
+  }
+
+  function openFranchise(hub) {
+    if (!hub) return;
+    setSelectedFranchise(hub);
+  }
+
+  function addFranchiseToWatchlist(hub) {
+    if (!hub?.items?.length) return;
+    const normalizedWatchlist = normalizeTrackingCollection(watchlist);
+    let added = 0;
+    const nextWatchlist = { ...normalizedWatchlist };
+    hub.items.forEach((entry) => {
+      const normalized = { ...entry, media_type: mediaType(entry) };
+      const existing = Object.values(nextWatchlist).find((item) => itemMatches(item, normalized));
+      if (existing) return;
+      nextWatchlist[keyOf(normalized)] = normalized;
+      added += 1;
+      if (supabaseUser?.id) addToSupabaseWatchlist(supabaseUser.id, normalized);
+    });
+    if (!added) {
+      if (typeof window !== "undefined") window.alert("Already in Watchlist");
+      return;
+    }
+    setWatchlist(nextWatchlist);
+    persist("moviegram.watchlist", nextWatchlist);
+    syncTrackingNow("collection_watchlist_add", { watchlist: nextWatchlist });
+    logActivity("collection_add", hub.items[0], { source: "collection", collection: hub.name, count: added });
+    if (typeof window !== "undefined") window.alert(`Added ${added} titles to Watchlist`);
   }
 
   async function handleAuthSubmit(mode, email, password) {
@@ -8569,6 +8920,7 @@ export default function Home() {
         onOpen={openItem}
         onOpenPerson={openPerson}
         onOpenPublicProfile={openPublicProfile}
+        onOpenFranchise={openFranchise}
         onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
         watchlist={libraryState.watchlist}
         watched={libraryState.watched}
@@ -8631,6 +8983,8 @@ export default function Home() {
           onOpen={openItem}
           onOpenPerson={openPerson}
           onOpenPublicProfile={(profile) => { setSelected(null); openPublicProfile(profile); }}
+          onOpenFranchise={openFranchise}
+          onAddFranchiseToWatchlist={addFranchiseToWatchlist}
           externalRatings={externalRatings}
           watchProviders={watchProviders}
           favorite={hasStoredItem(selected, favorites)}
@@ -8658,6 +9012,17 @@ export default function Home() {
         reviews={libraryState.reviews}
         onClose={() => setSelectedPerson(null)}
         onOpen={(item) => { setSelectedPerson(null); openItem(item); }}
+      />
+      <FranchiseCollectionModal
+        hub={selectedFranchise}
+        apiFetch={apiFetch}
+        watchlist={libraryState.watchlist}
+        watched={libraryState.watched}
+        ratings={libraryState.ratings}
+        onClose={() => setSelectedFranchise(null)}
+        onOpen={(item) => { setSelectedFranchise(null); openItem(item); }}
+        onAddItem={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
+        onAddCollection={addFranchiseToWatchlist}
       />
       <WatchedDateSheet
         action={watchedAction}
