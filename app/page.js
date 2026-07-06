@@ -59,12 +59,13 @@ const contentSections = [
 ];
 
 const exploreTabs = [
-  { id: "trending", label: "Trending", endpoint: "/trending/all/week" },
+  { id: "forYou", label: "For You", endpoint: "/trending/all/week" },
   { id: "movies", label: "Movies", endpoint: "/movie/now_playing" },
   { id: "tv", label: "TV Shows", endpoint: "/tv/on_the_air" },
+  { id: "binge", label: "Binge-worthy", endpoint: "/discover/tv", params: { "vote_average.gte": "7.4", sort_by: "popularity.desc" } },
+  { id: "hidden", label: "Hidden Gems", endpoint: "/discover/movie", params: { "vote_average.gte": "7.2", "vote_count.gte": "120", "vote_count.lte": "2500", sort_by: "vote_average.desc" } },
   { id: "top", label: "Top Rated", endpoint: "/movie/top_rated" },
-  { id: "schedule", label: "Schedule", endpoint: "/movie/upcoming" },
-  { id: "upcoming", label: "Upcoming", endpoint: "/movie/upcoming" }
+  { id: "schedule", label: "Schedule", endpoint: "/movie/upcoming" }
 ];
 
 const exploreHubSections = [
@@ -2010,7 +2011,8 @@ function Icon({ name }) {
     muted: "M4 10v4h4l5 4V6l-5 4H4zM17 9l4 4m0-4-4 4",
     send: "m3 11 18-8-8 18-2-8z",
     dots: "M5 12h.01M12 12h.01M19 12h.01",
-    back: "M15 18 9 12l6-6"
+    back: "M15 18 9 12l6-6",
+    sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"
   };
 
   return (
@@ -3148,10 +3150,148 @@ function PublicProfileScreen({ profile, bundle, currentUser, followStatuses = {}
   );
 }
 
-function RecommendationCard({ item, badge, onOpen, onWatchlist, onNotInterested, saved, hidden }) {
+function itemGenreLabels(item = {}) {
+  const named = Array.isArray(item.genres) ? item.genres.map((genre) => genre?.name || genre).filter(Boolean) : [];
+  const explicit = Array.isArray(item.genre_names) ? item.genre_names.filter(Boolean) : [];
+  const ids = Array.isArray(item.genre_ids) ? item.genre_ids.map((id) => REEL_GENRE_NAMES[id]).filter(Boolean) : [];
+  return [...new Set([...named, ...explicit, ...ids].map((genre) => String(genre).trim()).filter(Boolean))];
+}
+
+function createTasteProfile({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], profileActivity = {} } = {}) {
+  const watchedItems = Object.values(watched || {});
+  const watchlistItems = Object.values(watchlist || {});
+  const favoriteItems = Object.values(favorites || {});
+  const reviewItems = Object.values(reviews || {}).map((entry) => entry?.item || entry).filter(Boolean);
+  const activityItems = Object.values(profileActivity || {}).map((event) => event?.item).filter(Boolean);
+  const ratedEntries = Object.entries(ratings || {});
+  const genreWeights = new Map();
+  const languageWeights = new Map();
+  const highRatedKeys = new Set();
+  const lowRatedKeys = new Set();
+  const watchedKeys = new Set(watchedItems.map(keyOf));
+  const watchlistKeys = new Set(watchlistItems.map(keyOf));
+  const watchAsapKeys = new Set(watchlistItems.filter((item) => item.watch_asap || item.watchAsap).map(keyOf));
+  const favoriteKeys = new Set(favoriteItems.map(keyOf));
+  const friendKeys = new Set((socialActivity || []).map((event) => event?.item).filter(Boolean).map(keyOf));
+  const seedItems = dedupe([...watchedItems, ...watchlistItems, ...favoriteItems, ...reviewItems, ...activityItems]);
+  const addWeight = (map, key, weight) => {
+    if (!key) return;
+    map.set(key, (map.get(key) || 0) + weight);
+  };
+  seedItems.forEach((item) => {
+    const key = keyOf(item);
+    const rating = normalizeUserRating(ratings[key] || item.rating || item.user_rating);
+    const base = watchedKeys.has(key) ? 3 : watchAsapKeys.has(key) ? 2.8 : watchlistKeys.has(key) ? 2 : favoriteKeys.has(key) ? 2.4 : 1;
+    const ratingBoost = rating >= 4 ? 1.7 : rating && rating <= 2 ? -1.3 : 0;
+    itemGenreLabels(item).forEach((genre) => addWeight(genreWeights, genre.toLowerCase(), base + ratingBoost));
+    addWeight(languageWeights, item.original_language || item.language, base + ratingBoost);
+    if (rating >= 4) highRatedKeys.add(key);
+    if (rating && rating <= 2) lowRatedKeys.add(key);
+  });
+  ratedEntries.forEach(([key, rating]) => {
+    const normalized = normalizeUserRating(rating);
+    if (normalized >= 4) highRatedKeys.add(key);
+    if (normalized && normalized <= 2) lowRatedKeys.add(key);
+  });
+  return {
+    watchedItems,
+    watchlistItems,
+    favoriteItems,
+    genreWeights,
+    languageWeights,
+    watchedKeys,
+    watchlistKeys,
+    watchAsapKeys,
+    favoriteKeys,
+    highRatedKeys,
+    lowRatedKeys,
+    friendKeys,
+    topGenres: [...genreWeights.entries()].sort((a, b) => b[1] - a[1]).map(([genre]) => genre).slice(0, 6),
+    topLanguages: [...languageWeights.entries()].sort((a, b) => b[1] - a[1]).map(([language]) => language).slice(0, 4),
+    hasTaste: watchedItems.length + watchlistItems.length + favoriteItems.length + ratedEntries.length > 0
+  };
+}
+
+function scoreRecommendation(item, userTaste = {}) {
+  const normalized = { ...item, media_type: mediaType(item) };
+  const key = keyOf(normalized);
+  let score = 0;
+  const reasons = [];
+  const tags = [];
+  const addReason = (reason) => {
+    if (reason && !reasons.includes(reason)) reasons.push(reason);
+  };
+  if (userTaste.watchedKeys?.has(key)) {
+    score -= 180;
+    tags.push("watched");
+  }
+  if (userTaste.watchAsapKeys?.has(key)) {
+    score += 96;
+    addReason("From your Watch ASAP");
+    tags.push("watch-asap");
+  } else if (userTaste.watchlistKeys?.has(key)) {
+    score += 72;
+    addReason("From your Watchlist");
+    tags.push("watchlist");
+  }
+  if (userTaste.favoriteKeys?.has(key)) {
+    score += 32;
+    addReason("Saved with your favorites");
+  }
+  const genres = itemGenreLabels(normalized).map((genre) => genre.toLowerCase());
+  const bestGenre = genres.map((genre) => [genre, userTaste.genreWeights?.get(genre) || 0]).sort((a, b) => b[1] - a[1])[0];
+  if (bestGenre?.[1] > 0) {
+    score += Math.min(64, bestGenre[1] * 12);
+    addReason(`Popular with your ${bestGenre[0]} taste`);
+    tags.push(bestGenre[0]);
+  }
+  const language = normalized.original_language || normalized.language;
+  const languageWeight = language ? userTaste.languageWeights?.get(language) || 0 : 0;
+  if (languageWeight > 0) {
+    score += Math.min(30, languageWeight * 8);
+    addReason("Matches your language taste");
+  }
+  if (userTaste.friendKeys?.has(key)) {
+    score += 28;
+    addReason("Friends are watching");
+    tags.push("friends");
+  }
+  if (normalized.vote_average) score += normalized.vote_average * 4;
+  if (normalized.popularity) score += Math.min(24, normalized.popularity / 20);
+  if (normalized.poster_path) score += 12;
+  else score -= 42;
+  if (userTaste.lowRatedKeys?.has(key)) {
+    score -= 70;
+    tags.push("low-rated");
+  }
+  if (!isReleased(normalized)) {
+    score -= 12;
+    tags.push("upcoming");
+  }
+  const similarTitle = userTaste.watchedItems?.find((watchedItem) => itemGenreLabels(watchedItem).some((genre) => genres.includes(String(genre).toLowerCase())));
+  if (similarTitle && !userTaste.watchedKeys?.has(key)) addReason(`Because you watched ${titleOf(similarTitle)}`);
+  if (!reasons.length) addReason(userTaste.hasTaste ? "Trending for your taste" : "Start watching to personalize this");
+  return { score, reasons: reasons.slice(0, 3), tags: [...new Set(tags)].slice(0, 4) };
+}
+
+function rankRecommendations(items = [], userTaste = {}, options = {}) {
+  const { includeWatched = false, limit = 12, requirePoster = true, filter } = options;
+  return dedupe(items)
+    .filter((item) => item?.id && (!requirePoster || item.poster_path) && (includeWatched || !userTaste.watchedKeys?.has(keyOf(item))))
+    .filter((item) => !filter || filter(item))
+    .map((item) => {
+      const scored = scoreRecommendation(item, userTaste);
+      return { ...item, __recScore: scored.score, __recReasons: scored.reasons, __recTags: scored.tags };
+    })
+    .sort((a, b) => (b.__recScore || 0) - (a.__recScore || 0) || (b.vote_average || 0) - (a.vote_average || 0))
+    .slice(0, limit);
+}
+
+function RecommendationCard({ item, badge, reason, onOpen, onWatchlist, onNotInterested, saved, hidden }) {
   if (hidden) return null;
   const type = mediaType(item) === "tv" ? "TV" : "Movie";
-  const genre = type === "TV" ? "Series" : (titleOf(item).toLowerCase().includes("dune") ? "Sci-Fi" : "Drama");
+  const genre = item.__recTags?.[0] || itemGenreLabels(item)[0] || (type === "TV" ? "Series" : "Movie");
+  const recReason = reason || item.__recReasons?.[0] || "Picked for you";
 
   return (
     <article className="mg2-rec-card">
@@ -3162,6 +3302,7 @@ function RecommendationCard({ item, badge, onOpen, onWatchlist, onNotInterested,
       <div className="mg2-rec-copy">
         <span className="mg2-rec-title">{titleOf(item)}</span>
         <small>{type} - {item.vote_average ? item.vote_average.toFixed(1) : "NR"} - {genre}</small>
+        <em>{recReason}</em>
       </div>
       <div className="mg2-rec-actions">
         <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(item)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name={saved ? "check" : "bookmark"} /></button>
@@ -3173,12 +3314,13 @@ function RecommendationCard({ item, badge, onOpen, onWatchlist, onNotInterested,
 
 function RecommendationIntelligence({ rows, intelligenceRows, watchlist, hiddenRecs, onOpen, onWatchlist, onNotInterested }) {
   const labels = {
-    breakingBad: { title: "Because you watched Breaking Bad", badge: "For You" },
-    interstellar: { title: "Because you rated Interstellar highly", badge: "For You" },
-    sciFi: { title: "Because you like Sci-Fi thrillers", badge: "Mood Pick" },
-    friend: { title: "Popular with your friends", badge: "Friend Pick" },
-    blend: { title: "High Blend match with Rohan", badge: "Blend Pick" },
-    hidden: { title: "Hidden gems for your taste", badge: "Hidden Gem" }
+    forYou: { title: "For You", badge: "For You" },
+    becauseWatched: { title: "Because You Watched", badge: "Taste Match" },
+    watchlist: { title: "From Your Watchlist", badge: "Saved" },
+    binge: { title: "Binge-worthy Shows", badge: "Binge" },
+    hidden: { title: "Hidden Gems", badge: "Hidden Gem" },
+    trending: { title: "Trending For You", badge: "Trending" },
+    friends: { title: "Friends Are Watching", badge: "Friend Pick" }
   };
   const hasAny = Object.values(intelligenceRows).some((items) => items.length > 0);
 
@@ -4136,7 +4278,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [loadingReels, setLoadingReels] = useState(true);
   const [reelError, setReelError] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(7);
+  const [pageSize, setPageSize] = useState(12);
   const [speeding, setSpeeding] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(() => readReelsMutedPreference());
@@ -4181,7 +4323,21 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const disabledReelSocialTablesRef = useRef(new Set());
   const seenReelIdsRef = useRef(new Set());
   const failedYouTubeVideoIdsRef = useRef(new Set());
-  const baseReels = useMemo(() => dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series]), [rows]);
+  const baseReels = useMemo(() => dedupe([
+    ...(rows.trending || []),
+    ...(rows.movies || []),
+    ...(rows.series || []),
+    ...(rows.anime || []),
+    ...(rows.hiddenGems || []),
+    ...(rows.bingeShows || []),
+    ...(rows.topRated || []),
+    ...(rows.week || []),
+    ...(rows.today || []),
+    ...fallbackRows.trending,
+    ...fallbackRows.movies,
+    ...fallbackRows.series,
+    ...fallbackRows.anime
+  ]), [rows]);
   const watchedReels = useMemo(() => Object.values(watched), [watched]);
   const watchlistReels = useMemo(() => Object.values(watchlist), [watchlist]);
   const favoriteReels = useMemo(() => Object.values(favorites), [favorites]);
@@ -4197,6 +4353,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     return String(hashString(parts.join("|")));
   }, [favorites, ratings, reviews, watched, watchlist]);
   const friendActivityItems = useMemo(() => dedupe((socialActivity || []).map((event) => event.item).filter(Boolean)), [socialActivity]);
+  const reelTaste = useMemo(() => createTasteProfile({ watched, watchlist, ratings, reviews, favorites, socialActivity }), [favorites, ratings, reviews, socialActivity, watched, watchlist]);
   const isReelAdmin = userId && userId !== "guest" && MOVIEGRAM_REEL_ADMIN_IDS.includes(userId);
   const localReelAdminEnabled = typeof window !== "undefined" && ["true", "1", "yes"].includes(String(window.localStorage.getItem("moviegram_reels_admin") || window.localStorage.getItem("mg2_reels_admin") || "").toLowerCase());
   const canOpenReelAdmin = isReelAdmin || process.env.NODE_ENV !== "production" || localReelAdminEnabled;
@@ -4253,10 +4410,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       const key = keyOf(item);
       if (watchedKeys.has(key)) return;
       const { score, reason } = scoreReelCandidate(item, { index, watchedReels, watchlistKeys, favoriteKeys, ratedKeySet, friendKeys });
-      addCandidate(item, score, reason);
+      const smart = scoreRecommendation(item, reelTaste);
+      addCandidate(item, score + smart.score, smart.reasons?.[0] || reason);
     });
     return [...candidates.values()].sort((a, b) => b.score - a.score);
-  }, [baseReels, favoriteReels, friendActivityItems, ratedKeys, reelTab, socialActivity, watchedReels, watchlistReels]);
+  }, [baseReels, favoriteReels, friendActivityItems, ratedKeys, reelTab, reelTaste, socialActivity, watchedReels, watchlistReels]);
 
   const seedItems = useMemo(() => reelCandidates.slice(0, pageSize), [pageSize, reelCandidates]);
   const currentReelCandidateKeys = useMemo(() => new Set(reelCandidates.map((candidate) => keyOf(candidate.item))), [reelCandidates]);
@@ -4283,7 +4441,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   useEffect(() => {
     lastLoadedKeyRef.current = "";
     inFlightReelLoadsRef.current.clear();
-    setPageSize(7);
+    setPageSize(12);
     setActiveIndex(0);
     setReels([]);
     setLoadingReels(true);
@@ -4645,7 +4803,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       }
     }
     if (visibleReels.length && activeIndex >= visibleReels.length - 2 && reelCandidates.length > pageSize) {
-      setPageSize((current) => Math.min(current + 5, reelCandidates.length));
+      setPageSize((current) => Math.min(current + 8, reelCandidates.length));
     }
   }, [activeIndex, pageSize, reelCandidates.length, visibleReels]);
 
@@ -5423,7 +5581,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           })}
           {reelCandidates.length > pageSize && (
             <article className="mg2-reel-card mg2-reel-load-more">
-              <button type="button" onClick={() => setPageSize((current) => current + 5)}>Load more reels</button>
+              <button type="button" onClick={() => setPageSize((current) => current + 8)}>Load more reels</button>
             </article>
           )}
         </div>
@@ -5585,7 +5743,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   );
 }
 
-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, onOpen, onOpenDiary, onOpenStats }) {
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, tonightItems = [], onOpen, onOpenDiary, onOpenStats }) {
   const [logTab, setLogTab] = useState("watchlist");
   const [logQuery, setLogQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -5670,6 +5828,20 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
                   <button key={`log-asap-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
                     <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                     <span>{titleOf(item)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {logTab === "watchlist" && tonightItems.length > 0 && (
+            <section className="mg2-watch-asap-shelf mg2-watch-tonight" aria-label="What to Watch Tonight">
+              <div className="mg2-section-head"><h2>What to Watch Tonight</h2><span>Smart picks</span></div>
+              <div className="mg2-smart-row">
+                {tonightItems.map((item) => (
+                  <button key={`log-tonight-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+                    <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                    <strong>{titleOf(item)}</strong>
+                    <small>{item.__recReasons?.[0] || "High match tonight"}</small>
                   </button>
                 ))}
               </div>
@@ -7034,10 +7206,24 @@ function NotificationsScreen({ pendingRequests = [], notifications = [], onRespo
   );
 }
 
-function WatchlistScreen({ items, onOpen, watchlist, ratings }) {
+function WatchlistScreen({ items, onOpen, watchlist, ratings, tonightItems = [] }) {
   return (
     <section>
       <div className="mg2-chips two"><button className="active" type="button">Movies</button><button type="button">TV Shows</button></div>
+      {tonightItems.length > 0 && (
+        <section className="mg2-section mg2-watch-tonight">
+          <div className="mg2-section-head"><h2>What to Watch Tonight</h2><span>Smart picks</span></div>
+          <div className="mg2-smart-row">
+            {tonightItems.map((item) => (
+              <button key={`tonight-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+                <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                <strong>{titleOf(item)}</strong>
+                <small>{item.__recReasons?.[0] || "High match tonight"}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {items.length === 0 && <div className="mg2-empty">Your watchlist is empty. Add titles from Home or Explore.</div>}
       <div className="mg2-watch-list">
         {items.map((item) => (
@@ -7071,7 +7257,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, onAddFranchiseToWatchlist, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [], reminderSet = false, ottReminderSet = false, onToggleReminder }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, onAddFranchiseToWatchlist, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [], userTaste = {}, reminderSet = false, ottReminderSet = false, onToggleReminder }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -7085,6 +7271,11 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const franchiseMemberships = safeCollections;
   const franchiseContent = franchiseMemberships.flatMap((hub) => hub.items).filter((entry) => !itemMatches(entry, shown));
   const similarContent = dedupe([...franchiseContent, ...similar, ...recs]).slice(0, 12);
+  const smartSimilarContent = rankRecommendations(dedupe([...franchiseContent, ...similar, ...recs]), userTaste, {
+    limit: 10,
+    requirePoster: true,
+    filter: (entry) => !itemMatches(entry, shown)
+  });
   const primaryFranchise = franchiseMemberships[0];
   const primaryFranchisePosters = primaryFranchise ? franchisePosterItems(primaryFranchise) : [];
   const trailer = details?.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
@@ -7523,7 +7714,23 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
                 </div>
               </section>
             )}
-            {similarContent.length > 0 && <ContentRow title="Similar Content" items={similarContent} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
+            {smartSimilarContent.length > 0 ? (
+              <section className="mg2-detail-panel">
+                <div className="mg2-detail-panel-head">
+                  <h3>More Like This</h3>
+                  <span>Smart picks</span>
+                </div>
+                <div className="mg2-smart-row">
+                  {smartSimilarContent.map((entry) => (
+                    <button key={`smart-${keyOf(entry)}`} type="button" onClick={() => onOpen(entry)}>
+                      <img src={posterUrl(entry.poster_path, "w342")} alt={titleOf(entry)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                      <strong>{titleOf(entry)}</strong>
+                      <small>{entry.__recReasons?.[0] || "More like this"}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : similarContent.length > 0 && <ContentRow title="Similar Content" items={similarContent} loading={false} onOpen={onOpen} watchlist={{}} ratings={{}} />}
           </>
         )}
       </section>
@@ -7628,7 +7835,7 @@ export default function Home() {
   const cache = useRef(new Map());
   const observer = useRef(null);
   const [activeTab, setActiveTab] = useState("home");
-  const [activeExplore, setActiveExplore] = useState("trending");
+  const [activeExplore, setActiveExplore] = useState("forYou");
   const [activeExplorePage, setActiveExplorePage] = useState(1);
   const [rows, setRows] = useState(fallbackRows);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -8546,48 +8753,68 @@ export default function Home() {
     }))).flat();
   }, [feedPage, socialActivity, supabaseUser]);
 
+  const userTaste = useMemo(() => createTasteProfile({
+    watched,
+    watchlist,
+    ratings,
+    reviews,
+    favorites,
+    socialActivity,
+    profileActivity
+  }), [favorites, profileActivity, ratings, reviews, socialActivity, watched, watchlist]);
+
+  const recommendationPool = useMemo(() => dedupe([
+    ...(rows.trending || []),
+    ...(rows.movies || []),
+    ...(rows.series || []),
+    ...(rows.anime || []),
+    ...(rows.hiddenGems || []),
+    ...(rows.bingeShows || []),
+    ...(rows.topRated || []),
+    ...fallbackRows.trending,
+    ...fallbackRows.movies,
+    ...fallbackRows.series,
+    ...fallbackRows.anime,
+    ...Object.values(watchlist || {})
+  ]), [rows, watchlist]);
+
   const recommended = useMemo(() => {
-    const saved = Object.values(watchlist);
-    const clickedKeys = Object.keys(clickSignals).sort((a, b) => clickSignals[b] - clickSignals[a]);
-    const all = dedupe([...saved, ...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || [])]);
-    if (clickedKeys.length === 0 && saved.length === 0) return all.slice(0, 12);
-    return all
-      .sort((a, b) => (clickSignals[keyOf(b)] || 0) + (watchlist[keyOf(b)] ? 4 : 0) - ((clickSignals[keyOf(a)] || 0) + (watchlist[keyOf(a)] ? 4 : 0)))
-      .slice(0, 12);
-  }, [clickSignals, rows, watchlist]);
+    const clickedBoosted = recommendationPool.map((item) => ({ ...item, popularity: (item.popularity || 0) + (clickSignals[keyOf(item)] || 0) * 12 }));
+    return rankRecommendations(clickedBoosted, userTaste, { limit: 12 });
+  }, [clickSignals, recommendationPool, userTaste]);
 
   const intelligenceRows = useMemo(() => {
-    const saved = Object.values(watchlist);
-    const watchedItems = Object.values(watched);
-    const all = dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...(rows.anime || []), ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.anime]);
-    const watchedKeys = new Set(watchedItems.map((item) => keyOf(item)));
-    const hasWatched = (needle) => watchedItems.some((item) => titleOf(item).toLowerCase().includes(needle));
-    const hasRated = (needle, min = 4) => [...watchedItems, ...saved, ...all].some((item) => titleOf(item).toLowerCase().includes(needle) && (ratingForItem(item, ratings) || 0) >= min);
-    const hasSciFiTaste = hasWatched("interstellar") || hasWatched("dune") || hasRated("interstellar", 4) || saved.some((item) => ["interstellar", "dune"].some((needle) => titleOf(item).toLowerCase().includes(needle)));
-    const available = all.filter((item) => !hiddenRecs[keyOf(item)] && !watchedKeys.has(keyOf(item)));
-    const byTitle = (needles) => available.filter((item) => needles.some((needle) => titleOf(item).toLowerCase().includes(needle)));
-    const byMedia = (type) => available.filter((item) => mediaType(item) === type);
-    const score = (item) => (clickSignals[keyOf(item)] || 0) + (watchlist[keyOf(item)] ? 5 : 0) + (ratingForItem(item, ratings) || 0) + (item.vote_average || 0) / 2;
-    const sorted = [...available].sort((a, b) => score(b) - score(a));
-    const crimeDramaPool = dedupe([
-      ...byTitle(["the boys", "batman", "parasite", "oppenheimer"]),
-      ...byMedia("tv").filter((item) => ["crime", "bad", "boys", "dragon", "game"].some((needle) => titleOf(item).toLowerCase().includes(needle)))
-    ]).sort((a, b) => score(b) - score(a));
-    const sciFiPool = dedupe([
-      ...byTitle(["interstellar", "dune", "oppenheimer", "attack on titan"]),
-      ...available.filter((item) => ["space", "sci", "future", "mind", "dune"].some((needle) => `${titleOf(item)} ${item.overview || ""}`.toLowerCase().includes(needle)))
-    ]).sort((a, b) => score(b) - score(a));
-    const friendPool = dedupe([...(rows.trending || []), ...fallbackRows.trending, ...fallbackRows.movies]).filter((item) => !hiddenRecs[keyOf(item)] && !watchedKeys.has(keyOf(item))).sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
-    const blendPool = dedupe([...(rows.series || []), ...fallbackRows.series, ...fallbackRows.anime]).filter((item) => !hiddenRecs[keyOf(item)] && !watchedKeys.has(keyOf(item))).sort((a, b) => score(b) - score(a));
+    const available = recommendationPool.filter((item) => !hiddenRecs[keyOf(item)] && !userTaste.watchedKeys.has(keyOf(item)));
+    const ranked = rankRecommendations(available, userTaste, { limit: 18 });
+    const watchedGenreSet = new Set(userTaste.watchedItems.flatMap(itemGenreLabels).map((genre) => genre.toLowerCase()));
+    const becauseWatched = rankRecommendations(available, userTaste, {
+      limit: 8,
+      filter: (item) => itemGenreLabels(item).some((genre) => watchedGenreSet.has(String(genre).toLowerCase()))
+    });
+    const watchlistMatches = rankRecommendations(Object.values(watchlist || {}), userTaste, { includeWatched: false, limit: 8, requirePoster: true });
+    const socialItems = dedupe((socialActivity || []).map((event) => event.item).filter(Boolean));
     return {
-      breakingBad: (hasWatched("breaking bad") ? crimeDramaPool : []).slice(0, 8),
-      interstellar: (hasRated("interstellar", 4) || hasWatched("interstellar") ? sciFiPool : []).slice(0, 8),
-      sciFi: (hasSciFiTaste ? sciFiPool : []).slice(0, 8),
-      friend: friendPool.slice(0, 8),
-      blend: blendPool.slice(0, 8),
-      hidden: sorted.filter((item) => (item.vote_average || 0) >= 7.8).slice(-8).reverse()
+      forYou: ranked.slice(0, 8),
+      becauseWatched: becauseWatched.slice(0, 8),
+      watchlist: watchlistMatches.slice(0, 8),
+      binge: rankRecommendations(available, userTaste, { limit: 8, filter: (item) => mediaType(item) === "tv" }),
+      hidden: rankRecommendations(available, userTaste, { limit: 8, filter: (item) => (item.vote_average || 0) >= 7.2 && (item.vote_count || 0) < 2500 }),
+      trending: rankRecommendations([...(rows.trending || []), ...fallbackRows.trending], userTaste, { limit: 8 }),
+      friends: socialItems.length ? rankRecommendations(socialItems, userTaste, { limit: 8 }) : []
     };
-  }, [clickSignals, hiddenRecs, ratings, rows, watched, watchlist]);
+  }, [hiddenRecs, recommendationPool, rows.trending, socialActivity, userTaste, watchlist]);
+
+  const tonightItems = useMemo(() => {
+    const saved = Object.values(watchlist || {}).map((item) => ({
+      ...item,
+      popularity: (item.popularity || 0) + ((item.watch_asap || item.watchAsap) ? 90 : 0)
+    }));
+    return rankRecommendations(saved, userTaste, {
+      limit: 8,
+      requirePoster: true,
+      filter: (item) => isReleased(item)
+    });
+  }, [userTaste, watchlist]);
 
   function backfillProfileActivityPoster(item) {
     const normalized = compactStoredItem({ ...item, media_type: mediaType(item) });
@@ -9711,7 +9938,7 @@ export default function Home() {
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
+    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} tonightItems={tonightItems} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
@@ -9808,6 +10035,7 @@ export default function Home() {
           onDeleteReview={deleteReview}
           onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })}
           socialActivity={socialActivity}
+          userTaste={userTaste}
           reminderSet={isReminderSet(selected)}
           ottReminderSet={isReminderSet(selected, "ott_available")}
           onToggleReminder={toggleReleaseReminder}
