@@ -553,6 +553,17 @@
   font-weight: 900;
 }
 
+.mg2-reminder-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 12px;
+}
+
+.mg2-reminder-actions .mg2-season-toggle {
+  margin: 0;
+}
+
 .mg2-episode-list {
   display: grid;
   gap: 9px;

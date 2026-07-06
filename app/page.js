@@ -5,6 +5,7 @@ import {
   acceptFollowRequest,
   addToSupabaseWatchlist,
   addItemToList,
+  backfillActivityEventPoster,
   createNotification,
   createUserList,
   createActivityEvent,
@@ -12,19 +13,23 @@ import {
   ensureUserProfile,
   followUser,
   isSupabaseConfigured,
+  loadCommunityCharts,
   loadNotifications,
   loadProductStats,
   loadProductLibrary,
   loadRatingReviews,
+  loadReleaseReminders,
   loadMovieGramRemoteState,
   loadRecentActivity,
   loadUserLists,
   markNotificationRead,
   markSupabaseWatched,
   removeFromSupabaseWatchlist,
+  removeReleaseReminder,
   removeSupabaseWatched,
   saveMovieGramRemoteState,
   saveRatingReview,
+  saveReleaseReminder,
   supabase,
   updateUserProfile
 } from "../lib/supabaseClient";
@@ -58,6 +63,7 @@ const exploreTabs = [
   { id: "movies", label: "Movies", endpoint: "/movie/now_playing" },
   { id: "tv", label: "TV Shows", endpoint: "/tv/on_the_air" },
   { id: "top", label: "Top Rated", endpoint: "/movie/top_rated" },
+  { id: "schedule", label: "Schedule", endpoint: "/movie/upcoming" },
   { id: "upcoming", label: "Upcoming", endpoint: "/movie/upcoming" }
 ];
 
@@ -67,7 +73,21 @@ const exploreHubSections = [
   { id: "popularMovies", title: "Popular Movies", endpoint: "/movie/popular" },
   { id: "popularTv", title: "Popular TV Shows", endpoint: "/tv/popular" },
   { id: "topRated", title: "Top Rated", endpoint: "/movie/top_rated" },
-  { id: "upcoming", title: "Upcoming", endpoint: "/movie/upcoming" }
+  { id: "upcoming", title: "Coming Soon", endpoint: "/movie/upcoming" },
+  { id: "nowPlaying", title: "New This Week", endpoint: "/movie/now_playing" },
+  { id: "airingToday", title: "TV Drops Today", endpoint: "/tv/airing_today" },
+  { id: "onAir", title: "Upcoming TV", endpoint: "/tv/on_the_air" },
+  { id: "topMovies", title: "Top 100 Movies", endpoint: "/movie/top_rated" },
+  { id: "topShows", title: "Top 100 Shows", endpoint: "/tv/top_rated" },
+  { id: "indiaTrending", title: "Trending in India", endpoint: "/trending/all/week", params: { region: "IN" } },
+  { id: "hiddenGems", title: "Hidden Gems", endpoint: "/discover/movie", params: { "vote_average.gte": "7.2", "vote_count.gte": "120", "vote_count.lte": "2500", sort_by: "vote_average.desc" } },
+  { id: "comfortWatch", title: "Comfort Watch", endpoint: "/discover/tv", params: { with_genres: "35,10751", sort_by: "popularity.desc" } },
+  { id: "bingeShows", title: "Binge-worthy Shows", endpoint: "/discover/tv", params: { "vote_average.gte": "7.4", sort_by: "popularity.desc" } },
+  { id: "shortRuntime", title: "Short Runtime Movies", endpoint: "/discover/movie", params: { "with_runtime.lte": "100", sort_by: "popularity.desc" } },
+  { id: "weekendPicks", title: "Weekend Watch Picks", endpoint: "/discover/movie", params: { with_genres: "28,12,53", sort_by: "popularity.desc" } },
+  { id: "indianCinema", title: "Indian Cinema", endpoint: "/discover/movie", params: { with_original_language: "hi", region: "IN", sort_by: "popularity.desc" } },
+  { id: "kDrama", title: "K-drama", endpoint: "/discover/tv", params: { with_original_language: "ko", sort_by: "popularity.desc" } },
+  { id: "sitcoms", title: "Sitcoms", endpoint: "/discover/tv", params: { with_genres: "35", sort_by: "popularity.desc" } }
 ];
 
 const friends = [
@@ -759,7 +779,8 @@ function normalizeRatingsCollection(collection = {}) {
 }
 
 function externalRatingCacheKey(item) {
-  return `moviegram.externalRatings.${keyOf(item)}`;
+  const type = mediaType(item);
+  return item?.id ? `moviegram.externalRatings.v2.${type}:${item.id}` : `moviegram.externalRatings.v2.${keyOf(item)}`;
 }
 
 function episodeKey(showId, seasonNumber, episodeNumber) {
@@ -798,12 +819,15 @@ function providerSearchUrl(provider = {}, title = "") {
   return "";
 }
 
-function parseOmdbRatings(data) {
+function parseOmdbRatings(data, expectedImdbId = "") {
   if (!data || data.Response === "False") return [];
+  if (expectedImdbId && data.imdbID && data.imdbID !== expectedImdbId) return [];
+  const fetchedAt = new Date().toISOString();
   const ratings = [];
-  if (data.imdbRating && data.imdbRating !== "N/A") ratings.push({ source: "IMDb", value: data.imdbRating });
+  if (data.imdbRating && data.imdbRating !== "N/A") ratings.push({ source: "IMDb", value: data.imdbRating, fetchedAt });
   (data.Ratings || []).forEach((entry) => {
-    if (entry.Source === "Rotten Tomatoes" && entry.Value && entry.Value !== "N/A") ratings.push({ source: "RT Critics", value: entry.Value });
+    if (entry.Source === "Rotten Tomatoes" && entry.Value && entry.Value !== "N/A") ratings.push({ source: "RT Critics", value: entry.Value, fetchedAt });
+    if (entry.Source === "Metacritic" && entry.Value && entry.Value !== "N/A") ratings.push({ source: "Metacritic", value: entry.Value, fetchedAt });
   });
   return ratings;
 }
@@ -1559,6 +1583,9 @@ function SkeletonRow() {
 function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = false, onQuickActions }) {
   const longPressTimer = useRef(null);
   const longPressFired = useRef(false);
+  const upcomingLabel = !isReleased(item) && dateOf(item)
+    ? new Date(`${dateOf(item).slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : "";
   const statusBadges = [
     watched && { key: "watched", icon: <Icon name="check" />, label: "Watched" },
     saved && { key: "watchlisted", icon: <Icon name="bookmark" />, label: "Watchlist" },
@@ -1616,7 +1643,7 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
         </span>
       )}
       <strong>{titleOf(item)}</strong>
-      <small>{item.vote_average ? item.vote_average.toFixed(1) : "NR"} / {yearOf(item)}</small>
+      <small>{upcomingLabel ? `${upcomingLabel} / ${mediaType(item) === "tv" ? "TV" : "Movie"}` : `${item.vote_average ? item.vote_average.toFixed(1) : "NR"} / ${yearOf(item)}`}</small>
     </button>
   );
 }
@@ -2917,8 +2944,14 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
+  const chartRows = [
+    { id: "mostWatched", title: communityCharts.mostWatched?.length ? "Most Watched This Week" : "Popular Right Now", items: communityCharts.mostWatched?.length ? communityCharts.mostWatched : (exploreRows.week || []) },
+    { id: "mostReviewed", title: communityCharts.mostReviewed?.length ? "Most Reviewed This Week" : "Trending Globally", items: communityCharts.mostReviewed?.length ? communityCharts.mostReviewed : (exploreRows.today || []) },
+    { id: "highestRated", title: communityCharts.highestRated?.length ? "Highest Rated by MovieGram Users" : "Popular on MovieGram Soon", items: communityCharts.highestRated?.length ? communityCharts.highestRated : (exploreRows.topRated || []) },
+    { id: "mostWatchlisted", title: communityCharts.mostWatchlisted?.length ? "Saved by MovieGram Users" : "Top 10 This Month", items: communityCharts.mostWatchlisted?.length ? communityCharts.mostWatchlisted : (exploreRows.topMovies || []) }
+  ].filter((row) => row.items?.length);
   useEffect(() => {
     if (!hasMoreExplore) return;
     let ticking = false;
@@ -2950,6 +2983,20 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
       </div>
       <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
       {tabLoading && tabResults.length > 0 && <div className="mg2-empty compact">Loading more...</div>}
+      {chartRows.map((row) => (
+        <ContentRow
+          key={row.id}
+          title={row.title}
+          items={row.items.slice(0, row.id === "mostWatchlisted" ? 10 : 16)}
+          loading={exploreLoading}
+          onOpen={onOpen}
+          onQuickActions={onQuickActions}
+          watchlist={watchlist}
+          watched={watched}
+          ratings={ratings}
+          favorites={favorites}
+        />
+      ))}
       {exploreHubSections.map((section) => (
         <ContentRow
           key={section.id}
@@ -6150,7 +6197,7 @@ function RatingControl({ value, onRate }) {
   );
 }
 
-function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [] }) {
+function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watched, watchAsap, onWatchAsap, onWatched, rating, onRate, onOpen, onOpenPerson, onOpenPublicProfile, externalRatings = [], watchProviders, favorite, onFavorite, apiFetch, episodeProgress = {}, onToggleEpisode, onToggleSeason, review = "", onEditReview, onDeleteReview, onOpenListSheet, socialActivity = [], reminderSet = false, ottReminderSet = false, onToggleReminder }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(null);
   const [seasonDetails, setSeasonDetails] = useState(null);
@@ -6311,6 +6358,16 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
               {!released && <p className="mg2-overview">{releaseMessage(shown)} You can mark this watched after release.</p>}
               <p className="mg2-overview">{visibleOverview}</p>
               {overviewLong && <button className="mg2-read-more" type="button" onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? "Show less" : "Read more"}</button>}
+              {!released && (
+                <div className="mg2-reminder-actions">
+                  <button className="mg2-season-toggle" type="button" onClick={() => onToggleReminder?.(shown, "release")}>
+                    {reminderSet ? "Reminder set" : "Remind me"}
+                  </button>
+                  <button className="mg2-season-toggle" type="button" onClick={() => onToggleReminder?.(shown, "ott_available")}>
+                    {ottReminderSet ? "OTT alert set" : "Notify on OTT"}
+                  </button>
+                </div>
+              )}
               <div className="mg2-genre-list">
                 {genres.length ? genres.map((genre) => <span key={genre.id}>{genre.name}</span>) : <span>Genre unavailable</span>}
               </div>
@@ -6501,7 +6558,21 @@ export default function Home() {
     popularMovies: fallbackRows.movies,
     popularTv: fallbackRows.series,
     topRated: fallbackRows.movies,
-    upcoming: fallbackRows.trending
+    upcoming: fallbackRows.trending,
+    nowPlaying: fallbackRows.movies,
+    airingToday: fallbackRows.series,
+    onAir: fallbackRows.series,
+    topMovies: fallbackRows.movies,
+    topShows: fallbackRows.series,
+    indiaTrending: fallbackRows.trending,
+    hiddenGems: fallbackRows.movies,
+    comfortWatch: fallbackRows.series,
+    bingeShows: fallbackRows.series,
+    shortRuntime: fallbackRows.movies,
+    weekendPicks: fallbackRows.movies,
+    indianCinema: fallbackRows.movies,
+    kDrama: fallbackRows.series,
+    sitcoms: fallbackRows.series
   });
   const [exploreLoading, setExploreLoading] = useState(false);
   const [popularActors, setPopularActors] = useState(actorFallbacks);
@@ -6524,6 +6595,7 @@ export default function Home() {
   const [continueWatching, setContinueWatching] = useState([]);
   const [clickSignals, setClickSignals] = useState({});
   const [profileActivity, setProfileActivity] = useState({});
+  const [releaseReminders, setReleaseReminders] = useState({});
   const [selected, setSelected] = useState(null);
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -6549,6 +6621,7 @@ export default function Home() {
   const [socialActivity, setSocialActivity] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
   const [recentReviews, setRecentReviews] = useState([]);
+  const [communityCharts, setCommunityCharts] = useState({});
   const [notifications, setNotifications] = useState([]);
   const [profileStats, setProfileStats] = useState(null);
   const [followBusyIds, setFollowBusyIds] = useState({});
@@ -6653,6 +6726,7 @@ export default function Home() {
     setContinueWatching(normalized.continueWatching);
     setClickSignals(normalized.clickSignals);
     setProfileActivity(normalized.profileActivity);
+    setReleaseReminders(stored("moviegram.releaseReminders", {}));
     setLikedFeed(normalized.feedLikes);
     setSavedFeed(normalized.feedSaves);
     setFriendStates(normalized.friendStates);
@@ -6882,6 +6956,7 @@ export default function Home() {
       setSocialActivity([]);
       setRecentActivity([]);
       setRecentReviews([]);
+      setCommunityCharts({});
       setNotifications([]);
       setProfileStats(null);
       setFollowBusyIds({});
@@ -6898,14 +6973,40 @@ export default function Home() {
       setFollowerProfiles(social.followerProfiles || []);
       setFollowingProfiles(social.followingProfiles || []);
       setSocialActivity(social.activity);
-      const [activityRows, notificationRows, statsRows, productLibrary] = await Promise.all([
+      const [activityRows, notificationRows, statsRows, productLibrary, chartRows, reminderRows] = await Promise.all([
         loadRecentActivity(supabaseUser.id, 30),
         loadNotifications(supabaseUser.id, 30),
         loadProductStats(supabaseUser.id),
-        loadProductLibrary(supabaseUser.id)
+        loadProductLibrary(supabaseUser.id),
+        loadCommunityCharts(),
+        loadReleaseReminders(supabaseUser.id)
       ]);
       setRecentActivity(activityRows);
       setNotifications(notificationRows);
+      setCommunityCharts(chartRows || {});
+      if (reminderRows?.length) {
+        const nextReminders = reminderRows.reduce((acc, row) => {
+          const item = {
+            id: row.tmdb_id,
+            media_type: row.media_type,
+            title: row.title,
+            name: row.media_type === "tv" ? row.title : undefined,
+            poster_path: row.poster_path || "",
+            release_date: row.release_date || (row.release_year && row.media_type === "movie" ? `${row.release_year}-01-01` : ""),
+            first_air_date: row.release_date || (row.release_year && row.media_type === "tv" ? `${row.release_year}-01-01` : "")
+          };
+          acc[`${row.item_key || keyOf(item)}:${row.reminder_type || "release"}`] = {
+            item: compactStoredItem(item),
+            reminder_type: row.reminder_type || "release",
+            release_date: row.release_date || "",
+            provider_name: row.provider_name || "",
+            created_at: row.created_at
+          };
+          return acc;
+        }, { ...stored("moviegram.releaseReminders", {}) });
+        setReleaseReminders(nextReminders);
+        persist("moviegram.releaseReminders", nextReminders);
+      }
       if (productLibrary) {
         const scopedCache = readOwnedLocalState(supabaseUser.id, { fallbackToLegacy: false });
         const legacyCache = readLegacyLocalState();
@@ -6974,6 +7075,7 @@ export default function Home() {
       setSocialActivity([]);
       setRecentActivity([]);
       setRecentReviews([]);
+      setCommunityCharts({});
       setNotifications([]);
       setProfileStats(null);
       setFollowBusyIds({});
@@ -7121,7 +7223,7 @@ export default function Home() {
       setExploreLoading(true);
       try {
         const settled = await Promise.allSettled(exploreHubSections.map(async (section) => {
-          const data = await apiFetch(section.endpoint, { page: 1 });
+          const data = await apiFetch(section.endpoint, { page: 1, ...(section.params || {}) });
           return [section.id, dedupe(normalize(data.results)).slice(0, 16)];
         }));
         const next = { ...exploreRows };
@@ -7230,7 +7332,9 @@ export default function Home() {
           ? "credits,aggregate_credits,videos,similar,recommendations,external_ids,content_ratings"
           : "credits,videos,similar,recommendations,external_ids,release_dates";
         const data = await apiFetch(`/${type}/${selected.id}`, { append_to_response: append });
-        setDetails({ ...data, media_type: type });
+        const detailedItem = { ...selected, ...data, media_type: type };
+        setDetails(detailedItem);
+        backfillProfileActivityPoster(detailedItem);
       } catch {
         setDetails(null);
       } finally {
@@ -7291,7 +7395,7 @@ export default function Home() {
       try {
         const response = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(apiKey)}`);
         if (!response.ok) throw new Error("OMDb request failed.");
-        const parsed = parseOmdbRatings(await response.json());
+        const parsed = parseOmdbRatings(await response.json(), imdbId);
         setExternalRatings(parsed);
         persist(externalRatingCacheKey(normalized), parsed);
       } catch {
@@ -7354,6 +7458,72 @@ export default function Home() {
     };
   }, [clickSignals, hiddenRecs, ratings, rows, watched, watchlist]);
 
+  function backfillProfileActivityPoster(item) {
+    const normalized = compactStoredItem({ ...item, media_type: mediaType(item) });
+    if (!normalized?.poster_path) return;
+    const shouldBackfillRemote = Boolean(supabaseUser?.id) && (recentActivity || []).some((event) => {
+      const eventItem = {
+        ...(event.item_data || {}),
+        id: event.tmdb_id,
+        media_type: event.media_type,
+        title: event.title,
+        poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || event.metadata?.metadata?.poster_path || ""
+      };
+      return itemMatches(eventItem, normalized) && !eventItem.poster_path;
+    });
+    setRecentActivity((current) => {
+      let changedRecent = false;
+      const next = current.map((event) => {
+        const eventItem = {
+          ...(event.item_data || {}),
+          id: event.tmdb_id,
+          media_type: event.media_type,
+          title: event.title,
+          poster_path: event.item_data?.poster_path || event.poster_path || event.metadata?.poster_path || event.metadata?.metadata?.poster_path || ""
+        };
+        if (!itemMatches(eventItem, normalized) || eventItem.poster_path) return event;
+        changedRecent = true;
+        return {
+          ...event,
+          poster_path: normalized.poster_path,
+          item_data: { ...(event.item_data || {}), poster_path: normalized.poster_path },
+          metadata: { ...(event.metadata || {}), poster_path: normalized.poster_path }
+        };
+      });
+      return changedRecent ? next : current;
+    });
+    if (shouldBackfillRemote) {
+      backfillActivityEventPoster(supabaseUser.id, normalized, { posterPath: normalized.poster_path, backdropPath: item.backdrop_path || "" })
+        .catch((error) => console.warn("MovieGram activity poster backfill skipped", { message: error?.message }));
+    }
+    let changed = false;
+    setProfileActivity((current) => {
+      const next = Object.entries(current || {}).reduce((acc, [entryKey, entry]) => {
+        const entryItem = entry?.item;
+        const sameItem = itemMatches(entryItem, normalized) || keyOf(entryItem || {}) === keyOf(normalized);
+        if (sameItem && !entryItem?.poster_path) {
+          changed = true;
+          acc[entryKey] = {
+            ...entry,
+            item: {
+              ...entryItem,
+              ...normalized,
+              poster_path: normalized.poster_path
+            }
+          };
+          return acc;
+        }
+        acc[entryKey] = entry;
+        return acc;
+      }, {});
+      if (changed) {
+        persist("moviegram.profileActivity", next);
+        persist(ownerStorageKey(activeDataOwner.current || "guest", MOVIEGRAM_LOCAL_KEYS.profileActivity), next);
+      }
+      return changed ? next : current;
+    });
+  }
+
   function openItem(item) {
     if (item?.media_type === "person") {
       setSelectedPerson(item);
@@ -7366,9 +7536,42 @@ export default function Home() {
     setSelected(normalized);
     setClickSignals(nextSignals);
     setContinueWatching(nextContinue);
+    backfillProfileActivityPoster(normalized);
     recordProfileActivity("opened", normalized, "details");
     persist("moviegram.clickSignals", nextSignals);
     persist("moviegram.continueWatching", nextContinue);
+  }
+
+  function reminderKey(item, type = "release") {
+    return `${keyOf(item)}:${type}`;
+  }
+
+  function isReminderSet(item, type = "release") {
+    if (!item) return false;
+    return Boolean(releaseReminders[reminderKey(item, type)]);
+  }
+
+  function toggleReleaseReminder(item, type = "release") {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const key = reminderKey(normalized, type);
+    const next = { ...releaseReminders };
+    const exists = Boolean(next[key]);
+    if (exists) delete next[key];
+    else {
+      next[key] = {
+        item: compactStoredItem(normalized),
+        reminder_type: type,
+        release_date: dateOf(normalized) || "",
+        created_at: new Date().toISOString()
+      };
+    }
+    setReleaseReminders(next);
+    persist("moviegram.releaseReminders", next);
+    if (!supabaseUser?.id) return;
+    const remoteAction = exists
+      ? removeReleaseReminder(supabaseUser.id, normalized, type)
+      : saveReleaseReminder(supabaseUser.id, normalized, { reminderType: type });
+    remoteAction?.catch?.((error) => console.warn("MovieGram release reminder sync skipped", { message: error?.message }));
   }
 
   function openPerson(person) {
@@ -8360,6 +8563,7 @@ export default function Home() {
         onLoadMoreExplore={loadMoreExplore}
         exploreRows={exploreRows}
         exploreLoading={exploreLoading}
+        communityCharts={communityCharts}
         actors={popularActors}
         actorsLoading={actorsLoading}
         onOpen={openItem}
@@ -8440,6 +8644,9 @@ export default function Home() {
           onDeleteReview={deleteReview}
           onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })}
           socialActivity={socialActivity}
+          reminderSet={isReminderSet(selected)}
+          ottReminderSet={isReminderSet(selected, "ott_available")}
+          onToggleReminder={toggleReleaseReminder}
         />
       )}
       <PersonProfileModal
