@@ -5504,14 +5504,27 @@ function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites
   );
 }
 
-function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }) {
+function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, episodeProgress = {}, onOpen }) {
   const [diaryTab, setDiaryTab] = useState("calendar");
   const [activityTab, setActivityTab] = useState("watched");
   const [typeFilter, setTypeFilter] = useState("all");
   const [ratingFilter, setRatingFilter] = useState("all");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyFilter, setHistoryFilter] = useState("all");
+  const [selectedDay, setSelectedDay] = useState("");
   const watchedItems = Object.values(watched)
     .map((item) => ({ ...item, media_type: mediaType(item), rating: ratingForItem(item, ratings) }))
     .sort((a, b) => new Date(b.watchedAt || 0) - new Date(a.watchedAt || 0));
+  const episodeItems = Object.values(episodeProgress || {}).map((entry) => ({
+    id: `episode:${entry.showId}:${entry.seasonNumber}:${entry.episodeNumber}`,
+    media_type: "episode",
+    title: `Episode S${entry.seasonNumber || "?"} E${entry.episodeNumber || "?"}`,
+    name: `Episode S${entry.seasonNumber || "?"} E${entry.episodeNumber || "?"}`,
+    watchedAt: entry.watchedAt || "",
+    showId: entry.showId,
+    seasonNumber: entry.seasonNumber,
+    episodeNumber: entry.episodeNumber
+  })).sort((a, b) => new Date(b.watchedAt || 0) - new Date(a.watchedAt || 0));
   const watchlistItems = Object.values(watchlist).map((item) => ({ ...item, media_type: mediaType(item), rating: ratingForItem(item, ratings) }));
   const ratedItems = dedupe([...watchedItems, ...watchlistItems])
     .filter((item) => ratingForItem(item, ratings))
@@ -5520,11 +5533,22 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
   const monthOptions = [...new Set(watchedItems.map((item) => (item.watchedAt || "").slice(0, 7)).filter(Boolean))];
   const currentMonth = monthOptions[0] || new Date().toISOString().slice(0, 7);
   const [monthFilter, setMonthFilter] = useState(currentMonth);
-  const filtered = watchedItems.filter((item) => {
-    const typeMatch = typeFilter === "all" || mediaType(item) === typeFilter;
+  const allHistoryItems = [...watchedItems, ...episodeItems];
+  const today = new Date();
+  const filtered = allHistoryItems.filter((item) => {
+    const itemType = mediaType(item);
+    const watchedDate = item.watchedAt ? new Date(item.watchedAt) : null;
+    const queryMatch = !historyQuery.trim() || titleOf(item).toLowerCase().includes(historyQuery.trim().toLowerCase());
+    const quickFilterMatch = historyFilter === "all" ||
+      (historyFilter === "movie" && itemType === "movie") ||
+      (historyFilter === "tv" && itemType === "tv") ||
+      (historyFilter === "episode" && item.media_type === "episode") ||
+      (historyFilter === "month" && watchedDate && watchedDate.getMonth() === today.getMonth() && watchedDate.getFullYear() === today.getFullYear()) ||
+      (historyFilter === "year" && watchedDate && watchedDate.getFullYear() === today.getFullYear());
+    const typeMatch = typeFilter === "all" || itemType === typeFilter || (typeFilter === "tv" && item.media_type === "episode");
     const ratingMatch = ratingFilter === "all" || (item.rating || 0) >= Number(ratingFilter);
     const monthMatch = !monthFilter || !item.watchedAt || (item.watchedAt || "").startsWith(monthFilter);
-    return typeMatch && ratingMatch && monthMatch;
+    return queryMatch && quickFilterMatch && typeMatch && ratingMatch && monthMatch;
   });
   const monthDate = new Date(`${monthFilter || currentMonth}-01T00:00:00`);
   const year = monthDate.getFullYear();
@@ -5536,7 +5560,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
     ...Array.from({ length: daysInMonth }, (_, index) => {
       const day = index + 1;
       const dateKey = `${monthFilter || currentMonth}-${String(day).padStart(2, "0")}`;
-      return { id: dateKey, day, items: filtered.filter((item) => (item.watchedAt || "").startsWith(dateKey)) };
+      return { id: dateKey, day, items: allHistoryItems.filter((item) => (item.watchedAt || "").startsWith(dateKey)) };
     })
   ];
   const grouped = filtered.reduce((acc, item) => {
@@ -5600,6 +5624,13 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
         : "Add ratings or notes to create review activity.";
   const monthLabel = monthDate.toLocaleString("en-US", { month: "long", year: "numeric" });
   const empty = watchedItems.length === 0;
+  const selectedDayItems = selectedDay ? allHistoryItems.filter((item) => (item.watchedAt || "").startsWith(selectedDay)) : [];
+  const moveMonth = (direction) => {
+    const base = new Date(`${monthFilter || currentMonth}-01T00:00:00`);
+    base.setMonth(base.getMonth() + direction);
+    setMonthFilter(base.toISOString().slice(0, 7));
+    setSelectedDay("");
+  };
 
   return (
     <section className="mg2-diary-screen">
@@ -5607,6 +5638,21 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
         <span>Tracking Hub</span>
         <h3>Your Watch History</h3>
         <p>{empty ? "Mark movies and TV watched to build your personal tracking hub." : `${watchedItems.length} watched, ${watchlistItems.length} saved, ${ratedItems.length} rated.`}</p>
+      </div>
+
+      <div className="mg2-log-search">
+        <Icon name="search" />
+        <input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search your watch history" />
+      </div>
+      <div className="mg2-activity-chips" aria-label="History quick filters">
+        {[
+          ["all", "All"],
+          ["movie", "Movies"],
+          ["tv", "TV Shows"],
+          ["episode", "Episodes"],
+          ["month", "This Month"],
+          ["year", "This Year"]
+        ].map(([id, label]) => <button key={id} className={historyFilter === id ? "active" : ""} type="button" onClick={() => setHistoryFilter(id)}>{label}</button>)}
       </div>
 
       <section className="mg2-tracking-panel">
@@ -5628,19 +5674,19 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
       </section>
 
       <section className="mg2-history-section">
-        <div className="mg2-tracking-head"><h3>History</h3><small>Recent watches</small></div>
-        {watchedItems.length ? (
+        <div className="mg2-tracking-head"><h3>Watch History</h3><small>Newest first</small></div>
+        {filtered.length ? (
           <div className="mg2-history-row">
-            {watchedItems.slice(0, 10).map((item) => (
-              <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
+            {filtered.slice(0, 16).map((item) => (
+              <button key={keyOf(item)} type="button" onClick={() => item.media_type !== "episode" && onOpen(item)}>
                 <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                 <b>{dateBadge(item.watchedAt)}</b>
                 <strong>{titleOf(item)}</strong>
-                <small>{mediaType(item) === "tv" ? "TV" : "Movie"}{item.rating ? ` - ${formatUserRating(item.rating)}` : ""}</small>
+                <small>{item.media_type === "episode" ? "Episode" : mediaType(item) === "tv" ? "TV" : "Movie"}{item.rating ? ` - ${formatUserRating(item.rating)}` : ""}</small>
               </button>
             ))}
           </div>
-        ) : <div className="mg2-diary-empty"><strong>No history yet</strong><small>Mark something watched to fill your recent history.</small></div>}
+        ) : <div className="mg2-diary-empty"><strong>No history matches</strong><small>Try another search or filter.</small></div>}
       </section>
 
       <section className="mg2-tracking-activity-section">
@@ -5690,15 +5736,26 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
         </div>
       ) : diaryTab === "calendar" ? (
         <div className="mg2-calendar-panel">
-          <div className="mg2-calendar-head"><strong>{monthLabel}</strong><small>{filtered.length} watched</small></div>
+          <div className="mg2-calendar-head"><button type="button" onClick={() => moveMonth(-1)}><Icon name="back" /></button><strong>{monthLabel}</strong><button type="button" onClick={() => moveMonth(1)}><Icon name="next" /></button><small>{filtered.length} watched</small></div>
           <div className="mg2-calendar-week">{["S", "M", "T", "W", "T", "F", "S"].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
           <div className="mg2-calendar-grid">
             {calendarCells.map((cell) => (
-              <button key={cell.id} className={cell.blank ? "blank" : cell.items?.length ? "has-items" : ""} type="button" disabled={cell.blank || !cell.items?.length} onClick={() => cell.items?.[0] && onOpen(cell.items[0])}>
+              <button key={cell.id} className={cell.blank ? "blank" : cell.items?.length ? "has-items" : ""} type="button" disabled={cell.blank || !cell.items?.length} onClick={() => setSelectedDay(cell.id)}>
                 {!cell.blank && <><strong>{cell.day}</strong>{cell.items?.slice(0, 3).map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w92")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}</>}
               </button>
             ))}
           </div>
+          {selectedDay && (
+            <div className="mg2-activity-list">
+              {selectedDayItems.map((item) => (
+                <button key={`day-${keyOf(item)}`} type="button" onClick={() => item.media_type !== "episode" && onOpen(item)}>
+                  <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                  <span><strong>{titleOf(item)}</strong><small>{item.media_type === "episode" ? "Episode" : mediaType(item) === "tv" ? "TV" : "Movie"}</small></span>
+                  <b>{dateBadge(item.watchedAt)}</b>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="mg2-diary-list">
@@ -5706,7 +5763,7 @@ function WatchDiaryScreen({ watched = {}, watchlist = {}, ratings = {}, onOpen }
             <section key={date}>
               <h4>{date}</h4>
               {items.map((item) => (
-                <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
+                <button key={keyOf(item)} type="button" onClick={() => item.media_type !== "episode" && onOpen(item)}>
                   <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
                   <span>
                     <strong>{titleOf(item)}</strong>
@@ -5947,10 +6004,12 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
     { label: "Following", value: user ? profileData.following : "0", action: () => { setPeopleQuery(""); setProfilePanel("following"); } }
   ];
   const shortcuts = [
-    { label: "Favorites", icon: "heart", action: () => { setProfilePanel("favorites"); setSelectedList(null); } },
-    { label: "Lists", icon: "list", action: () => { setProfilePanel("lists"); setSelectedList(null); } },
     { label: "Stats", icon: "chart", action: onOpenStats },
-    { label: "Diary", icon: "book", action: onOpenDiary }
+    { label: "Watch History", icon: "book", action: onOpenDiary },
+    { label: "Wrapped", icon: "sparkle", action: onOpenStats },
+    { label: "Lists", icon: "list", action: () => { setProfilePanel("lists"); setSelectedList(null); } },
+    { label: "Watch ASAP", icon: "clock", action: () => openProfileTab("watchlist") },
+    { label: "Reviews", icon: "feed", action: () => openProfileTab("reviews") }
   ];
   const shownProfile = profile || profileDraft || defaultProfileForUser(user);
   const displayName = shownProfile.display_name || shownProfile.username || user?.email?.split("@")[0] || "Aabhas";
@@ -6078,7 +6137,7 @@ function ProfileScreen({ watchlist = {}, watched = {}, ratings = {}, reviews = {
         {shortcuts.map((shortcut) => (
           <button
             key={shortcut.label}
-            className={`mg2-shortcut-${shortcut.label.toLowerCase()}`}
+            className={`mg2-shortcut-${shortcut.label.toLowerCase().replace(/\s+/g, "-")}`}
             type="button"
             onClick={shortcut.action}
           >
@@ -6450,15 +6509,27 @@ function BlendScreen({ rows, savedBlendLists, onSaveBlend }) {
   );
 }
 
-function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
+function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, episodeProgress = {}, customLists = {} }) {
   const [recapReady, setRecapReady] = useState(false);
   const watchedItems = Object.values(watched);
   const savedItems = Object.values(watchlist);
   const watchedCount = watchedItems.length;
-  const ratingValues = Object.values(ratings);
-  const avgRating = ratingValues.length ? (ratingValues.reduce((sum, value) => sum + (normalizeUserRating(value) || 0), 0) / ratingValues.length).toFixed(1) : "0.0";
+  const normalizedRatings = Object.values(ratings).map(normalizeUserRating).filter(Boolean);
+  const avgRating = normalizedRatings.length ? (normalizedRatings.reduce((sum, value) => sum + value, 0) / normalizedRatings.length).toFixed(1) : "0.0";
   const movieItems = watchedItems.filter((item) => mediaType(item) === "movie");
   const showItems = watchedItems.filter((item) => mediaType(item) === "tv");
+  const episodeCount = Object.keys(episodeProgress || {}).length;
+  const watchAsapCount = savedItems.filter((item) => item.watch_asap || item.watchAsap).length;
+  const reviewCount = Object.keys(reviews || {}).length;
+  const now = new Date();
+  const thisMonthCount = watchedItems.filter((item) => item.watchedAt && new Date(item.watchedAt).getMonth() === now.getMonth() && new Date(item.watchedAt).getFullYear() === now.getFullYear()).length;
+  const thisYearCount = watchedItems.filter((item) => item.watchedAt && new Date(item.watchedAt).getFullYear() === now.getFullYear()).length;
+  const estimateMinutes = watchedItems.reduce((sum, item) => {
+    const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
+    if (runtime > 0) return sum + runtime;
+    return sum + (mediaType(item) === "tv" ? Math.max(45, episodeCount ? 0 : 45) : 100);
+  }, 0) + episodeCount * 45;
+  const estimateHours = Math.round((estimateMinutes / 60) * 10) / 10;
   const ratedWatched = watchedItems
     .map((item) => ({ item, rating: ratingForItem(item, ratings) || 0 }))
     .sort((a, b) => b.rating - a.rating);
@@ -6495,6 +6566,17 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
     return acc;
   }, {});
   const favoriteGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]);
+  const languageCounts = watchedItems.reduce((acc, item) => {
+    const language = item.original_language || item.language || "unknown";
+    acc[language] = (acc[language] || 0) + 1;
+    return acc;
+  }, {});
+  const topLanguages = Object.entries(languageCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const collectionProgress = franchiseHubs.map((hub) => {
+    const total = hub.items?.length || 0;
+    const watchedInHub = (hub.items || []).filter((entry) => watchedItems.some((item) => itemMatches(item, entry))).length;
+    return { hub, total, watched: watchedInHub };
+  }).filter((entry) => entry.total > 1 && entry.watched > 0).sort((a, b) => b.watched - a.watched).slice(0, 4);
   const monthCounts = watchedItems.reduce((acc, item) => {
     const month = item.watchedAt ? new Date(item.watchedAt).toLocaleString("en-US", { month: "long" }) : "Untracked";
     acc[month] = (acc[month] || 0) + 1;
@@ -6505,7 +6587,7 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
   const review = {
     movies: movieItems.length,
     shows: showItems.length,
-    hours: Math.round(watchedCount * 2.1),
+    hours: estimateHours,
     genre: favoriteGenre,
     topTitle: topItem ? titleOf(topItem) : "No top title yet",
     binge: showItems[0] ? titleOf(showItems[0]) : "No TV binge yet",
@@ -6537,17 +6619,27 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
     { title: "Longest binge", value: review.binge, detail: showItems.length ? "TV title from your watched history." : "Mark TV watched to unlock binge stats.", poster: showItems[0] },
     { title: "Most watched month", value: review.month, detail: "Calculated from watched dates saved locally." },
     { title: "Top saved title", value: savedPreview ? titleOf(savedPreview) : "No saved title yet", detail: savedPreview ? "Pulled from your current watchlist." : "Add titles to watchlist to fill this card.", poster: savedPreview },
+    { title: "Biggest binge month", value: review.month, detail: thisMonthCount ? `${thisMonthCount} watched this month.` : "Watch more this month to unlock this insight." },
     { title: "Final share card", value: "MovieGram 2026", detail: `${watchedCount} watched, ${savedItems.length} saved, ${avgRating}/5 average rating.`, tone: "share", poster: topItem }
   ] : [];
+  const ratingDistribution = [5, 4, 3, 2, 1].map((rating) => ({
+    rating,
+    count: normalizedRatings.filter((value) => Math.ceil(value) === rating).length
+  }));
+  const maxRatingBucket = Math.max(1, ...ratingDistribution.map((item) => item.count));
   const stats = [
-    { label: "Watched", value: watchedCount },
-    { label: "Hours", value: Math.round(watchedCount * 2.1) },
-    { label: "Avg Rating", value: avgRating },
-    { label: "Watchlist", value: savedItems.length },
     { label: "Movies", value: movieItems.length },
-    { label: "Shows", value: showItems.length },
+    { label: "TV Shows", value: showItems.length },
+    { label: "Episodes", value: episodeCount },
+    { label: "Hours Est.", value: estimateHours },
+    { label: "Avg Rating", value: avgRating },
+    { label: "Reviews", value: reviewCount },
+    { label: "Watchlist", value: savedItems.length },
+    { label: "Watch ASAP", value: watchAsapCount },
+    { label: "This Month", value: thisMonthCount },
+    { label: "This Year", value: thisYearCount },
     { label: "Favorite Genre", value: favoriteGenre },
-    { label: "Top Creator", value: "Not tracked" }
+    { label: "Lists", value: Object.keys(customLists || {}).length }
   ];
 
   return (
@@ -6560,6 +6652,18 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {} }) {
       <div className="mg2-social-section">
         <h3>Watch Mix</h3>
         {watchMix.map((item) => <p key={item.label}><span style={{ width: `${hasWatchedHistory || savedItems.length ? Math.max(8, (item.value / Math.max(1, watchedCount + savedItems.length)) * 100) : 0}%` }} />{item.label}<small>{item.value}</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Ratings Distribution</h3>
+        {ratingDistribution.map((item) => <p key={item.rating}><span style={{ width: `${item.count ? Math.max(8, (item.count / maxRatingBucket) * 100) : 0}%` }} />{item.rating} star<small>{item.count}</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Languages</h3>
+        {(topLanguages.length ? topLanguages : [["Watch more titles to unlock this insight", 0]]).map(([language, count]) => <p key={language}><span style={{ width: `${count ? Math.max(8, (count / Math.max(1, watchedCount)) * 100) : 0}%` }} />{language.toUpperCase()}<small>{count}</small></p>)}
+      </div>
+      <div className="mg2-social-section">
+        <h3>Collection Progress</h3>
+        {(collectionProgress.length ? collectionProgress : [{ hub: { name: "Watch collection titles to unlock progress" }, watched: 0, total: 0 }]).map((entry) => <p key={entry.hub.name}><span style={{ width: `${entry.total ? Math.max(8, (entry.watched / entry.total) * 100) : 0}%` }} />{entry.hub.shortName || entry.hub.name}<small>{entry.total ? `${entry.watched}/${entry.total}` : "Locked"}</small></p>)}
       </div>
       <div className="mg2-social-section">
         <h3>Year Preview</h3>
@@ -9375,7 +9479,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Stats</h2>
         </div>
-        <StatsScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} />
+        <StatsScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} episodeProgress={episodeProgress} customLists={customLists} />
       </section>
     );
   } else if (activeSocial === "diary") {
@@ -9385,7 +9489,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Diary</h2>
         </div>
-        <WatchDiaryScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} onOpen={openItem} />
+        <WatchDiaryScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} episodeProgress={episodeProgress} onOpen={openItem} />
       </section>
     );
   } else if (activeTab === "home") {
