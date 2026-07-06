@@ -1096,6 +1096,114 @@
   -webkit-box-orient: vertical;
 }
 
+.mg2-search-subfilters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 16px 10px;
+  scrollbar-width: none;
+}
+
+.mg2-search-subfilters::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-search-subfilters button {
+  min-height: 32px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #dfe4ee;
+  background: rgba(255,255,255,.055);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mg2-search-subfilters button.active {
+  color: #fff;
+  border-color: rgba(155,124,255,.42);
+  background: rgba(155,124,255,.24);
+}
+
+.mg2-movie-night {
+  display: grid;
+  gap: 14px;
+}
+
+.mg2-night-votes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mg2-night-votes button {
+  min-height: 28px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  padding: 0 9px;
+  color: #fff;
+  background: rgba(255,255,255,.07);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.mg2-night-votes button.active {
+  border-color: rgba(155,124,255,.42);
+  background: rgba(155,124,255,.24);
+}
+
+.mg2-night-winner {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 16px;
+  padding: 10px;
+  color: #fff;
+  background: rgba(255,255,255,.06);
+}
+
+.mg2-night-winner img {
+  width: 54px;
+  aspect-ratio: 2 / 3;
+  border-radius: 9px;
+  object-fit: cover;
+}
+
+.mg2-night-winner span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.mg2-night-winner strong,
+.mg2-night-winner small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mg2-night-winner strong {
+  white-space: nowrap;
+}
+
+.mg2-night-winner small {
+  color: #bfc5d1;
+}
+
+.mg2-night-winner button {
+  min-height: 34px;
+  border: 1px solid rgba(155,124,255,.32);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #fff;
+  background: rgba(155,124,255,.18);
+  font-size: 10px;
+  font-weight: 900;
+}
+
 @media (max-width: 480px) {
   .mg2-detail-hero {
     min-height: 468px;
@@ -8625,6 +8733,40 @@ body {
   font-weight: 850;
 }
 
+.mg2-reel-share-friends {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mg2-reel-share-friends::-webkit-scrollbar {
+  display: none;
+}
+
+.mg2-reel-share-friends button {
+  min-width: 68px;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 10px;
+}
+
+.mg2-reel-share-friends span {
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg2-reel-share-friends small {
+  color: #bfc5d1;
+}
+
 .mg2-reel-share-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -10833,6 +10975,12 @@ body {
   padding: 0 12px;
   color: #fff;
   background: rgba(255, 255, 255, .08);
+}
+
+.mg2-list-create small {
+  color: #aeb5c1;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .mg2-custom-list-options {

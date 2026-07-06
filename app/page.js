@@ -2254,7 +2254,7 @@ function WatchedDateSheet({ action, onChoose, onCancel }) {
   );
 }
 
-function QuickActionSheet({ item, saved, watched, watchAsap, favorite, onClose, onWatched, onWatchlist, onWatchAsap, onFavorite, onOpen }) {
+function QuickActionSheet({ item, saved, watched, watchAsap, favorite, onClose, onWatched, onWatchlist, onWatchAsap, onFavorite, onOpenListSheet, onOpen }) {
   if (!item) return null;
   const released = isReleased(item);
   return (
@@ -2272,6 +2272,7 @@ function QuickActionSheet({ item, saved, watched, watchAsap, favorite, onClose, 
         <button type="button" onClick={() => { onWatchlist(item); onClose(); }}><Icon name="bookmark" /> {saved ? "Remove watchlist" : "Add watchlist"}</button>
         <button type="button" onClick={() => { onWatchAsap(item); onClose(); }}><Icon name="clock" /> {watchAsap ? "Remove Watch ASAP" : "Watch ASAP"}</button>
         <button type="button" onClick={() => { onFavorite(item); onClose(); }}><Icon name="heart" /> {favorite ? "Unlike" : "Like"}</button>
+        <button type="button" onClick={() => { onOpenListSheet?.(item); onClose(); }}><Icon name="list" /> Add to list</button>
         <button type="button" onClick={() => { onOpen(item); onClose(); }}><Icon name="play" /> Open Details</button>
       </section>
     </div>
@@ -2711,10 +2712,11 @@ function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) 
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New list name" />
           <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" />
           <select value={visibility} onChange={(event) => setVisibility(event.target.value)}>
-            <option value="public">Public</option>
-            <option value="friends">Friends</option>
             <option value="private">Private</option>
+            <option value="friends">Friends / shared</option>
+            <option value="public">Public</option>
           </select>
+          <small>Friends/shared lists are stored locally unless your Supabase list sharing tables are available.</small>
           <button type="button" onClick={() => {
             const trimmed = name.trim();
             if (!trimmed) return;
@@ -3575,16 +3577,37 @@ function FranchiseHubCard({ hub, onOpenFranchise }) {
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, sentinelRef, onQuickActions, apiFetch }) {
+function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, sentinelRef, onQuickActions, apiFetch }) {
   const [searchFilter, setSearchFilter] = useState("content");
+  const [contentFilter, setContentFilter] = useState("all");
   const [hydratedFranchises, setHydratedFranchises] = useState({});
   const peopleResults = results.filter((item) => item.media_type === "person");
   const contentResults = results.filter((item) => item.media_type === "movie" || item.media_type === "tv");
   const knownForContent = dedupe(peopleResults.flatMap((person) => normalizeSearch(person.known_for || []).filter((item) => item.media_type === "movie" || item.media_type === "tv")));
   const franchiseResults = franchisesForQuery(query);
-  const collectionResults = franchiseResults.map((hub) => hydratedFranchises[hub.hub_key] || hub);
+  const listResults = Object.values(customLists || {})
+    .filter((list) => `${list.title || ""} ${list.description || ""}`.toLowerCase().includes(query.trim().toLowerCase()))
+    .map((list) => ({
+      hub_key: `list-${list.id}`,
+      name: list.title,
+      description: list.description || `${(list.items || []).length} shared list titles`,
+      aliases: [list.title],
+      items: list.items || []
+    }));
+  const collectionResults = [...franchiseResults.map((hub) => hydratedFranchises[hub.hub_key] || hub), ...listResults];
   const allContentResults = dedupe([...contentResults, ...knownForContent]);
-  const visibleResults = searchFilter === "cast" ? peopleResults : searchFilter === "content" ? allContentResults : [];
+  const filteredContentResults = allContentResults.filter((item) => {
+    const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
+    if (contentFilter === "movies") return mediaType(item) === "movie";
+    if (contentFilter === "tv") return mediaType(item) === "tv";
+    if (contentFilter === "anime") return mediaType(item) === "tv" && (searchable.includes("anime") || item.original_language === "ja" || (item.genre_ids || []).includes(16));
+    if (contentFilter === "upcoming") return !isReleased(item);
+    if (contentFilter === "top") return (item.vote_average || 0) >= 7.5;
+    if (contentFilter.startsWith("lang:")) return item.original_language === contentFilter.slice(5);
+    if (contentFilter.startsWith("genre:")) return searchable.includes(contentFilter.slice(6));
+    return true;
+  });
+  const visibleResults = searchFilter === "cast" ? peopleResults : searchFilter === "content" ? filteredContentResults : [];
   const visibleUserResults = searchFilter === "user" ? userResults : [];
   const hasVisibleResults = visibleResults.length > 0 || visibleUserResults.length > 0 || (searchFilter === "collections" && collectionResults.length > 0);
 
@@ -3655,6 +3678,22 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
           )}
           {(searchFilter === "content" || searchFilter === "cast") && (
             <>
+              {searchFilter === "content" && (
+                <div className="mg2-search-subfilters" aria-label="Content search filters">
+                  {[
+                    ["all", "All"],
+                    ["movies", "Movies"],
+                    ["tv", "TV Shows"],
+                    ["anime", "Anime"],
+                    ["upcoming", "Upcoming"],
+                    ["top", "Top Rated"],
+                    ["lang:hi", "Hindi"],
+                    ["lang:ko", "Korean"],
+                    ["genre:comedy", "Comedy"],
+                    ["genre:thriller", "Thriller"]
+                  ].map(([id, label]) => <button key={id} className={contentFilter === id ? "active" : ""} type="button" onClick={() => setContentFilter(id)}>{label}</button>)}
+                </div>
+              )}
               <div className="mg2-section-head"><h2>{searchFilter === "cast" ? "Cast & Crew" : "Content"}</h2><span>{searchFilter === "content" ? `${visibleResults.length} picks` : `Page ${page} / ${totalPages}`}</span></div>
               <div className="mg2-grid">
                 {visibleResults.map((item) => {
@@ -3717,7 +3756,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, onQuickActions }) {
   const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
   const chartRows = [
     { id: "mostWatched", title: communityCharts.mostWatched?.length ? "Most Watched This Week" : "Popular Right Now", items: communityCharts.mostWatched?.length ? communityCharts.mostWatched : (exploreRows.week || []) },
@@ -3743,7 +3782,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -4272,7 +4311,7 @@ function scoreReelCandidate(item, context = {}) {
   return { score, reason };
 }
 
-function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", detailsOpen = false, onOpen, onWatchlist, onWatchAsap, onWatched, onFavorite, onReelActivity }) {
+function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, socialActivity = [], userId = "guest", detailsOpen = false, onOpen, onWatchlist, onWatchAsap, onWatched, onFavorite, onOpenListSheet, onReelActivity }) {
   const [reelTab, setReelTab] = useState("forYou");
   const [reels, setReels] = useState([]);
   const [loadingReels, setLoadingReels] = useState(true);
@@ -5101,8 +5140,10 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }
 
   function addSharedReelToList() {
-    if (shareSheet?.item) onWatchlist?.(shareSheet.item);
-    setShareSheet((current) => current ? { ...current, message: "Added to your list." } : current);
+    if (shareSheet?.item) {
+      onOpenListSheet?.(shareSheet.item);
+      setShareSheet(null);
+    }
   }
 
   function openReelComments(event, reel, item) {
@@ -5534,25 +5575,12 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 {speeding && index === activeIndex && <span className="mg2-reel-speed">2x</span>}
                 {isPlayableYouTube && (
                   <div className={`mg2-reel-controls ${isPlaying ? "playing" : "paused"}`} onClick={(event) => event.stopPropagation()}>
-                    <button type="button" onClick={(event) => toggleMute(event, index)} aria-label={isMuted ? "Unmute reel" : "Mute reel"}><Icon name={isMuted ? "muted" : "volume"} /></button>
                     <button type="button" onClick={(event) => togglePlayButton(event, index)} aria-label={isPlaying ? "Pause reel" : "Play reel"}><Icon name={isPlaying ? "pause" : "play"} /></button>
-                    <button
-                      type="button"
-                      className={`mg2-reel-speed-hold${speeding ? " active" : ""}`}
-                      onPointerDown={(event) => beginFastPlayback(event, index)}
-                      onPointerUp={(event) => endFastPlayback(event, index)}
-                      onPointerCancel={(event) => endFastPlayback(event, index)}
-                      onPointerLeave={(event) => endFastPlayback(event, index)}
-                      onTouchStart={(event) => beginFastPlayback(event, index)}
-                      onTouchEnd={(event) => endFastPlayback(event, index)}
-                      onTouchCancel={(event) => endFastPlayback(event, index)}
-                      aria-label="Hold for 2x playback"
-                    >2x</button>
                   </div>
                 )}
                 <div className="mg2-reel-actions">
+                  <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Comment</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => openReelDetails(event, reel, item)} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
-                  <button className={watchedTitle ? "active" : ""} type="button" disabled={!watchedTitle && !isReleased(item)} onClick={(event) => { stopPlayerEvent(event); onWatched?.(item); }} aria-label={watchedTitle ? "Mark unwatched" : isReleased(item) ? "Mark watched" : releaseMessage(item)}><Icon name="check" /></button><span>{watchedTitle ? "Seen" : isReleased(item) ? "Watch" : "Soon"}</span>
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist?.(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
                   <button className={watchAsap ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchAsap?.(item); }} aria-label={watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /></button><span>ASAP</span>
                   <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
@@ -5615,6 +5643,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             <button type="button" onClick={() => setShareSheet(null)}>Close</button>
           </div>
           <p>{shareSheet.title}</p>
+          <div className="mg2-reel-share-friends">
+            {socialActivity.length ? socialActivity.slice(0, 4).map((entry, index) => (
+              <button key={entry.id || `share-friend-${index}`} type="button" onClick={sendSharedReelToFriend}>
+                {entry.profile ? <PublicAvatar profile={entry.profile} size="sm" /> : <Avatar friend={friends[index % friends.length]} size="sm" />}
+                <span>{entry.profile ? publicProfileName(entry.profile) : friends[index % friends.length].name}</span>
+              </button>
+            )) : <small>No friends to send yet. Copy the link or add it to a list.</small>}
+          </div>
           <div className="mg2-reel-share-actions">
             <button type="button" onClick={sendSharedReelToFriend}>Send to friend</button>
             <button type="button" onClick={copySharedReelLink}>Copy link</button>
@@ -6771,6 +6807,8 @@ function BlendScreen({ rows, savedBlendLists, onSaveBlend }) {
   const [selectedBlend, setSelectedBlend] = useState(blendSeeds[0].id);
   const [blendTab, setBlendTab] = useState("feed");
   const [createdBlend, setCreatedBlend] = useState(false);
+  const [nightFilters, setNightFilters] = useState({ type: "all", genre: "all", runtime: "any", language: "all" });
+  const [nightVotes, setNightVotes] = useState({});
   const blend = blendSeeds.find((item) => item.id === selectedBlend) || blendSeeds[0];
   const members = [{ ...friends[0], match: 100 }, ...blend.friends];
   const commonWatched = dedupe([...fallbackRows.movies, ...fallbackRows.trending]).slice(0, 4);
@@ -6781,11 +6819,28 @@ function BlendScreen({ rows, savedBlendLists, onSaveBlend }) {
   const savedLists = Object.values(savedBlendLists || {});
   const blendTabs = [
     { id: "feed", label: "Feed" },
+    { id: "night", label: "Movie Night" },
     { id: "reels", label: "Reels" },
     { id: "lists", label: "Lists" },
     { id: "match", label: "Match" }
   ];
   const reelItems = dedupe([...commonWatched, ...recommendations]).slice(0, 4);
+  const movieNightPool = dedupe([...(rows.trending || []), ...(rows.movies || []), ...(rows.series || []), ...fallbackRows.movies, ...fallbackRows.series])
+    .filter((item) => {
+      const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
+      if (nightFilters.type !== "all" && mediaType(item) !== nightFilters.type) return false;
+      if (nightFilters.genre !== "all" && !searchable.includes(nightFilters.genre)) return false;
+      if (nightFilters.language !== "all" && item.original_language !== nightFilters.language) return false;
+      if (nightFilters.runtime === "short" && Number(item.runtime || 100) > 105) return false;
+      return item.poster_path;
+    })
+    .slice(0, 10);
+  const winner = [...movieNightPool].sort((a, b) => {
+    const voteScore = (choice) => choice === "want" ? 3 : choice === "maybe" ? 1 : choice === "skip" ? -3 : 0;
+    return voteScore(nightVotes[keyOf(b)]) - voteScore(nightVotes[keyOf(a)]) || (b.vote_average || 0) - (a.vote_average || 0);
+  })[0];
+  const setNightFilter = (key, value) => setNightFilters((current) => ({ ...current, [key]: value }));
+  const voteNight = (item, vote) => setNightVotes((current) => ({ ...current, [keyOf(item)]: vote }));
 
   return (
     <section className="mg2-blend-screen">
@@ -7223,6 +7278,51 @@ function WatchlistScreen({ items, onOpen, watchlist, ratings, tonightItems = [] 
             ))}
           </div>
         </section>
+      )}
+
+      {blendTab === "night" && (
+        <div className="mg2-movie-night">
+          <div className="mg2-blend-insight">
+            <strong>Movie Night Picker</strong>
+            <small>Select a vibe, vote quickly, and save the winner for tonight.</small>
+          </div>
+          <div className="mg2-search-subfilters" aria-label="Movie Night filters">
+            {[
+              ["type", "all", "All"],
+              ["type", "movie", "Movies"],
+              ["type", "tv", "TV"],
+              ["genre", "comedy", "Comedy"],
+              ["genre", "thriller", "Thriller"],
+              ["runtime", "short", "Short"],
+              ["language", "hi", "Hindi"],
+              ["language", "ko", "Korean"]
+            ].map(([key, value, label]) => (
+              <button key={`${key}-${value}`} className={nightFilters[key] === value ? "active" : ""} type="button" onClick={() => setNightFilter(key, value)}>{label}</button>
+            ))}
+          </div>
+          <div className="mg2-blend-feed">
+            {movieNightPool.map((item) => (
+              <article key={`night-${keyOf(item)}`}>
+                <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                <span>
+                  <strong>{titleOf(item)}</strong>
+                  <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {yearOf(item)} - {item.vote_average ? item.vote_average.toFixed(1) : "NR"}/10</small>
+                </span>
+                <div className="mg2-night-votes">
+                  {["want", "maybe", "skip"].map((vote) => <button key={vote} className={nightVotes[keyOf(item)] === vote ? "active" : ""} type="button" onClick={() => voteNight(item, vote)}>{vote === "want" ? "Want" : vote === "maybe" ? "Maybe" : "Skip"}</button>)}
+                </div>
+              </article>
+            ))}
+            {!movieNightPool.length && <div className="mg2-empty">No titles match this Movie Night filter yet.</div>}
+          </div>
+          {winner && (
+            <article className="mg2-night-winner">
+              <img src={posterUrl(winner.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+              <span><strong>Winner: {titleOf(winner)}</strong><small>Save it to your shared night list or add it from Details.</small></span>
+              <button type="button" onClick={() => onSaveBlend(`${blend.id}-movie-night`, [winner])}>Save winner</button>
+            </article>
+          )}
+        </div>
       )}
       {items.length === 0 && <div className="mg2-empty">Your watchlist is empty. Add titles from Home or Explore.</div>}
       <div className="mg2-watch-list">
@@ -9936,7 +10036,7 @@ export default function Home() {
   } else if (activeTab === "home") {
     screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
-    screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onReelActivity={recordReelActivity} />;
+    screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
     screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} tonightItems={tonightItems} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
   } else if (activeTab === "explore") {
@@ -9963,6 +10063,7 @@ export default function Home() {
         watched={libraryState.watched}
         ratings={libraryState.ratings}
         favorites={favorites}
+        customLists={customLists}
       />
     );
   } else {
@@ -10078,6 +10179,7 @@ export default function Home() {
         onWatchlist={toggleWatchlist}
         onWatchAsap={toggleWatchAsap}
         onFavorite={toggleFavorite}
+        onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })}
         onOpen={openItem}
       />
       <ReviewSheet
