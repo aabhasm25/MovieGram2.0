@@ -766,18 +766,23 @@
   max-height: none;
   border-radius: 0;
   border: 0;
+  padding: 12px clamp(12px, 4vw, 28px) 96px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(124, 58, 237, .14), transparent 28%),
+    radial-gradient(circle at 88% 10%, rgba(239, 68, 68, .1), transparent 26%),
+    #030409;
 }
 
 .mg2-collection-hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 118px;
-  gap: 14px;
-  min-height: 188px;
-  margin: 8px 0 14px;
-  padding: 22px;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 22px;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, 148px);
+  gap: 18px;
+  min-height: 260px;
+  margin: 4px 0 14px;
+  padding: clamp(20px, 5vw, 34px);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 18px;
   overflow: hidden;
   background: #090b12;
 }
@@ -806,8 +811,9 @@
 
 .mg2-collection-hero h2 {
   margin: 8px 0;
-  font-size: clamp(30px, 9vw, 44px);
-  line-height: 1;
+  max-width: 780px;
+  font-size: clamp(34px, 10vw, 56px);
+  line-height: .95;
 }
 
 .mg2-collection-hero p {
@@ -839,7 +845,7 @@
 .mg2-collection-top-action {
   display: flex;
   justify-content: flex-start;
-  margin: 4px 0 16px;
+  margin: 2px 0 20px;
 }
 
 .mg2-collection-top-action button {
@@ -864,12 +870,14 @@
 
 .mg2-collection-hero-collage {
   align-self: end;
+  justify-self: end;
+  width: min(100%, 150px);
 }
 
 .mg2-collection-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px 12px;
+  gap: 22px 14px;
 }
 
 .mg2-collection-order-panel {
@@ -914,10 +922,10 @@
 .mg2-collection-grid-card img {
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: 8px;
   object-fit: cover;
   border: 1px solid rgba(255, 255, 255, .1);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, .36);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .42);
 }
 
 .mg2-collection-grid-card strong {
@@ -936,22 +944,36 @@
 
 @media (min-width: 760px) {
   .mg2-collection-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 28px 18px;
   }
 
   .mg2-collection-hero {
-    grid-template-columns: minmax(0, 1fr) 150px;
+    grid-template-columns: minmax(0, 1fr) 190px;
+    min-height: 320px;
+  }
+
+  .mg2-collection-hero-collage {
+    width: 190px;
+  }
+}
+
+@media (min-width: 1120px) {
+  .mg2-collection-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 420px) {
   .mg2-collection-hero {
     grid-template-columns: minmax(0, 1fr);
-    padding: 18px;
+    min-height: 300px;
+    padding: 20px;
   }
 
   .mg2-collection-hero-collage {
-    max-width: 118px;
+    justify-self: start;
+    width: 132px;
   }
 }
 

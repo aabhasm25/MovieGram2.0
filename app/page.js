@@ -245,15 +245,27 @@ const franchiseHubQualitySeeds = {
       seedTv(88396, "The Falcon and the Winter Soldier", "2021-03-19", 25, 25, "Phase Four"),
       seedTv(84958, "Loki", "2021-06-09", 26, 26, "Phase Four"),
       seedMovie(497698, "Black Widow", "2021-07-07", 27, 14, "Phase Four"),
-      seedMovie(566525, "Shang-Chi and the Legend of the Ten Rings", "2021-09-01", 28, 27, "Phase Four"),
-      seedMovie(524434, "Eternals", "2021-11-03", 29, 28, "Phase Four"),
-      seedMovie(634649, "Spider-Man: No Way Home", "2021-12-15", 30, 29, "Phase Four"),
-      seedMovie(453395, "Doctor Strange in the Multiverse of Madness", "2022-05-04", 31, 30, "Phase Four"),
-      seedMovie(616037, "Thor: Love and Thunder", "2022-07-06", 32, 31, "Phase Four"),
-      seedMovie(505642, "Black Panther: Wakanda Forever", "2022-11-09", 33, 32, "Phase Four"),
-      seedMovie(640146, "Ant-Man and the Wasp: Quantumania", "2023-02-15", 34, 33, "Phase Five"),
-      seedMovie(447365, "Guardians of the Galaxy Vol. 3", "2023-05-03", 35, 34, "Phase Five"),
-      seedMovie(609681, "The Marvels", "2023-11-08", 36, 35, "Phase Five")
+      seedTv(91363, "What If...?", "2021-08-11", 28, 31, "Phase Four"),
+      seedMovie(566525, "Shang-Chi and the Legend of the Ten Rings", "2021-09-01", 29, 27, "Phase Four"),
+      seedMovie(524434, "Eternals", "2021-11-03", 30, 28, "Phase Four"),
+      seedTv(88329, "Hawkeye", "2021-11-24", 31, 30, "Phase Four"),
+      seedMovie(634649, "Spider-Man: No Way Home", "2021-12-15", 32, 29, "Phase Four"),
+      seedTv(92749, "Moon Knight", "2022-03-30", 33, 32, "Phase Four"),
+      seedMovie(453395, "Doctor Strange in the Multiverse of Madness", "2022-05-04", 34, 33, "Phase Four"),
+      seedTv(92782, "Ms. Marvel", "2022-06-08", 35, 34, "Phase Four"),
+      seedMovie(616037, "Thor: Love and Thunder", "2022-07-06", 36, 35, "Phase Four"),
+      seedTv(92783, "She-Hulk: Attorney at Law", "2022-08-18", 37, 36, "Phase Four"),
+      seedMovie(894205, "Werewolf by Night", "2022-09-25", 38, 37, "Phase Four"),
+      seedMovie(505642, "Black Panther: Wakanda Forever", "2022-11-09", 39, 38, "Phase Four"),
+      seedMovie(774752, "The Guardians of the Galaxy Holiday Special", "2022-11-25", 40, 39, "Phase Four"),
+      seedMovie(640146, "Ant-Man and the Wasp: Quantumania", "2023-02-15", 41, 40, "Phase Five"),
+      seedMovie(447365, "Guardians of the Galaxy Vol. 3", "2023-05-03", 42, 41, "Phase Five"),
+      seedTv(114472, "Secret Invasion", "2023-06-21", 43, 42, "Phase Five"),
+      seedMovie(609681, "The Marvels", "2023-11-08", 44, 43, "Phase Five"),
+      seedTv(122226, "Echo", "2024-01-09", 45, 44, "Phase Five"),
+      seedMovie(533535, "Deadpool & Wolverine", "2024-07-24", 46, 45, "Phase Five"),
+      seedMovie(822119, "Captain America: Brave New World", "2025-02-12", 47, 46, "Phase Five"),
+      seedMovie(986056, "Thunderbolts", "2025-04-30", 48, 47, "Phase Five")
     ]
   },
   dcu: {
@@ -1219,7 +1231,8 @@ function yearOf(item) {
 }
 
 function keyOf(item) {
-  if (item?.id) return `${mediaType(item)}:${item.id}`;
+  const tmdbId = item?.tmdb_id || item?.tmdbId || item?.id;
+  if (tmdbId) return `${mediaType(item)}:${tmdbId}`;
   return `title:${titleOf(item).trim().toLowerCase()}:${yearOf(item)}`;
 }
 
@@ -1247,11 +1260,10 @@ function franchisesForQuery(query = "") {
 function franchisesForItem(item = {}) {
   if (!item) return [];
   const key = keyOf(item);
-  const title = titleOf(item).toLowerCase();
   return franchiseHubs.filter((hub) => hub.items.some((entry) => (
     keyOf(entry) === key ||
     (entry.id && item.id && mediaType(entry) === mediaType(item) && String(entry.id) === String(item.id)) ||
-    titleOf(entry).toLowerCase() === title
+    fallbackKeyOf(entry) === fallbackKeyOf(item)
   )));
 }
 
@@ -1321,8 +1333,58 @@ function normalizeRatingsCollection(collection = {}) {
 
 function externalRatingCacheKey(item, imdbId = "") {
   const type = mediaType(item);
-  const idPart = item?.id ? `${type}:${item.id}` : keyOf(item);
-  return `moviegram.externalRatings.v3.${idPart}:${imdbId || "no-imdb"}`;
+  const tmdbId = item?.tmdb_id || item?.tmdbId || item?.id;
+  return tmdbId ? `ratings_v4:${type}:${tmdbId}:${imdbId || "no-imdb"}` : `ratings_v4:${type}:missing:${imdbId || "no-imdb"}`;
+}
+
+function cleanupOldExternalRatingCache() {
+  if (typeof window === "undefined") return;
+  try {
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith("moviegram.externalRatings.") && !key.includes(".v4."))
+      .forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // Old cache cleanup is best-effort only.
+  }
+}
+
+function readRemovedItems() {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(window.localStorage.getItem("moviegram.removedItems") || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveRemovedItems(items = {}) {
+  persist("moviegram.removedItems", items);
+}
+
+function removalKeyFor(item, type = "library") {
+  return `${type}:${keyOf(item)}`;
+}
+
+function markItemRemoved(item, type) {
+  if (!item) return {};
+  const next = { ...readRemovedItems(), [removalKeyFor(item, type)]: { removed_at: new Date().toISOString(), item_key: keyOf(item), type } };
+  saveRemovedItems(next);
+  return next;
+}
+
+function clearItemRemoval(item, type) {
+  if (!item) return {};
+  const next = { ...readRemovedItems() };
+  delete next[removalKeyFor(item, type)];
+  saveRemovedItems(next);
+  return next;
+}
+
+function isItemRemovedAfter(item, type, timestamp = "") {
+  const tombstone = readRemovedItems()[removalKeyFor(item, type)];
+  if (!tombstone?.removed_at) return false;
+  if (!timestamp) return true;
+  return new Date(tombstone.removed_at).getTime() >= new Date(timestamp).getTime();
 }
 
 function episodeKey(showId, seasonNumber, episodeNumber) {
@@ -1374,6 +1436,25 @@ function parseOmdbRatings(data, expectedImdbId = "") {
   return ratings;
 }
 
+async function getVerifiedExternalRatings({ media_type, tmdb_id, imdb_id, tmdb_rating }) {
+  const fetchedAt = new Date().toISOString();
+  const tmdbRating = tmdb_rating ? [{ source: "TMDB", value: Number(tmdb_rating).toFixed(1), fetchedAt, confidence: "verified_tmdb_id" }] : [];
+  if (!imdb_id) return { ratings: tmdbRating, provider: "tmdb-only", confidence: "missing_imdb_id" };
+  const omdbKey = process.env.NEXT_PUBLIC_OMDB_API_KEY;
+  if (omdbKey && typeof window !== "undefined") {
+    const response = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdb_id)}&apikey=${encodeURIComponent(omdbKey)}`);
+    if (response.ok) {
+      const parsed = parseOmdbRatings(await response.json(), imdb_id).map((entry) => ({ ...entry, confidence: "verified_imdb_id" }));
+      return { ratings: [...parsed, ...tmdbRating], provider: "omdb-imdb-id", confidence: "verified_imdb_id" };
+    }
+  }
+  const mdblistKey = process.env.NEXT_PUBLIC_MDBLIST_API_KEY;
+  if (mdblistKey && typeof window !== "undefined") {
+    return { ratings: tmdbRating, provider: "mdblist-placeholder", confidence: "verified_tmdb_id" };
+  }
+  return { ratings: tmdbRating, provider: "tmdb-only", confidence: "external_unavailable" };
+}
+
 function normalizedTrackingItem(item = {}) {
   return { ...item, media_type: mediaType(item) };
 }
@@ -1382,7 +1463,9 @@ function compactStoredItem(item = {}) {
   if (!item) return null;
   const type = mediaType(item);
   const compact = {
-    id: item.id,
+    id: item.id || item.tmdb_id || item.tmdbId,
+    tmdb_id: item.tmdb_id || item.tmdbId || item.id,
+    item_key: item.item_key || item.itemKey || (item.id || item.tmdb_id || item.tmdbId ? `${type}:${item.id || item.tmdb_id || item.tmdbId}` : undefined),
     media_type: type,
     poster_path: item.poster_path || "",
     watchedAt: item.watchedAt || undefined,
@@ -1485,8 +1568,13 @@ function mergeReviewCollections(...collections) {
 function mergeLibrarySources({ current = {}, scoped = {}, legacy = {}, remote = {} } = {}) {
   const watchedMerge = mergeLibraryCollection(legacy.watched, scoped.watched, current.watched, remote.watched);
   const watchlistMerge = mergeLibraryCollection(legacy.watchlist, scoped.watchlist, current.watchlist, remote.watchlist);
-  const watched = Object.fromEntries(Object.entries(watchedMerge.collection).filter(([, item]) => isReleased(item)));
-  const watchlist = enforceWatchExclusivity(watchlistMerge.collection, watched);
+  const watched = Object.fromEntries(Object.entries(watchedMerge.collection).filter(([, item]) => (
+    isReleased(item) && !isItemRemovedAfter(item, "watched", item.updatedAt || item.updated_at || item.watchedAt || item.watched_at || "")
+  )));
+  const activeWatchlist = Object.fromEntries(Object.entries(watchlistMerge.collection).filter(([, item]) => (
+    !isItemRemovedAfter(item, "watchlist", item.updatedAt || item.updated_at || item.savedAt || item.created_at || "")
+  )));
+  const watchlist = enforceWatchExclusivity(activeWatchlist, watched);
   return {
     watchlist,
     watched,
@@ -1607,6 +1695,13 @@ function compactForStorage(key, value) {
       source: event?.source || "app"
     }]).filter(([, event]) => event.item));
   }
+  if (baseKey === "moviegram.removedItems") {
+    return Object.fromEntries(Object.entries(value || {}).map(([removalKey, entry]) => [removalKey, {
+      item_key: entry?.item_key || "",
+      type: entry?.type || "",
+      removed_at: entry?.removed_at || ""
+    }]).filter(([, entry]) => entry.item_key && entry.type && entry.removed_at));
+  }
   if (baseKey === "moviegram.blendLists") {
     return Object.fromEntries(Object.entries(value || {}).map(([listKey, list]) => [listKey, {
       ...list,
@@ -1646,7 +1741,8 @@ const MOVIEGRAM_LOCAL_KEYS = {
   friendStates: "moviegram.friendStates",
   blendLists: "moviegram.blendLists",
   hiddenRecommendations: "moviegram.hiddenRecommendations",
-  profileActivity: "moviegram.profileActivity"
+  profileActivity: "moviegram.profileActivity",
+  removedItems: "moviegram.removedItems"
 };
 
 const DEFAULT_LOCAL_STATE = {
@@ -1664,7 +1760,8 @@ const DEFAULT_LOCAL_STATE = {
   friendStates: { shruti: "friends", rohan: "friends" },
   blendLists: {},
   hiddenRecommendations: {},
-  profileActivity: {}
+  profileActivity: {},
+  removedItems: {}
 };
 
 function ownerStorageKey(owner, legacyKey) {
@@ -1711,7 +1808,8 @@ function normalizeLocalState(raw = {}) {
     friendStates: raw.friendStates || DEFAULT_LOCAL_STATE.friendStates,
     blendLists: raw.blendLists || {},
     hiddenRecommendations: raw.hiddenRecommendations || {},
-    profileActivity: raw.profileActivity || {}
+    profileActivity: raw.profileActivity || {},
+    removedItems: raw.removedItems || readRemovedItems()
   };
 }
 
@@ -3799,7 +3897,7 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
       aliases: [list.title],
       items: list.items || []
     }));
-  const collectionResults = [...franchiseResults.map((hub) => hydratedFranchises[hub.hub_key] || hub), ...listResults];
+  const collectionResults = [...franchiseResults.map((hub) => hydratedFranchises[hub.hub_key] || hub), ...listResults].filter(isSafeCollectionHub);
   const allContentResults = dedupe([...contentResults, ...knownForContent]);
   const filteredContentResults = allContentResults.filter((item) => {
     const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
@@ -3873,7 +3971,7 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
               </div>
             </>
           )}
-          {searchFilter === "collections" && franchiseResults.length > 0 && (
+          {searchFilter === "collections" && collectionResults.length > 0 && (
             <>
               <div className="mg2-section-head"><h2>Collections</h2><span>{collectionResults.length}</span></div>
               <div className="mg2-franchise-results">
@@ -5892,11 +5990,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   </div>
                 )}
                 <div className="mg2-reel-actions">
+                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Comment</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => openReelDetails(event, reel, item)} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist?.(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
                   <button className={watchAsap ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchAsap?.(item); }} aria-label={watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /></button><span>ASAP</span>
-                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share reel"><Icon name="send" /></button><span>Share</span>
                 </div>
                 {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
@@ -8284,6 +8382,7 @@ function FranchiseCollectionModal({ hub, onClose, onOpen, onAddItem, onAddCollec
 
 export default function Home() {
   const cache = useRef(new Map());
+  const canonicalItemCache = useRef(new Map());
   const observer = useRef(null);
   const [activeTab, setActiveTab] = useState("home");
   const [activeExplore, setActiveExplore] = useState("forYou");
@@ -8450,7 +8549,8 @@ export default function Home() {
     feedSaves: savedFeed,
     friendStates,
     blendLists: savedBlendLists,
-    hiddenRecommendations: hiddenRecs
+    hiddenRecommendations: hiddenRecs,
+    removedItems: readRemovedItems()
   }), [watchlist, watched, episodeProgress, ratings, reviews, favorites, customLists, continueWatching, clickSignals, profileActivity, likedFeed, savedFeed, friendStates, savedBlendLists, hiddenRecs]);
 
   useEffect(() => {
@@ -9124,6 +9224,7 @@ export default function Home() {
         setExternalRatings([]);
         return;
       }
+      cleanupOldExternalRatingCache();
       const normalized = { ...selected, media_type: mediaType(selected) };
       const imdbId = details?.external_ids?.imdb_id;
       const cacheKey = externalRatingCacheKey(normalized, imdbId);
@@ -9138,58 +9239,70 @@ export default function Home() {
             tmdb_id: normalized.id,
             imdb_id: imdbId,
             cacheKey,
+            provider: cached[0]?.provider || "ratings-v4-cache",
             source: "cache",
             imdb: cached.find((entry) => entry.source === "IMDb")?.value || "N/A",
             rottenTomatoes: cached.find((entry) => entry.source === "RT Critics")?.value || "N/A",
             metacritic: cached.find((entry) => entry.source === "Metacritic")?.value || "N/A",
-            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+            tmdb: normalized.vote_average || details?.vote_average || "N/A",
+            confidence: cached[0]?.confidence || "verified_imdb_id"
           });
         }
         return;
       }
-      const apiKey = process.env.NEXT_PUBLIC_OMDB_API_KEY;
-      if (!imdbId || !apiKey || typeof window === "undefined") {
+      if (!normalized.id && !normalized.tmdb_id) {
         setExternalRatings([]);
         if (!ratingDebugRef.current[cacheKey]) {
           ratingDebugRef.current[cacheKey] = true;
           betaInfo("MovieGram ratings debug", {
             title: titleOf(normalized),
             media_type: mediaType(normalized),
-            tmdb_id: normalized.id,
+            tmdb_id: "N/A",
             imdb_id: imdbId || "N/A",
             cacheKey,
-            source: imdbId ? "omdb-unavailable" : "missing-imdb-id",
+            provider: "none",
+            source: "missing-tmdb-id",
             imdb: "N/A",
             rottenTomatoes: "N/A",
             metacritic: "N/A",
-            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+            tmdb: "N/A",
+            confidence: "unverified"
           });
         }
         return;
       }
       try {
-        const response = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(apiKey)}`);
-        if (!response.ok) throw new Error("OMDb request failed.");
-        const parsed = parseOmdbRatings(await response.json(), imdbId);
+        const verified = await getVerifiedExternalRatings({
+          media_type: mediaType(normalized),
+          tmdb_id: normalized.tmdb_id || normalized.id,
+          imdb_id: imdbId,
+          tmdb_rating: normalized.vote_average || details?.vote_average
+        });
+        const parsed = verified.ratings || [];
         setExternalRatings(parsed);
-        persist(cacheKey, parsed);
+        persist(cacheKey, parsed.map((entry) => ({ ...entry, provider: verified.provider, cache_key: cacheKey })));
         if (!ratingDebugRef.current[cacheKey]) {
           ratingDebugRef.current[cacheKey] = true;
           betaInfo("MovieGram ratings debug", {
             title: titleOf(normalized),
             media_type: mediaType(normalized),
-            tmdb_id: normalized.id,
-            imdb_id: imdbId,
+            tmdb_id: normalized.tmdb_id || normalized.id,
+            imdb_id: imdbId || "N/A",
             cacheKey,
-            source: "omdb-imdb-id",
+            provider: verified.provider,
+            source: "ratings-v4",
             imdb: parsed.find((entry) => entry.source === "IMDb")?.value || "N/A",
             rottenTomatoes: parsed.find((entry) => entry.source === "RT Critics")?.value || "N/A",
             metacritic: parsed.find((entry) => entry.source === "Metacritic")?.value || "N/A",
-            tmdb: normalized.vote_average || details?.vote_average || "N/A"
+            tmdb: normalized.vote_average || details?.vote_average || "N/A",
+            confidence: verified.confidence
           });
         }
       } catch {
-        setExternalRatings([]);
+        const tmdbOnly = normalized.vote_average || details?.vote_average
+          ? [{ source: "TMDB", value: Number(normalized.vote_average || details?.vote_average).toFixed(1), fetchedAt: new Date().toISOString(), confidence: "verified_tmdb_id" }]
+          : [];
+        setExternalRatings(tmdbOnly);
       }
     }
     loadExternalRatings();
@@ -9350,6 +9463,14 @@ export default function Home() {
     recordProfileActivity("opened", normalized, "details");
     persist("moviegram.clickSignals", nextSignals);
     persist("moviegram.continueWatching", nextContinue);
+    normalizeCanonicalItem(normalized).then((canonical) => {
+      if (!canonical || keyOf(canonical) !== key) return;
+      setSelected((current) => current && keyOf(current) === key ? { ...current, ...canonical, media_type: mediaType(canonical) } : current);
+      const canonicalContinue = [canonical, ...nextContinue.filter((entry) => keyOf(entry) !== key)].slice(0, 10);
+      setContinueWatching(canonicalContinue);
+      persist("moviegram.continueWatching", canonicalContinue);
+      backfillProfileActivityPoster(canonical);
+    });
   }
 
   function reminderKey(item, type = "release") {
@@ -9722,6 +9843,29 @@ export default function Home() {
     logActivity(type, { ...item, media_type: mediaType(item) }, metadata);
   }
 
+  async function normalizeCanonicalItem(item) {
+    const normalized = { ...item, media_type: mediaType(item) };
+    const tmdbId = normalized.tmdb_id || normalized.tmdbId || normalized.id;
+    if (!tmdbId || !["movie", "tv"].includes(normalized.media_type)) return normalized;
+    const cacheKey = `${normalized.media_type}:${tmdbId}`;
+    if (canonicalItemCache.current.has(cacheKey)) return canonicalItemCache.current.get(cacheKey);
+    try {
+      const detailsById = await apiFetch(`/${normalized.media_type}/${tmdbId}`);
+      const canonical = {
+        ...normalized,
+        ...detailsById,
+        id: Number(tmdbId),
+        tmdb_id: Number(tmdbId),
+        media_type: normalized.media_type
+      };
+      canonicalItemCache.current.set(cacheKey, canonical);
+      return canonical;
+    } catch {
+      canonicalItemCache.current.set(cacheKey, normalized);
+      return normalized;
+    }
+  }
+
   function syncTrackingNow(actionName, overrides = {}) {
     if (!supabaseUser?.id || !remoteReady || remoteHydrating.current || remoteSyncSuppressed.current) return;
     const nextState = normalizeLocalState({
@@ -9733,7 +9877,8 @@ export default function Home() {
       favorites,
       customLists,
       ...latestLocalState.current,
-      ...overrides
+      ...overrides,
+      removedItems: readRemovedItems()
     });
     latestLocalState.current = nextState;
     persistOwnedLocalState(supabaseUser.id, nextState, { writeLegacy: false });
@@ -9764,12 +9909,15 @@ export default function Home() {
     const nextWatchlist = { ...normalizedWatchlist };
     if (hasStoredItem(normalized, nextWatchlist)) {
       const removed = removeMatchingItem(nextWatchlist, normalized);
+      markItemRemoved(normalized, "watchlist");
       setWatchlist(removed);
       persist("moviegram.watchlist", removed);
       if (supabaseUser?.id) removeFromSupabaseWatchlist(supabaseUser.id, normalized);
       setProfileStats((current) => current ? { ...current, watchlist: Math.max(0, (current.watchlist || 0) - 1) } : current);
       syncTrackingNow("watchlist_remove", { watchlist: removed });
     } else {
+      clearItemRemoval(normalized, "watchlist");
+      markItemRemoved(normalized, "watched");
       nextWatchlist[key] = normalized;
       const nextWatched = removeMatchingItem(normalizeTrackingCollection(watched), normalized);
       setWatchlist(nextWatchlist);
@@ -9790,6 +9938,7 @@ export default function Home() {
     const normalized = { ...item, media_type: mediaType(item) };
     if (hasStoredItem(normalized, normalizeTrackingCollection(watched))) return;
     const key = keyOf(normalized);
+    clearItemRemoval(normalized, "watchlist");
     const normalizedWatchlist = normalizeTrackingCollection(watchlist);
     const existing = Object.values(normalizedWatchlist).find((entry) => itemMatches(entry, normalized));
     const isAsap = Boolean(existing?.watch_asap || existing?.watchAsap);
@@ -9873,6 +10022,7 @@ export default function Home() {
     const nextWatched = normalizeTrackingCollection(watched);
     if (hasStoredItem(normalized, nextWatched)) {
       const removed = removeMatchingItem(nextWatched, normalized);
+      markItemRemoved(normalized, "watched");
       setWatched(removed);
       persist("moviegram.watched", removed);
       let nextEpisodesForSync = episodeProgress;
@@ -9895,6 +10045,8 @@ export default function Home() {
   function applyWatchedItem(item, watchedAt) {
     const normalized = { ...item, media_type: mediaType(item) };
     if (!isReleased(normalized)) return;
+    clearItemRemoval(normalized, "watched");
+    markItemRemoved(normalized, "watchlist");
     const key = keyOf(normalized);
     const nextWatched = { ...normalizeTrackingCollection(watched), [key]: watchedPayload(normalized, watchedAt) };
     const nextWatchlist = removeMatchingItem(normalizeTrackingCollection(watchlist), normalized);
