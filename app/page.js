@@ -714,6 +714,11 @@ const TMDB_REEL_SEED_SESSION_KEY = "moviegram.tmdbReelSeedDone";
 const YOUTUBE_SEARCH_STOPPED_SESSION_KEY = "moviegram.youtubeSearchStoppedAfter429";
 const REEL_LIKES_STORAGE_KEY = "moviegram.reelLikes";
 const REEL_COMMENTS_STORAGE_KEY = "moviegram.reelComments";
+const REELS_SOURCE_MODE_STORAGE_KEY = "moviegram.reelsSourceMode";
+const VALID_REELS_SOURCE_MODES = new Set(["local", "global", "hybrid"]);
+const DEFAULT_REELS_SOURCE_MODE = VALID_REELS_SOURCE_MODES.has(String(process.env.NEXT_PUBLIC_REELS_SOURCE_MODE || "").toLowerCase())
+  ? String(process.env.NEXT_PUBLIC_REELS_SOURCE_MODE || "").toLowerCase()
+  : "hybrid";
 const MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION = 2;
 const REEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MOVIEGRAM_REEL_ADMIN_IDS = (process.env.NEXT_PUBLIC_MOVIEGRAM_REEL_ADMIN_IDS || "")
@@ -889,6 +894,25 @@ function saveReelComments(comments = {}) {
     window.localStorage.setItem(REEL_COMMENTS_STORAGE_KEY, JSON.stringify(comments));
   } catch {
     // Local comment drafts should never interrupt Reels.
+  }
+}
+
+function readReelsSourceMode() {
+  if (typeof window === "undefined") return DEFAULT_REELS_SOURCE_MODE;
+  try {
+    const stored = String(window.localStorage.getItem(REELS_SOURCE_MODE_STORAGE_KEY) || "").toLowerCase();
+    return VALID_REELS_SOURCE_MODES.has(stored) ? stored : DEFAULT_REELS_SOURCE_MODE;
+  } catch {
+    return DEFAULT_REELS_SOURCE_MODE;
+  }
+}
+
+function saveReelsSourceMode(mode) {
+  if (typeof window === "undefined" || !VALID_REELS_SOURCE_MODES.has(mode)) return;
+  try {
+    window.localStorage.setItem(REELS_SOURCE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Admin-only preference; Reels should keep working without it.
   }
 }
 
@@ -3655,7 +3679,14 @@ function ActivityCard({ item, onOpen, onOpenProfile }) {
   );
 }
 
-function SocialFeedCard({ item, liked, onLike }) {
+function socialFeedSectionLabel(action = "") {
+  if (/review/i.test(action)) return "Friends reviewed";
+  if (/like|favorite/i.test(action)) return "Friends liked";
+  if (/watchlist|recommend/i.test(action)) return "Recommended by friends";
+  return "Friends are watching";
+}
+
+function SocialFeedCard({ item, liked, onLike, onOpen }) {
   if (item.profile) {
     return (
       <article className="mg2-social-card">
@@ -3668,7 +3699,9 @@ function SocialFeedCard({ item, liked, onLike }) {
           <time>{item.time}</time>
         </div>
         <div className="mg2-social-poster">
-          <img src={posterUrl(item.item?.poster_path, "w780")} alt={item.title} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+          <button type="button" onClick={() => item.item && onOpen?.(item.item)} aria-label={`Open ${item.title}`}>
+            <img src={posterUrl(item.item?.poster_path, "w780")} alt={item.title} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+          </button>
           {item.metadata?.rating && <em>{formatUserRating(item.metadata.rating)}</em>}
         </div>
         <p><strong>{publicProfileName(item.profile)}</strong> {item.actionLabel} {item.title}</p>
@@ -3708,13 +3741,26 @@ function SocialFeedCard({ item, liked, onLike }) {
   );
 }
 
-function SocialHomeFeed({ likedFeed, toggleFeedLike, socialActivity = [], useMockFallback = true }) {
-  const items = socialActivity.length ? socialActivity.slice(0, 6) : (useMockFallback ? socialFeedSeeds : []);
+function SocialHomeFeed({ likedFeed, toggleFeedLike, socialActivity = [], onOpen }) {
+  const realItems = socialActivity
+    .filter((item) => item?.item && item?.profile)
+    .slice(0, 12);
+  const grouped = realItems.reduce((acc, item) => {
+    const label = socialFeedSectionLabel(item.action || item.actionLabel || "");
+    acc[label] = acc[label] || [];
+    acc[label].push(item);
+    return acc;
+  }, {});
   return (
     <section className="mg2-social-feed" aria-label="Social activity feed">
-      {items.length ? items.map((item) => (
-        <SocialFeedCard key={item.id} item={item} liked={likedFeed[item.id]} onLike={toggleFeedLike} />
-      )) : <div className="mg2-empty">Follow users to see real MovieGram activity here.</div>}
+      {realItems.length ? Object.entries(grouped).map(([label, items]) => (
+        <div key={label} className="mg2-social-feed-group">
+          <div className="mg2-section-head"><h2>{label}</h2><span>{items.length}</span></div>
+          {items.slice(0, 4).map((item) => (
+            <SocialFeedCard key={item.id} item={item} liked={likedFeed[item.id]} onLike={toggleFeedLike} onOpen={onOpen} />
+          ))}
+        </div>
+      )) : <div className="mg2-empty">Follow people to see real MovieGram activity here.</div>}
     </section>
   );
 }
@@ -3895,7 +3941,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
         ))}
       </div>
 
-      <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} useMockFallback={!user} />
+      <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} onOpen={onOpen} />
 
       <section className="mg2-section mg2-activity-section">
         <div className="mg2-section-head"><h2>Friend Activity</h2><span>See All</span></div>
@@ -4191,6 +4237,7 @@ async function seedPlayableReelsFromTmdbVideos(seedItems = []) {
 
 async function loadReelCacheForSeeds(seedItems, tab) {
   if (!supabase || !seedItems.length) return { reels: [], freshKeys: new Set() };
+  try {
   const reelCacheSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,source_user_id,approved,quality_score,playable,last_checked_at,created_at,updated_at";
   const candidatesByKey = new Map(seedItems.map((candidate) => [keyOf(candidate.item), candidate]));
   const itemKeys = [...candidatesByKey.keys()];
@@ -4292,6 +4339,14 @@ async function loadReelCacheForSeeds(seedItems, tab) {
   const finalReels = tab === "forYou" ? rankedReels.slice(0, 50) : rankedReels;
   betaInfo(`Reel cache conversion: raw=${conversionStats.raw}, playable=${conversionStats.playable}, converted=${conversionStats.converted}, final=${finalReels.length}.`);
   return { reels: finalReels, freshKeys };
+  } catch (error) {
+    console.warn("MovieGram reel cache load skipped", {
+      tab,
+      message: error?.message,
+      code: error?.code
+    });
+    return { reels: [], freshKeys: new Set() };
+  }
 }
 
 async function saveReelCacheRow({ item, video, tab, reason, userId }) {
@@ -4501,6 +4556,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   const [failedEmbeds, setFailedEmbeds] = useState({});
   const [reelLikes, setReelLikes] = useState(() => readReelLikes());
   const [reelComments, setReelComments] = useState(() => readReelComments());
+  const [reelsSourceMode, setReelsSourceMode] = useState(() => readReelsSourceMode());
+  const [reelSourceStats, setReelSourceStats] = useState({ global: 0, local: 0, visible: 0 });
   const [commentReel, setCommentReel] = useState(null);
   const [commentText, setCommentText] = useState("");
   const [shareSheet, setShareSheet] = useState(null);
@@ -4531,6 +4588,21 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     ...(rows.topRated || []),
     ...(rows.week || []),
     ...(rows.today || []),
+    ...(rows.popularMovies || []),
+    ...(rows.popularTv || []),
+    ...(rows.upcoming || []),
+    ...(rows.nowPlaying || []),
+    ...(rows.airingToday || []),
+    ...(rows.onAir || []),
+    ...(rows.topMovies || []),
+    ...(rows.topShows || []),
+    ...(rows.indiaTrending || []),
+    ...(rows.comfortWatch || []),
+    ...(rows.shortRuntime || []),
+    ...(rows.weekendPicks || []),
+    ...(rows.indianCinema || []),
+    ...(rows.kDrama || []),
+    ...(rows.sitcoms || []),
     ...fallbackRows.trending,
     ...fallbackRows.movies,
     ...fallbackRows.series,
@@ -4611,10 +4683,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       const smart = scoreRecommendation(item, reelTaste);
       addCandidate(item, score + smart.score, smart.reasons?.[0] || reason);
     });
-    return [...candidates.values()].sort((a, b) => b.score - a.score);
+    return [...candidates.values()].sort((a, b) => b.score - a.score).slice(0, 300);
   }, [baseReels, favoriteReels, friendActivityItems, ratedKeys, reelTab, reelTaste, socialActivity, watchedReels, watchlistReels]);
 
   const seedItems = useMemo(() => reelCandidates.slice(0, pageSize), [pageSize, reelCandidates]);
+  const remoteSeedItems = useMemo(() => reelCandidates.slice(0, Math.min(120, Math.max(pageSize + 48, 60))), [pageSize, reelCandidates]);
   const currentReelCandidateKeys = useMemo(() => new Set(reelCandidates.map((candidate) => keyOf(candidate.item))), [reelCandidates]);
   const fallbackPreviewReels = useMemo(() => seedItems.slice(0, Math.min(pageSize, 10)).map((candidate, index) => ({
     item: candidate.item,
@@ -4634,7 +4707,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   }, [baseReels, favoriteReels, submitQuery, watchedReels, watchlistReels]);
   const selectedSubmitItem = useMemo(() => submitMatches.find((item) => keyOf(item) === submitItemKey) || submitMatches[0] || null, [submitItemKey, submitMatches]);
   const seedKey = useMemo(() => seedItems.map((candidate) => `${keyOf(candidate.item)}:${Math.round(candidate.score || 0)}:${candidate.reason}`).join("|"), [seedItems]);
-  const loadKey = `${userId || "guest"}:${reelTab}:${pageSize}:${reelsLibraryVersion}:${seedKey}`;
+  const loadKey = `${userId || "guest"}:${reelTab}:${pageSize}:${reelsSourceMode}:${reelsLibraryVersion}:${seedKey}`;
 
   useEffect(() => {
     lastLoadedKeyRef.current = "";
@@ -4677,8 +4750,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   useEffect(() => {
     let alive = true;
     const stableSeeds = reelTab === "watched" || reelTab === "friends"
-      ? reelCandidates.slice(0, 50)
-      : seedItems.slice(0, Math.min(pageSize, 10));
+      ? reelCandidates.slice(0, 120)
+      : remoteSeedItems;
     const fallbackReels = () => fallbackPreviewReels;
 
     async function loadYouTubeReels() {
@@ -4699,18 +4772,26 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         return;
       }
 
-      const cached = await loadReelCacheForSeeds(stableSeeds, reelTab);
+      if (reelsSourceMode === "hybrid" && alive) {
+        setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+        setLoadingReels(false);
+      }
+
+      const shouldLoadGlobal = reelsSourceMode === "global" || reelsSourceMode === "hybrid";
+      const shouldUseLocalFallback = reelsSourceMode === "local" || reelsSourceMode === "hybrid";
+      const cached = shouldLoadGlobal ? await loadReelCacheForSeeds(stableSeeds, reelTab) : { reels: [], freshKeys: new Set() };
       const playableReels = Array.isArray(cached?.reels) ? cached.reels : [];
+      if (alive) setReelSourceStats({ global: playableReels.length, local: fallbackReels().length, visible: Math.max(playableReels.length, fallbackReels().length) });
       betaInfo(`Reel cache returned to effect: reels=${playableReels.length}.`);
       if (alive && playableReels.length > 0) {
         setReels(() => orderPlayableForDisplay(playableReels));
         setReelError("");
         setLoadingReels(false);
       } else if (alive) {
-        setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
-        setReelError("Finding playable reels. Showing previews for now.");
+        setReels((current) => shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []);
+        setReelError(shouldUseLocalFallback ? "Finding playable reels. Showing previews for now." : "Global reel cache has no playable reels yet.");
       }
-      if (playableReels.length < 20 && !readTmdbReelSeedDone()) {
+      if (reelsSourceMode !== "global" && playableReels.length < 20 && !readTmdbReelSeedDone()) {
         markTmdbReelSeedDone();
         seedPlayableReelsFromTmdbVideos(reelCandidates.slice(0, 25)).then((tmdbSeed) => {
           if (!alive) return;
@@ -4722,7 +4803,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           betaInfo(`TMDB reel seed: checked ${tmdbSeed.checked} titles, created ${tmdbSeed.created} playable rows, using ${merged.length} playable total.`);
         });
       }
-      const lightDiscoveryAllowed = !readReelLightDiscoveryUsed()
+      const lightDiscoveryAllowed = reelsSourceMode !== "global"
+        && !readReelLightDiscoveryUsed()
         && !readYouTubeQuotaExceeded()
         && playableReels.length < 20
         && stableSeeds.length > 0;
@@ -4732,6 +4814,15 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
         lightDiscoveryAllowed,
         youtubeCallsUsed: youtubeTabSearchCount(reelTab, userId)
       });
+
+      if (reelsSourceMode === "global") {
+        if (alive) {
+          setReelError(playableReels.length ? "" : "Global reel cache has no playable reels yet.");
+          setLoadingReels(false);
+        }
+        inFlightReelLoadsRef.current.delete(loadKey);
+        return;
+      }
 
       if (!isReelAdmin && lightDiscoveryAllowed) {
         markReelLightDiscoveryUsed();
@@ -4787,8 +4878,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
       if (!isReelAdmin) {
         if (alive) {
-          if (!playableReels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
-          setReelError(playableReels.length ? "" : "Finding playable reels. Showing previews for now.");
+          if (!playableReels.length) setReels((current) => shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []);
+          setReelError(playableReels.length ? "" : (shouldUseLocalFallback ? "Finding playable reels. Showing previews for now." : "Global reel cache has no playable reels yet."));
           setLoadingReels(false);
         }
         inFlightReelLoadsRef.current.delete(loadKey);
@@ -4797,8 +4888,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
       if (!YOUTUBE_API_KEY) {
         if (alive) {
-          if (!cached.reels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
-          setReelError(playableReels.length ? "" : "YouTube discovery unavailable.");
+          if (!cached.reels.length) setReels((current) => shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []);
+          setReelError(playableReels.length ? "" : (shouldUseLocalFallback ? "YouTube discovery unavailable." : "Global reel cache has no playable reels yet."));
           setLoadingReels(false);
         }
         inFlightReelLoadsRef.current.delete(loadKey);
@@ -4808,8 +4899,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       if (youtubeBlockedRef.current || readYouTubeQuotaExceeded()) {
         youtubeBlockedRef.current = true;
         if (alive) {
-          if (!cached.reels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
-          setReelError(youtubeQuotaErrorObserved && !playableReels.length ? "YouTube limit reached. Showing title previews for now." : "");
+          if (!cached.reels.length) setReels((current) => shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []);
+          setReelError(youtubeQuotaErrorObserved && !playableReels.length ? (shouldUseLocalFallback ? "YouTube limit reached. Showing title previews for now." : "Global reel cache has no playable reels yet.") : "");
           setLoadingReels(false);
         }
         inFlightReelLoadsRef.current.delete(loadKey);
@@ -4818,7 +4909,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
 
       if (!refreshableSeeds.length || youtubeTabSearchCount(reelTab, userId) >= MAX_YOUTUBE_SEARCHES_PER_TAB_SESSION) {
         if (alive) {
-          if (!playableReels.length) setReels((current) => hasPlayableReels(current) ? current : fallbackReels());
+          if (!playableReels.length) setReels((current) => shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []);
           setReelError("");
           setLoadingReels(false);
         }
@@ -4925,8 +5016,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
           });
         }
         if (alive) {
-          setReels((current) => playableReels.length ? playableReels : (hasPlayableReels(current) ? current : fallbackReels()));
-          setReelError(isYouTubeQuotaError(error?.status, error?.details || error?.message) ? "YouTube limit reached. Showing title previews for now." : "Could not load YouTube reels right now. Showing title previews.");
+          setReels((current) => playableReels.length ? playableReels : (shouldUseLocalFallback ? (hasPlayableReels(current) ? current : fallbackReels()) : []));
+          setReelError(isYouTubeQuotaError(error?.status, error?.details || error?.message) ? (shouldUseLocalFallback ? "YouTube limit reached. Showing title previews for now." : "Global reel cache has no playable reels yet.") : (shouldUseLocalFallback ? "Could not load YouTube reels right now. Showing title previews." : "Global reel cache could not load."));
         }
       } finally {
         inFlightReelLoadsRef.current.delete(loadKey);
@@ -4935,7 +5026,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     }
     loadYouTubeReels();
     return () => { alive = false; };
-  }, [isReelAdmin, loadKey, pageSize, reelTab, userId]);
+  }, [isReelAdmin, loadKey, pageSize, reelCandidates, reelTab, remoteSeedItems, reelsSourceMode, userId]);
 
   function sendYouTubeCommand(index, func, args = []) {
     const frame = iframeRefs.current[index];
@@ -5255,6 +5346,46 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     }
   }
 
+  async function loadReelCommentsRemote(reel, item) {
+    if (!supabase || !userId || userId === "guest" || disabledReelSocialTablesRef.current.has("reel_comments")) return;
+    const identity = reelIdentity(reel);
+    try {
+      const { data, error } = await supabase
+        .from("reel_comments")
+        .select("id,user_id,reel_key,item_key,title,comment_text,body,created_at")
+        .eq("reel_key", identity)
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (error) throw error;
+      const remoteComments = (data || []).map((comment) => ({
+        id: comment.id || `${identity}:${comment.created_at}`,
+        text: comment.comment_text || comment.body || "",
+        createdAt: comment.created_at,
+        userId: comment.user_id,
+        title: comment.title || titleOf(item)
+      })).filter((comment) => comment.text);
+      if (!remoteComments.length) return;
+      setReelComments((current) => {
+        const mergedById = new Map([...(current[identity] || []), ...remoteComments].map((comment) => [comment.id, comment]));
+        const next = { ...current, [identity]: [...mergedById.values()].slice(-50) };
+        saveReelComments(next);
+        return next;
+      });
+    } catch (error) {
+      if (["404", "PGRST205", "PGRST202"].includes(String(error?.code || "")) || /not found|schema cache|does not exist/i.test(String(error?.message || ""))) {
+        disabledReelSocialTablesRef.current.add("reel_comments");
+      }
+      const key = `load_comments:${error?.code || error?.message || "unknown"}`;
+      if (!reelSocialWarnedRef.current.has(key)) {
+        reelSocialWarnedRef.current.add(key);
+        console.warn("MovieGram reel comments load skipped", {
+          code: error?.code,
+          message: error?.message
+        });
+      }
+    }
+  }
+
   function toggleReelLike(event, reel, item) {
     stopPlayerEvent(event);
     const identity = reelIdentity(reel);
@@ -5309,6 +5440,7 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     stopPlayerEvent(event);
     setCommentReel({ reel, item });
     setCommentText("");
+    loadReelCommentsRemote(reel, item);
   }
 
   function openReelDetails(event, reel, item) {
@@ -5370,6 +5502,16 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
       body: nextComment.text
     }), "reel_commented");
     setCommentText("");
+  }
+
+  function deleteLocalReelComment(commentId) {
+    if (!commentReel || !commentId) return;
+    const identity = reelIdentity(commentReel.reel);
+    setReelComments((current) => {
+      const next = { ...current, [identity]: (current[identity] || []).filter((comment) => comment.id !== commentId) };
+      saveReelComments(next);
+      return next;
+    });
   }
 
   function markYouTubeEmbedFailed(videoId, failureKey) {
@@ -5455,6 +5597,18 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
     if (mode.includes("vertical")) return "VERTICAL";
     if (mode.includes("horizontal")) return "HORIZONTAL";
     return "UNKNOWN";
+  }
+
+  function changeReelsSourceMode(event) {
+    const mode = event.target.value;
+    if (!VALID_REELS_SOURCE_MODES.has(mode)) return;
+    setReelsSourceMode(mode);
+    saveReelsSourceMode(mode);
+    lastLoadedKeyRef.current = "";
+    inFlightReelLoadsRef.current.clear();
+    setReels([]);
+    setLoadingReels(true);
+    setReelError("");
   }
 
   function rememberThumbnailAspect(videoId, event) {
@@ -5738,11 +5892,11 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                   </div>
                 )}
                 <div className="mg2-reel-actions">
-                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button type="button" onClick={(event) => openReelComments(event, reel, item)} aria-label={`Open reel comments for ${titleOf(item)}`}><Icon name="chat" /></button><span>Comment</span>
                   <button className="mg2-reel-details-button" type="button" onClick={(event) => openReelDetails(event, reel, item)} aria-label={`Open details for ${titleOf(item)}`}><Icon name="play" /></button><span>Details</span>
                   <button className={saved ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchlist?.(item); }} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button><span>{saved ? "Saved" : "List"}</span>
                   <button className={watchAsap ? "active" : ""} type="button" onClick={(event) => { stopPlayerEvent(event); onWatchAsap?.(item); }} aria-label={watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /></button><span>ASAP</span>
+                  <button className={reelLiked ? "active liked" : ""} type="button" onClick={(event) => toggleReelLike(event, reel, item)} aria-label={reelLiked ? "Unlike reel" : "Like reel"}><Icon name="heart" /></button><span>{reelLiked ? "Liked" : "Like"}</span>
                   <button type="button" onClick={(event) => shareReel(event, reel, item)} aria-label="Share reel"><Icon name="send" /></button><span>Share</span>
                 </div>
                 {reel.watchUrl && <a className={`mg2-youtube-watermark ${reel.source || "youtube"}`} href={reel.watchUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open on ${sourceWatermarkLabel(reel.source)}`}>{sourceWatermarkLabel(reel.source)}</a>}
@@ -5784,7 +5938,8 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
               reelComments[reelIdentity(commentReel.reel)].map((comment) => (
                 <article key={comment.id}>
                   <Avatar friend={friends[0]} size="sm" />
-                  <span><b>You</b><small>{comment.text}</small></span>
+                  <span><b>{comment.userId && comment.userId !== userId ? "MovieGram user" : "You"}</b><small>{comment.text}</small></span>
+                  {(!comment.userId || comment.userId === userId) && <button type="button" onClick={() => deleteLocalReelComment(comment.id)}>Delete</button>}
                 </article>
               ))
             ) : <p>No comments yet. Start the conversation.</p>}
@@ -5851,6 +6006,14 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
             </div>
             <small>Requires server ADMIN_BACKFILL_SECRET. Discovery writes candidates only unless promotion is explicitly run.</small>
             <small>{discoveryReady === null ? "Discovery DB status unknown" : discoveryReady ? "Discovery DB ready" : "Run SQL first"}</small>
+            <label className="mg2-reel-admin-field">
+              <span>Source mode</span>
+              <select value={reelsSourceMode} onChange={changeReelsSourceMode}>
+                <option value="hybrid">Hybrid: global then local</option>
+                <option value="global">Global cache only</option>
+                <option value="local">Local fallback only</option>
+              </select>
+            </label>
             {adminResult?.tables && (
               <div className="mg2-reel-admin-dashboard">
                 <span><b>{adminResult.tables.reel_cache_count ?? "-"}</b><small>Playable cache</small></span>
@@ -5859,6 +6022,12 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
                 <span className={adminResult.tables.social_tables_ready ? "ready" : "warn"}><b>{adminResult.tables.social_tables_ready ? "Ready" : "Local"}</b><small>Reel social</small></span>
               </div>
             )}
+            <div className="mg2-reel-admin-dashboard">
+              <span><b>{reelsSourceMode}</b><small>Source mode</small></span>
+              <span><b>{reelCandidates.length}</b><small>Candidate pool</small></span>
+              <span><b>{reelSourceStats.global}</b><small>Global loaded</small></span>
+              <span><b>{reelSourceStats.local}</b><small>Local fallback</small></span>
+            </div>
             <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder="Admin secret for this request" autoComplete="off" />
             <select value={adminSource} onChange={(event) => setAdminSource(event.target.value)}>
               <option value="manual">Manual URLs</option>
@@ -7352,6 +7521,26 @@ function MessagesScreen({ selectedConversation, setSelectedConversation, friendS
 }
 
 function NotificationsScreen({ pendingRequests = [], notifications = [], onRespondFollowRequest, onMarkRead }) {
+  function notificationTitle(notification = {}) {
+    if (notification.message) return notification.message;
+    const actor = notification.actor?.display_name || notification.actor?.username || "Someone";
+    const title = notification.metadata?.title || notification.metadata?.item_title || "";
+    if (notification.type === "reel_comment") return `${actor} commented on your reel`;
+    if (notification.type === "reel_like") return `${actor} liked your reel`;
+    if (notification.type === "review_comment") return `${actor} commented on your review`;
+    if (notification.type === "review_like") return `${actor} liked your review`;
+    if (notification.type === "friend_share") return `${actor} shared ${title || "a title"} with you`;
+    if (notification.type === "list_invite") return `${actor} invited you to a list`;
+    if (notification.type === "movie_night_invite") return `${actor} invited you to Movie Night`;
+    if (notification.type === "movie_night_vote") return `${actor} voted in Movie Night`;
+    return notification.type?.replaceAll("_", " ") || "Notification";
+  }
+  function notificationDetail(notification = {}) {
+    if (notification.metadata?.action_state) return `Status: ${notification.metadata.action_state}`;
+    if (notification.metadata?.comment_text) return notification.metadata.comment_text;
+    if (notification.metadata?.title || notification.metadata?.item_title) return notification.metadata.title || notification.metadata.item_title;
+    return notification.entity_type ? `${notification.entity_type}${notification.entity_id ? ` - ${notification.entity_id}` : ""}` : "MovieGram update";
+  }
   const requestNotificationByActor = Object.fromEntries(
     notifications
       .filter((notification) => notification.type === "follow_request" && notification.actor_id)
@@ -7368,8 +7557,8 @@ function NotificationsScreen({ pendingRequests = [], notifications = [], onRespo
       handle: notification.actor.username ? `@${notification.actor.username}` : "",
       avatar_url: notification.actor.avatar_url
     } : { name: "MovieGram", handle: "", avatar_url: "" },
-    title: notification.message || notification.type?.replaceAll("_", " ") || "Notification",
-    detail: notification.metadata?.action_state ? `Status: ${notification.metadata.action_state}` : notification.entity_type ? `${notification.entity_type}${notification.entity_id ? ` - ${notification.entity_id}` : ""}` : "MovieGram update",
+    title: notificationTitle(notification),
+    detail: notificationDetail(notification),
     time: publicActivityDate(notification.created_at),
     requesterId: notification.actor_id,
     notification
