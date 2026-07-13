@@ -1744,6 +1744,7 @@ const MOVIEGRAM_LOCAL_KEYS = {
   profileActivity: "moviegram.profileActivity",
   removedItems: "moviegram.removedItems"
 };
+const MOVIEGRAM_GUEST_ACCEPTED_KEY = "moviegram.guestAccepted";
 
 const DEFAULT_LOCAL_STATE = {
   watchlist: {},
@@ -1779,6 +1780,17 @@ function hasOwnerStorage(owner) {
 function hasSupabaseAuthToken() {
   if (typeof window === "undefined") return false;
   return Object.keys(localStorage).some((key) => key.startsWith("sb-") && key.includes("auth-token"));
+}
+
+function readGuestAccepted() {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(MOVIEGRAM_GUEST_ACCEPTED_KEY) === "1";
+}
+
+function setStoredGuestAccepted(accepted) {
+  if (typeof window === "undefined") return;
+  if (accepted) window.localStorage.setItem(MOVIEGRAM_GUEST_ACCEPTED_KEY, "1");
+  else window.localStorage.removeItem(MOVIEGRAM_GUEST_ACCEPTED_KEY);
 }
 
 function readOwnedValue(owner, name, fallbackToLegacy = false) {
@@ -2050,7 +2062,12 @@ async function loadSocialFoundation(userId) {
       : Promise.resolve({ data: [], error: null })
   ]);
   if (profilesError) throw profilesError;
-  if (activityResult.error) throw activityResult.error;
+  if (activityResult.error) {
+    console.warn("MovieGram friend activity load skipped", {
+      message: activityResult.error.message,
+      code: activityResult.error.code
+    });
+  }
   const profiles = (profilesData || []).map(publicProfileFromRow);
   const profileMap = Object.fromEntries(profiles.map((profile) => [profile.id, profile]));
   const pendingRequests = requesterIds.map((id) => profileMap[id]).filter(Boolean);
@@ -2064,7 +2081,7 @@ async function loadSocialFoundation(userId) {
     pendingIds,
     followStatuses,
     pendingRequests,
-    activity: (activityResult.data || []).map((row) => normalizeSocialActivity(row, profileMap)),
+    activity: activityResult.error ? [] : (activityResult.data || []).map((row) => normalizeSocialActivity(row, profileMap)),
     counts: { followers, following }
   };
 }
@@ -3719,25 +3736,32 @@ function CastActorCard({ person, type, character, onOpenPerson }) {
   );
 }
 
-function ContinueWatchingRow({ items, onOpen }) {
-  const rowItems = items.filter((item) => mediaType(item) === "tv").slice(0, 8);
+function ContinueWatchingRow({ items, onOpen, onWatched }) {
+  const rowItems = items
+    .filter((item) => mediaType(item) === "tv" && (item.nextEpisodeLabel || item.next_episode || item.progress || item.episodeProgress))
+    .slice(0, 8);
+  if (!rowItems.length) return null;
 
   return (
-    <section className="mg2-section">
-      <div className="mg2-section-head"><h2>Continue Watching</h2><span>See All</span></div>
-      {rowItems.length ? (
-        <div className="mg2-continue-row">
-          {rowItems.map((item, index) => (
-            <button key={`${keyOf(item)}-${index}`} type="button" onClick={() => onOpen(item)}>
+    <section className="mg-home-v3-section mg-home-v3-section--continue">
+      <div className="mg-home-v3-section-head"><h2>Continue Watching</h2></div>
+      <div className="mg-home-v3-rail mg-home-v3-rail--continue">
+        {rowItems.map((item, index) => {
+          const progress = Math.max(8, Math.min(96, Number(item.seriesProgress || item.progress || 35 + index * 12) || 42));
+          const nextLabel = item.nextEpisodeLabel || item.next_episode || `Continue S${item.nextSeason || 1} E${item.nextEpisode || 1}`;
+          return (
+            <article key={`${keyOf(item)}-${index}`} className="mg-home-v3-progress-card">
+              <button type="button" onClick={() => onOpen(item)}>
               <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-              <span><Icon name="play" /></span>
-              <strong>Continue {titleOf(item)}</strong>
-              <small>Open Details for your next episode</small>
-              <i style={{ width: `${72 - index * 10}%` }} />
-            </button>
-          ))}
-        </div>
-      ) : <div className="mg2-empty">Start tracking TV episodes to build Continue Watching.</div>}
+                <strong>{titleOf(item)}</strong>
+                <small>{nextLabel}</small>
+                <i><b style={{ width: `${progress}%` }} /></i>
+              </button>
+              <button type="button" aria-label={`Mark next episode watched for ${titleOf(item)}`} onClick={() => onWatched?.(item)}><Icon name="check" /></button>
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -4021,41 +4045,371 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onNotInterested }) {
-  const recentlyOpened = useMemo(() => Object.values(profileActivity || {})
-    .filter((event) => event?.item && event.type === "opened")
-    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
-    .map((event) => event.item)
-    .filter((item) => item?.poster_path)
-    .slice(0, 18), [profileActivity]);
+function HomeStorySheet({ story, onClose }) {
+  const [query, setQuery] = useState("");
+  if (!story) return null;
+  const isMine = story === "mine";
   return (
-    <>
-      <div className="mg2-stories">
-        {friends.map((friend, index) => (
-          <div className="mg2-story" key={friend.id}>
-            <Avatar friend={friend} />
-            <span>{index === 0 ? "Your story" : friend.name}</span>
-          </div>
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>{isMine ? "Your Story" : `${story.name}'s story`}</h3>
+        {isMine ? (
+          <>
+            <p>Post a recommendation or share something from MovieGram.</p>
+            <label>
+              Recommendation of the Day
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any movie or show" />
+            </label>
+            <button type="button" onClick={onClose}>{query.trim() ? `Post "${query.trim()}"` : "Post recommendation"}</button>
+            <button type="button" onClick={onClose}>Share photo, video, reel, or other content</button>
+          </>
+        ) : (
+          <>
+            <p>No active story from {story.name} right now.</p>
+            <button type="button" onClick={onClose}>Close</button>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HomeStories({ onOpenStory }) {
+  return (
+    <div className="mg-home-v3-stories">
+      {friends.map((friend, index) => (
+        <button className="mg-home-v3-story" key={friend.id} type="button" onClick={() => onOpenStory(index === 0 ? "mine" : friend)}>
+          <Avatar friend={friend} />
+          {index === 0 && <i>+</i>}
+          <span>{index === 0 ? "Your Story" : friend.name}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function readHomeHeroCache() {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(window.localStorage.getItem("moviegram.homeHeroPool.v2") || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveHomeHeroCache(items) {
+  if (typeof window === "undefined" || !items?.length) return;
+  persist("moviegram.homeHeroPool.v2", { timestamp: Date.now(), items: items.slice(0, 12) });
+}
+
+function HomeHero({ items, watchlist, onOpen, onWatchlist }) {
+  const labels = ["Tonight's Pick", "Trending", "Editor's Choice", "Popular With Friends", "New For You"];
+  const [index, setIndex] = useState(0);
+  const [pool, setPool] = useState(items);
+  useEffect(() => {
+    const cache = readHomeHeroCache();
+    const expired = !cache?.timestamp || Date.now() - cache.timestamp > 12 * 60 * 60 * 1000;
+    if ((expired || !cache?.items?.length) && items.length) {
+      setPool(items.slice(0, 12));
+      saveHomeHeroCache(items);
+      return;
+    }
+    setPool(items);
+  }, [items]);
+  useEffect(() => {
+    if (pool.length < 2) return undefined;
+    const timer = window.setInterval(() => setIndex((current) => (current + 1) % pool.length), 5200);
+    return () => window.clearInterval(timer);
+  }, [pool.length]);
+  const hero = pool[index % Math.max(1, pool.length)] || items[0];
+  if (!hero) return null;
+  const saved = hasStoredItem(hero, watchlist);
+  const label = labels[index % labels.length];
+  return (
+    <section className="mg-home-v3-hero">
+      <img src={backdropUrl(hero.backdrop_path || hero.poster_path, "w1280")} alt="" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+      <div className="mg-home-v3-hero-copy">
+        <span><Icon name="sparkle" /> {label}</span>
+        <h2>{titleOf(hero)}</h2>
+        <small>{yearOf(hero)} - {mediaType(hero) === "tv" ? "TV" : "Movie"} - {hero.vote_average ? hero.vote_average.toFixed(1) : "NR"}</small>
+        <div>
+          <button type="button" onClick={() => onOpen(hero)}><Icon name="play" /> Watch Trailer</button>
+          <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(hero)} aria-label={saved ? "Remove from Watchlist" : "Add to Watchlist"}>{saved ? <Icon name="check" /> : "+"}</button>
+        </div>
+      </div>
+      <div className="mg-home-v3-hero-dots">
+        {pool.slice(0, Math.min(6, pool.length)).map((item, dotIndex) => <i key={keyOf(item)} className={dotIndex === index % pool.length ? "active" : ""} />)}
+      </div>
+    </section>
+  );
+}
+
+function HomeRailCard({ item, reason, action = "open", variant = "standard", saved, watchAsap, onOpen, onWatchlist, onWatchAsap, onWatched }) {
+  const useBackdrop = Boolean(item.backdrop_path);
+  const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
+  const showAction = action !== "open";
+  const handleMainAction = (event) => {
+    event.stopPropagation();
+    if (action === "watch") onWatched?.(item);
+    else if (action === "asap") onWatchAsap?.(item);
+    else onWatchlist?.(item);
+  };
+  return (
+    <article className={`mg-home-v3-card mg-home-v3-card--${variant}`}>
+      <button type="button" onClick={() => onOpen(item)}>
+        <img src={useBackdrop ? backdropUrl(item.backdrop_path, "w780") : posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = useBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
+        {reason && <span>{reason}</span>}
+        <strong>{titleOf(item)}</strong>
+        <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {runtime ? `${runtime}m` : yearOf(item)}</small>
+      </button>
+      {showAction && <button type="button" className={`mg-home-v3-card-action${saved || watchAsap ? " active" : ""}`} onClick={handleMainAction} aria-label={action === "watch" ? `Mark watched ${titleOf(item)}` : `Save ${titleOf(item)}`}>
+        {action === "watch" ? <Icon name="check" /> : action === "asap" ? <Icon name="clock" /> : saved ? <Icon name="check" /> : "+"}
+      </button>}
+    </article>
+  );
+}
+
+function HomeShelf({ title, variant = "standard", children }) {
+  if (!children) return null;
+  return (
+    <section className={`mg-home-v3-section mg-home-v3-section--${variant}`}>
+      <div className="mg-home-v3-section-head"><h2>{title}</h2></div>
+      {children}
+    </section>
+  );
+}
+
+function FromFriendsShelf({ items, onOpen }) {
+  if (!items.length) return null;
+  return (
+    <HomeShelf title="From Friends" variant="friends">
+      <div className="mg-home-v3-rail mg-home-v3-friends-rail">
+        {items.slice(0, 8).map((entry, index) => (
+          <button key={`${entry.id || keyOf(entry.item || entry)}-${index}`} type="button" onClick={() => onOpen(entry.item || entry)}>
+            {entry.profile ? <PublicAvatar profile={entry.profile} size="sm" /> : <Avatar friend={friends[index % friends.length]} size="sm" />}
+            <span>
+              <small>{entry.reason || entry.actionLabel || "popular with friends"}</small>
+              <strong>{entry.title || titleOf(entry.item || entry)}</strong>
+              <em>{entry.metadata?.rating ? formatUserRating(entry.metadata.rating) : entry.time || "Recently"}</em>
+            </span>
+            {(entry.item || entry)?.poster_path && <img src={posterUrl((entry.item || entry).poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />}
+          </button>
         ))}
       </div>
+    </HomeShelf>
+  );
+}
 
-      <SocialHomeFeed likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} socialActivity={socialActivity} onOpen={onOpen} />
+function homeInlineVideoUrl(item = {}) {
+  const candidates = [
+    item.video_url,
+    item.videoUrl,
+    item.trailer_url,
+    item.trailerUrl,
+    item.source_url,
+    item.sourceUrl,
+    item.metadata?.video_url,
+    item.metadata?.videoUrl
+  ].filter(Boolean);
+  return candidates.find((url) => /\.(mp4|webm|mov)(?:\?|#|$)/i.test(String(url))) || "";
+}
 
-      <section className="mg2-section mg2-activity-section">
-        <div className="mg2-section-head"><h2>Friend Activity</h2><span>See All</span></div>
-        {feedItems.length ? feedItems.slice(0, 5).map((item) => <ActivityCard key={item.id} item={item} onOpen={onOpen} onOpenProfile={onOpenPublicProfile} />) : <div className="mg2-empty">No followed-user activity yet.</div>}
-      </section>
+function homeCanonicalKey(entry = {}) {
+  const item = entry?.item || entry;
+  const type = mediaType(item);
+  const tmdbId = item?.tmdb_id || item?.tmdbId || item?.id;
+  return type && tmdbId ? `${type}:${tmdbId}` : "";
+}
 
-      <ContinueWatchingRow items={continueWatching} onOpen={onOpen} />
-      <ContentRow title="Recently Opened" items={recentlyOpened} loading={false} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
-      <ContentRow title="Recommended for You" items={recommended} loading={loading && recommended.length === 0} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
-      <RecommendationIntelligence rows={rows} intelligenceRows={intelligenceRows} watchlist={watchlist} hiddenRecs={hiddenRecs} onOpen={onOpen} onWatchlist={onWatchlist} onNotInterested={onNotInterested} />
-      <ContentRow title="Trending This Week" items={rows.trending || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onWatchlist, onWatchAsap }) {
+  const [commentItem, setCommentItem] = useState(null);
+  const [activeVideoIndex, setActiveVideoIndex] = useState(0);
+  const videoRefs = useRef([]);
+  useEffect(() => {
+    const videos = videoRefs.current.filter(Boolean);
+    if (!videos.length || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      const nextIndex = Number(visible.target.dataset.homeReelIndex || 0);
+      setActiveVideoIndex(nextIndex);
+    }, { threshold: [0.55, 0.75] });
+    videos.forEach((video) => observer.observe(video));
+    return () => observer.disconnect();
+  }, [items]);
+  useEffect(() => {
+    videoRefs.current.forEach((video, index) => {
+      if (!video) return;
+      if (index === activeVideoIndex) {
+        const playAttempt = video.play?.();
+        if (playAttempt?.catch) playAttempt.catch(() => {});
+      } else {
+        video.pause?.();
+      }
+    });
+  }, [activeVideoIndex, items]);
+  if (!items.length) return null;
+  return (
+    <section className="mg-home-v3-section mg-home-v3-discover">
+      <div className="mg-home-v3-section-head"><h2>More to Discover</h2></div>
+      <div className="mg-home-v3-reel-feed">
+        {items.slice(0, 8).map((item, index) => {
+          const id = `home-reel:${keyOf(item)}`;
+          const playableUrl = homeInlineVideoUrl(item);
+          return (
+            <article key={id} className="mg-home-v3-reel-post">
+              <header>
+                <Avatar friend={friends[index % friends.length]} size="sm" />
+                <span><strong>MovieGram</strong><small>{item.__recReasons?.[0] || "Suggested for you"}</small></span>
+                <button type="button" onClick={onOpenReels}>Follow</button>
+              </header>
+              <button className="mg-home-v3-reel-media" type="button" onClick={() => onOpenReels(item)}>
+                {playableUrl ? (
+                  <video
+                    ref={(node) => { videoRefs.current[index] = node; }}
+                    data-home-reel-index={index}
+                    src={playableUrl}
+                    muted
+                    playsInline
+                    autoPlay
+                    loop
+                    preload="metadata"
+                    poster={backdropUrl(item.backdrop_path || item.poster_path, "w780")}
+                  />
+                ) : (
+                  <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+                )}
+                {!playableUrl && <span><Icon name="play" /></span>}
+              </button>
+              <footer>
+                <strong>{titleOf(item)}</strong>
+                <div>
+                  <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /> Like</button>
+                  <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /> Comment</button>
+                  <button type="button"><Icon name="send" /> Share</button>
+                  <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /> List</button>
+                  <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /> ASAP</button>
+                </div>
+              </footer>
+            </article>
+          );
+        })}
+      </div>
+      {commentItem && (
+        <div className="mg2-sheet-backdrop" onMouseDown={() => setCommentItem(null)}>
+          <section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}>
+            <span />
+            <h3>Comments</h3>
+            <p>Comments for {titleOf(commentItem)} will appear here when the reel thread is available.</p>
+            <button type="button" onClick={() => setCommentItem(null)}>Close</button>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
 
-      {contentSections.filter((section) => section.id !== "trending").map((section) => (
-        <ContentRow key={section.id} title={section.title} items={rows[section.id] || []} loading={loading} onOpen={onOpen} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
-      ))}
-    </>
+function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onOpenReels }) {
+  const [storySheet, setStorySheet] = useState(null);
+  const watchedKeys = useMemo(() => new Set(Object.values(watched || {}).map(keyOf)), [watched]);
+  const watchlistItems = useMemo(() => Object.values(watchlist || {}).filter((item) => !watchedKeys.has(keyOf(item))), [watchedKeys, watchlist]);
+  const watchAsapItems = useMemo(() => watchlistItems.filter((item) => item.watch_asap || item.watchAsap), [watchlistItems]);
+  const reliableContinue = useMemo(() => (continueWatching || []).filter((item) => mediaType(item) === "tv" && (item.nextEpisodeLabel || item.next_episode || item.progress || item.episodeProgress)), [continueWatching]);
+  const homeData = useMemo(() => {
+    const used = new Set();
+    const validArt = (item) => Boolean(item?.poster_path || item?.backdrop_path);
+    const canonical = (entry) => entry?.item || entry;
+    const takeUnique = (items = [], limit = 10) => {
+      const output = [];
+      dedupe(items).forEach((entry) => {
+        const item = canonical(entry);
+        const key = homeCanonicalKey(item);
+        if (!key || used.has(key) || !validArt(item)) return;
+        used.add(key);
+        output.push(entry);
+      });
+      return output.slice(0, limit);
+    };
+
+    const heroCandidates = dedupe([
+      ...(rows.trending || []),
+      ...(recommended || []),
+      ...(intelligenceRows?.trending || []),
+      ...(rows.movies || []),
+      ...watchAsapItems
+    ])
+      .filter(validArt)
+      .sort((a, b) => Number(Boolean(b.backdrop_path)) - Number(Boolean(a.backdrop_path)));
+    const cachedHero = readHomeHeroCache();
+    const cachedHeroIsFresh = cachedHero?.timestamp && Date.now() - cachedHero.timestamp < 12 * 60 * 60 * 1000;
+    const heroItems = takeUnique(cachedHeroIsFresh && cachedHero?.items?.length ? cachedHero.items : heroCandidates, 6);
+    const continueItems = takeUnique(reliableContinue, 8);
+
+    const saved = [
+      ...watchAsapItems.map((item) => ({ ...item, __homeReason: "From Watch ASAP" })),
+      ...watchlistItems
+        .filter((item) => !watchAsapItems.some((asap) => itemMatches(asap, item)))
+        .map((item) => ({ ...item, __homeReason: "From Watchlist" }))
+    ];
+    const startFallback = dedupe([...(recommended || []), ...(rows.trending || [])]).map((item) => ({ ...item, __homeReason: "Trending now" }));
+    const startWatching = takeUnique([...saved, ...startFallback], 10);
+
+    const realFriends = (socialActivity || []).filter((entry) => validArt(entry?.item)).map((entry) => ({
+      ...entry,
+      reason: /review|rate/i.test(entry.action || entry.actionLabel || "") ? "rated by friend" : /watch/i.test(entry.action || entry.actionLabel || "") ? "watched by friend" : "popular with friends"
+    }));
+    const friendItems = takeUnique(realFriends, 10);
+
+    const tasteItems = takeUnique(dedupe([...(intelligenceRows?.becauseWatched || []), ...(intelligenceRows?.forYou || []), ...(recommended || []), ...(rows.anime || [])]), 10);
+    const bingeItems = takeUnique(dedupe([...(intelligenceRows?.binge || []), ...(rows.bingeShows || []), ...(rows.series || [])]).filter((item) => mediaType(item) === "tv"), 10);
+    const hiddenItems = takeUnique(dedupe([...(intelligenceRows?.hidden || []), ...(rows.hiddenGems || []), ...(rows.movies || [])]), 10);
+    const inlineSeen = new Set();
+    const inlineReels = dedupe([...(feedItems || []), ...(rows.trending || []), ...(recommended || []), ...(rows.movies || [])])
+      .filter((entry) => validArt(canonical(entry)))
+      .sort((a, b) => Number(Boolean(homeInlineVideoUrl(b))) - Number(Boolean(homeInlineVideoUrl(a))))
+      .filter((entry) => {
+        const identity = reelIdentity(entry) || homeCanonicalKey(entry);
+        if (!identity || inlineSeen.has(identity)) return false;
+        inlineSeen.add(identity);
+        return true;
+      })
+      .slice(0, 12);
+
+    return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, inlineReels };
+  }, [feedItems, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+
+  return (
+    <div className="mg-home-v3">
+      <HomeStories onOpenStory={setStorySheet} />
+      <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
+      <ContinueWatchingRow items={homeData.continueItems} onOpen={onOpen} onWatched={onWatched} />
+      {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start">
+        <div className="mg-home-v3-rail mg-home-v3-rail--start">
+          {homeData.startWatching.map((item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} reason={item.__homeReason} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
+        </div>
+      </HomeShelf>}
+      <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} />
+      {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste">
+        <div className="mg-home-v3-rail mg-home-v3-rail--taste">
+          {homeData.tasteItems.map((item) => <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" reason={item.__recReasons?.[0] || "Similar to your taste"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
+        </div>
+      </HomeShelf>}
+      {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Shows" variant="compact">
+        <div className="mg-home-v3-rail mg-home-v3-rail--compact">
+          {homeData.bingeItems.map((item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" reason={item.__recReasons?.[0] || "Binge-worthy"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
+        </div>
+      </HomeShelf>}
+      {homeData.hiddenItems.length > 0 && <HomeShelf title="Hidden Gems" variant="compact">
+        <div className="mg-home-v3-rail mg-home-v3-rail--compact">
+          {homeData.hiddenItems.map((item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" reason={item.__recReasons?.[0] || "Hidden gem"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
+        </div>
+      </HomeShelf>}
+      <HomeInlineReels items={homeData.inlineReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={onOpenReels} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
+      <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} />
+    </div>
   );
 }
 
@@ -8487,7 +8841,7 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authActionLoading, setAuthActionLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
-  const [guestAccepted, setGuestAccepted] = useState(false);
+  const [guestAccepted, setGuestAccepted] = useState(readGuestAccepted);
   const [authOnboardingActive, setAuthOnboardingActive] = useState(false);
   const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "" : "local");
   const [remoteReady, setRemoteReady] = useState(false);
@@ -8500,6 +8854,8 @@ export default function Home() {
   const ratingDebugRef = useRef({});
   const remoteSyncTimer = useRef(null);
   const remoteSyncSuppressed = useRef(false);
+  const skipNextRemoteAutosync = useRef(false);
+  const sessionRemoteLoad = useRef({ userId: "", inFlight: false, cooldownUntil: 0 });
 
   const apiFetch = useCallback(async (path, params = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
@@ -8589,7 +8945,10 @@ export default function Home() {
       legacy: legacyCache,
       remote
     });
-    const nextEpisodes = remote.episodeProgress || {};
+    const remoteFailedTables = new Set(remote.__failedTables || []);
+    const nextEpisodes = remoteFailedTables.has("episode_progress")
+      ? (userCache.episodeProgress || latestLocalState.current.episodeProgress || {})
+      : (remote.episodeProgress || userCache.episodeProgress || latestLocalState.current.episodeProgress || {});
     applyLocalState({
       ...userCache,
       watchlist: mergedLibrary.watchlist,
@@ -8659,10 +9018,7 @@ export default function Home() {
         setFollowerProfiles([]);
         setFollowingProfiles([]);
         setSocialActivity([]);
-        setRecentActivity([]);
-        setRecentReviews([]);
         setNotifications([]);
-        setProfileStats(null);
         setFollowBusyIds({});
         setFollowingIds([]);
         setPendingFollowIds([]);
@@ -8676,9 +9032,17 @@ export default function Home() {
         setRemoteReady(false);
         setSyncStatus("guest");
         setAuthLoading(false);
+        sessionRemoteLoad.current = { userId: "", inFlight: false, cooldownUntil: 0 };
         if (event === "SIGNED_OUT") betaInfo("Signed out");
         return;
       }
+      const now = Date.now();
+      const currentSessionLoad = sessionRemoteLoad.current;
+      if (currentSessionLoad.userId === user.id && (currentSessionLoad.inFlight || currentSessionLoad.cooldownUntil > now)) {
+        setAuthLoading(false);
+        return;
+      }
+      sessionRemoteLoad.current = { userId: user.id, inFlight: true, cooldownUntil: 0 };
       try {
         remoteSyncSuppressed.current = false;
         remoteHydrating.current = true;
@@ -8690,7 +9054,8 @@ export default function Home() {
           }
         }
         activeDataOwner.current = user.id;
-        applyLocalState(DEFAULT_LOCAL_STATE, user.id, { persistState: false });
+        const cachedUserState = readOwnedLocalState(user.id, { fallbackToLegacy: false });
+        applyLocalState(cachedUserState, user.id, { persistState: false });
         setProfileIdentity(defaultProfileForUser(user));
         setProfileMessage("");
         setSocialProfiles([]);
@@ -8715,6 +9080,9 @@ export default function Home() {
         if (event === "SIGNED_IN") betaInfo("Signed in");
         if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SESSION") betaInfo("Supabase session restored");
         const remote = await loadMovieGramRemoteState(user.id);
+        if (remote?.__failed && !remote?.__remoteLoadSkipped) {
+          console.warn("MovieGram remote library load degraded; keeping local cache", { skippedTables: remote.__failedTables || [] });
+        }
         betaInfo("MovieGram own library restored", {
           watched: Object.keys(remote?.watched || {}).length,
           watchlist: Object.keys(remote?.watchlist || {}).length,
@@ -8731,13 +9099,15 @@ export default function Home() {
           profileNotice = "Profile sync needs the profiles table migration.";
         }
         if (!alive) return;
-        applyRemoteState(remote, user.id);
+        if (!remote?.__remoteLoadSkipped) applyRemoteState(remote, user.id);
         setProfileIdentity(loadedProfile);
         setProfileMessage(profileNotice);
+        skipNextRemoteAutosync.current = true;
         setRemoteReady(true);
-        setSyncStatus("synced");
+        setSyncStatus(remote?.__failed ? "local" : "synced");
         setAuthLoading(false);
         remoteHydrating.current = false;
+        sessionRemoteLoad.current = { userId: user.id, inFlight: false, cooldownUntil: Date.now() + 25000 };
       } catch (error) {
         console.error("MovieGram own library restore error", error);
         if (!alive) return;
@@ -8754,6 +9124,7 @@ export default function Home() {
         setSyncStatus("local");
         setAuthLoading(false);
         remoteHydrating.current = false;
+        sessionRemoteLoad.current = { userId: user.id, inFlight: false, cooldownUntil: Date.now() + 25000 };
       }
     }
 
@@ -8825,7 +9196,8 @@ export default function Home() {
         loadCommunityCharts(),
         loadReleaseReminders(supabaseUser.id)
       ]);
-      setRecentActivity(activityRows);
+      if (Array.isArray(activityRows)) setRecentActivity(activityRows);
+      else if (!activityRows?.__remoteLoadSkipped) console.warn("MovieGram recent activity remote load degraded; keeping local activity cache.");
       setNotifications(notificationRows);
       setCommunityCharts(chartRows || {});
       if (reminderRows?.length) {
@@ -8903,7 +9275,6 @@ export default function Home() {
         }
       } else {
         setProfileStats(statsRows);
-        setRecentReviews([]);
       }
       setFollowingIds(social.followingIds);
       setPendingFollowIds(social.pendingIds || []);
@@ -8913,15 +9284,15 @@ export default function Home() {
       setSocialError("");
     } catch (error) {
       console.error("MovieGram social foundation load error", error);
-      setSocialProfiles([]);
-      setFollowerProfiles([]);
-      setFollowingProfiles([]);
-      setSocialActivity([]);
-      setRecentActivity([]);
-      setRecentReviews([]);
-      setCommunityCharts({});
-      setNotifications([]);
-      setProfileStats(null);
+      setSocialProfiles((current) => current);
+      setFollowerProfiles((current) => current);
+      setFollowingProfiles((current) => current);
+      setSocialActivity((current) => current);
+      setRecentActivity((current) => current);
+      setRecentReviews((current) => current);
+      setCommunityCharts((current) => current);
+      setNotifications((current) => current);
+      setProfileStats((current) => current);
       setFollowBusyIds({});
       setFollowingIds([]);
       setPendingFollowIds([]);
@@ -8967,6 +9338,11 @@ export default function Home() {
     if (!supabaseUser || !remoteReady) return;
     if (remoteHydrating.current) return;
     if (remoteSyncSuppressed.current) return;
+    if (skipNextRemoteAutosync.current) {
+      skipNextRemoteAutosync.current = false;
+      persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
+      return;
+    }
     persistOwnedLocalState(supabaseUser.id, latestLocalState.current, { writeLegacy: false });
     setSyncStatus("syncing");
     const timer = window.setTimeout(async () => {
@@ -9172,11 +9548,13 @@ export default function Home() {
       setWatchProviders(null);
       try {
         const type = mediaType(selected);
+        const selectedTmdbId = selected.tmdb_id || selected.tmdbId || selected.id;
+        if (!selectedTmdbId) throw new Error("Missing TMDB id for details");
         const append = type === "tv"
           ? "credits,aggregate_credits,videos,similar,recommendations,external_ids,content_ratings"
           : "credits,videos,similar,recommendations,external_ids,release_dates";
-        const data = await apiFetch(`/${type}/${selected.id}`, { append_to_response: append });
-        const detailedItem = { ...selected, ...data, media_type: type };
+        const data = await apiFetch(`/${type}/${selectedTmdbId}`, { append_to_response: append });
+        const detailedItem = { ...selected, ...data, id: selectedTmdbId, tmdb_id: selectedTmdbId, media_type: type };
         setDetails(detailedItem);
         backfillProfileActivityPoster(detailedItem);
       } catch {
@@ -9190,13 +9568,14 @@ export default function Home() {
 
   useEffect(() => {
     async function loadWatchProviders() {
-      if (!selected?.id) {
+      const selectedTmdbId = selected?.tmdb_id || selected?.tmdbId || selected?.id;
+      if (!selectedTmdbId) {
         setWatchProviders(null);
         return;
       }
       try {
         const type = mediaType(selected);
-        const data = await apiFetch(`/${type}/${selected.id}/watch/providers`);
+        const data = await apiFetch(`/${type}/${selectedTmdbId}/watch/providers`);
         const regionData = data?.results?.IN || {};
         const normalizeProviderBucket = (items = []) => items.map((provider) => ({
           id: provider.provider_id,
@@ -9452,7 +9831,15 @@ export default function Home() {
       setSelectedPerson(item);
       return;
     }
-    const normalized = { ...item, media_type: mediaType(item) };
+    const normalizedType = mediaType(item);
+    const normalizedTmdbId = item?.tmdb_id || item?.tmdbId || item?.id;
+    const normalized = {
+      ...item,
+      id: normalizedTmdbId || item?.id,
+      tmdb_id: normalizedTmdbId || item?.tmdb_id,
+      media_type: normalizedType,
+      item_key: normalizedTmdbId ? `${normalizedType}:${normalizedTmdbId}` : (item?.item_key || item?.itemKey)
+    };
     const key = keyOf(normalized);
     const nextSignals = { ...clickSignals, [key]: (clickSignals[key] || 0) + 1 };
     const nextContinue = [normalized, ...continueWatching.filter((entry) => keyOf(entry) !== key)].slice(0, 10);
@@ -9623,6 +10010,7 @@ export default function Home() {
       setSupabaseUser(null);
       setRemoteReady(false);
       setSyncStatus("guest");
+      setStoredGuestAccepted(false);
       setGuestAccepted(false);
       setAuthOnboardingActive(false);
       setAuthOpen(false);
@@ -9980,6 +10368,8 @@ export default function Home() {
   function watchedPayload(normalized, watchedAt) {
     const payload = {
       id: normalized.id,
+      tmdb_id: normalized.tmdb_id || normalized.tmdbId || normalized.id,
+      item_key: keyOf(normalized),
       media_type: normalized.media_type,
       title: normalized.title,
       name: normalized.name,
@@ -10567,7 +10957,7 @@ export default function Home() {
   } else if (activeSocial === "settings") {
     screen = <SettingsScreen user={supabaseUser} profile={profileIdentity} syncStatus={syncStatus} onBack={() => setActiveSocial(null)} onLogout={handleLogout} onSaveProfile={handleProfileSave} onSafetyAction={openSafetyAction} />;
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onOpenReels={() => setActiveTab("reels")} onNotInterested={hideRecommendation} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
@@ -10600,7 +10990,7 @@ export default function Home() {
       />
     );
   } else {
-    screen = <ProfileScreen watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} recentActivity={recentActivity} recentReviews={recentReviews} profileStats={profileStats} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setGuestAccepted(false); }} onOpenSettings={() => setActiveSocial("settings")} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
+    screen = <ProfileScreen watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} customLists={customLists} savedBlendLists={savedBlendLists} profileActivity={profileActivity} recentActivity={recentActivity} recentReviews={recentReviews} profileStats={profileStats} loading={loadingRows} user={supabaseUser} profile={profileIdentity} socialCounts={socialCounts} pendingRequests={pendingRequests} followerProfiles={followerProfiles} followingProfiles={followingProfiles} followStatuses={followStatuses} authLoading={authLoading} syncStatus={syncStatus} profileSaving={profileSaving} profileMessage={profileMessage} onOpen={openItem} onOpenBlend={() => setActiveSocial("blend")} onOpenStats={() => setActiveSocial("stats")} onOpenDiary={() => setActiveSocial("diary")} onOpenAuth={() => { setAuthOpen(false); setStoredGuestAccepted(false); setGuestAccepted(false); }} onOpenSettings={() => setActiveSocial("settings")} onLogout={handleLogout} onSaveProfile={handleProfileSave} onRespondFollowRequest={respondFollowRequest} onOpenPublicProfile={openPublicProfile} onFollowToggle={toggleFollow} onRemoveFollower={removeFollower} onDeleteCustomList={deleteCustomList} onRenameCustomList={renameCustomList} onShareList={shareCustomList} />;
   }
 
   if (authLoading || (!supabaseUser && !guestAccepted || authOnboardingActive)) {
@@ -10608,16 +10998,18 @@ export default function Home() {
       <AuthOnboarding
         configured={isSupabaseConfigured}
         loading={authLoading}
-        onGuest={() => { setGuestAccepted(true); setAuthOnboardingActive(false); }}
+        onGuest={() => { setStoredGuestAccepted(true); setGuestAccepted(true); setAuthOnboardingActive(false); }}
         onSession={(session) => {
           setAuthOnboardingActive(true);
           setSupabaseSession(session || null);
           setSupabaseUser(session?.user || null);
+          setStoredGuestAccepted(false);
           setSyncStatus(session?.user ? "syncing" : "guest");
         }}
         onProfileSaved={(profile) => setProfileIdentity(profile)}
         onComplete={() => {
           setAuthOnboardingActive(false);
+          setStoredGuestAccepted(false);
           setGuestAccepted(false);
           setAuthMessage("");
         }}

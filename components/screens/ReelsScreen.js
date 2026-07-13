@@ -22,6 +22,7 @@ export default function ReelsScreen() {
   const [activeTab, setActiveTab] = useState("forYou");
   const [liked, setLiked] = useState({});
   const [saved, setSaved] = useState({});
+  const [asap, setAsap] = useState({});
   const visibleReels = activeTab === "watched" ? reels.slice(1) : activeTab === "friends" ? [...reels].reverse() : reels;
 
   return (
@@ -36,9 +37,10 @@ export default function ReelsScreen() {
             <div className="reel-actions">
               <button className={liked[reel.id] ? "active" : ""} type="button" aria-label="Like" onClick={() => setLiked((current) => ({ ...current, [reel.id]: !current[reel.id] }))}><Icon name="heart" /></button><span>{liked[reel.id] ? "1.3k" : "1.2k"}</span>
               <button type="button" aria-label="Comment"><Icon name="comment" /></button><span>{32 + index}</span>
-              <button type="button" aria-label="Share"><Icon name="send" /></button><span>{78 + index}</span>
-              <button className={saved[reel.id] ? "active" : ""} type="button" aria-label="Save" onClick={() => setSaved((current) => ({ ...current, [reel.id]: !current[reel.id] }))}><Icon name="bookmark" /></button><span>Save</span>
               <Link className="reel-details-button" href={`/movies/${reel.slug}`} aria-label={`Open details for ${reel.title}`}><span aria-hidden="true" /></Link><span>Details</span>
+              <button className={saved[reel.id] ? "active" : ""} type="button" aria-label="List" onClick={() => setSaved((current) => ({ ...current, [reel.id]: !current[reel.id] }))}><Icon name="bookmark" /></button><span>List</span>
+              <button className={asap[reel.id] ? "active" : ""} type="button" aria-label="ASAP" onClick={() => setAsap((current) => ({ ...current, [reel.id]: !current[reel.id] }))}><Icon name="clock" /></button><span>ASAP</span>
+              <button type="button" aria-label="Share"><Icon name="send" /></button><span>{78 + index}</span>
             </div>
             <div className="reel-copy">
               <h2>{reel.title}</h2>
