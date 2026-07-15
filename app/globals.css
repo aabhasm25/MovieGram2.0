@@ -383,9 +383,11 @@
 }
 
 .mg-home-v3-card.is-tv {
-  flex-basis: 180px;
-  width: 180px;
-  height: auto;
+  flex: 0 0 204px;
+  width: 204px;
+  height: 260px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .mg-home-v3-card-art {
@@ -401,8 +403,22 @@
 }
 
 .mg-home-v3-card.is-tv .mg-home-v3-card-art {
-  aspect-ratio: 16 / 9;
+  flex: 0 0 204px;
+  width: 204px;
+  height: 204px;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
+}
+
+.mg-home-v3-card.is-tv .mg-home-v3-card-art .mg-home-v3-art-primary {
+  object-fit: cover;
+}
+
+.mg-home-v3-card.is-tv .mg-home-v3-card-copy {
+  flex: 0 0 56px;
+  height: 56px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .mg-home-v3-card-art > button:first-child,
@@ -514,11 +530,12 @@
 .mg-home-v3-progress-card {
   position: relative;
   display: grid;
-  flex-basis: 180px;
-  width: 180px;
-  height: auto;
-  grid-template-rows: auto auto;
-  overflow: visible;
+  flex: 0 0 204px;
+  width: 204px;
+  height: 260px;
+  grid-template-rows: 204px 56px;
+  box-sizing: border-box;
+  overflow: hidden;
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -528,8 +545,8 @@
 .mg-home-v3-progress-art {
   position: relative;
   width: 100%;
-  height: auto;
-  aspect-ratio: 16 / 9;
+  height: 204px;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
   border-radius: 12px;
   background: transparent;
@@ -547,6 +564,12 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  object-fit: cover;
+  object-position: var(--mg-home-object-position, center);
+}
+
+.mg-home-v3-progress-art.has-landscape .mg-home-v3-art-primary {
+  object-fit: cover;
 }
 
 .mg-home-v3-progress-copy {
@@ -556,6 +579,9 @@
   align-content: start;
   gap: 3px;
   padding: 7px 0 0 !important;
+  height: 56px;
+  box-sizing: border-box;
+  overflow: hidden;
   color: #fff;
   text-align: left;
 }
@@ -637,6 +663,7 @@
   color: #fff;
   background: linear-gradient(135deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .025));
   text-align: left;
+  overflow: hidden;
 }
 
 .mg-home-v3-friends-rail .mg2-avatar,
@@ -646,7 +673,11 @@
 }
 
 .mg-home-v3-friends-rail > button > span {
+  display: grid;
   min-width: 0;
+  max-height: 76px;
+  gap: 2px;
+  overflow: hidden;
 }
 
 .mg-home-v3-friends-rail small,

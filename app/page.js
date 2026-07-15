@@ -4940,6 +4940,22 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       const ordered = [...balancedLead, ...available.filter((entry) => !leadKeys.has(homeCanonicalKey(canonical(entry))))];
       return takeUnique(ordered, limit);
     };
+    const takeIndependentShelf = (items = [], limit = 8, minimum = 6) => {
+      const pool = preparePool(items);
+      const selected = [];
+      const selectedKeys = new Set();
+      const append = (entry) => {
+        if (selected.length >= limit) return;
+        const key = homeCanonicalKey(canonical(entry));
+        if (!key || selectedKeys.has(key)) return;
+        selectedKeys.add(key);
+        selected.push(entry);
+      };
+      pool.filter((entry) => !used.has(homeCanonicalKey(canonical(entry)))).forEach(append);
+      if (selected.length < Math.min(minimum, pool.length)) pool.forEach(append);
+      selected.forEach((entry) => used.add(homeCanonicalKey(canonical(entry))));
+      return selected;
+    };
 
     const heroCandidates = dedupe([
       ...(rows.trending || []),
@@ -4980,17 +4996,23 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       ...(rows.bingeShows || []),
       ...(rows.series || []),
       ...(rows.topRated || []),
-      ...(rows.movies || [])
+      ...(rows.movies || []),
+      ...(rows.trending || []),
+      ...(recommended || []),
+      ...homeSourceItems
     ].filter((item) => !isHomeAnimeItem(canonical(item)))));
     const hiddenPool = interleaveHomeMedia(preparePool([
       ...(intelligenceRows?.hidden || []),
       ...(rows.hiddenGems || []),
       ...(rows.topRated || []),
       ...(rows.movies || []),
-      ...(rows.series || [])
+      ...(rows.series || []),
+      ...(rows.trending || []),
+      ...(recommended || []),
+      ...homeSourceItems
     ].filter((item) => !isHomeAnimeItem(canonical(item)))));
     const animePool = interleaveHomeMedia(preparePool([...(rows.anime || []), ...(rows.series || []), ...(rows.movies || [])].filter((item) => isHomeAnimeItem(canonical(item)))));
-    const recentPool = interleaveHomeMedia(preparePool((continueWatching || []).filter((item) => validArt(item))));
+    const recentPool = preparePool((continueWatching || []).filter((item) => validArt(item)));
 
     const heroItems = takeUnique(heroPool, 5);
     const continueItems = takeUnique(reliableContinue, 24);
@@ -5000,27 +5022,14 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       ? startPrimary
       : [...startPrimary, ...takeMixedUnique(savedPool, startFallbackTarget - startPrimary.length)];
     const friendItems = takeUnique(friendPool, 24);
-    const firstUnused = (pool, blockedKeys = new Set()) => preparePool(pool).find((entry) => {
-      const key = homeCanonicalKey(canonical(entry));
-      return key && !used.has(key) && !blockedKeys.has(key);
-    });
-    const bingeReserved = firstUnused(bingePool);
-    const bingeReservedKey = bingeReserved ? homeCanonicalKey(canonical(bingeReserved)) : "";
-    const hiddenReserved = firstUnused(hiddenPool, new Set(bingeReservedKey ? [bingeReservedKey] : []));
-    const hiddenReservedKey = hiddenReserved ? homeCanonicalKey(canonical(hiddenReserved)) : "";
-    const laterSectionReservations = new Set([bingeReservedKey, hiddenReservedKey].filter(Boolean));
-    const tasteItems = takeMixedUnique(tastePool, 40, laterSectionReservations);
-    const bingeItems = takeMixedUnique(
-      bingeReserved ? [bingeReserved, ...bingePool] : bingePool,
-      40,
-      new Set(hiddenReservedKey ? [hiddenReservedKey] : [])
-    );
-    const hiddenItems = takeMixedUnique(hiddenReserved ? [hiddenReserved, ...hiddenPool] : hiddenPool, 40);
+    const tasteItems = takeMixedUnique(tastePool, 40);
+    const bingeItems = takeIndependentShelf(bingePool, 8, 6);
+    const hiddenItems = takeIndependentShelf(hiddenPool, 8, 6);
     const animeItems = takeMixedUnique(animePool, 40);
-    const recentlyOpened = takeMixedUnique(recentPool, 40);
+    const recentlyOpened = takeIndependentShelf(recentPool, 10, 1);
 
     return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, animeItems, recentlyOpened };
-  }, [continueWatching, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+  }, [continueWatching, homeSourceItems, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
 
   const openDiscovery = (index) => {
     const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
