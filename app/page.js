@@ -3738,7 +3738,7 @@ function CastActorCard({ person, type, character, onOpenPerson }) {
 
 function ContinueWatchingRow({ items, onOpen, onWatched }) {
   const rowItems = items
-    .filter((item) => mediaType(item) === "tv" && (item.nextEpisodeLabel || item.next_episode || item.progress || item.episodeProgress))
+    .filter((item) => mediaType(item) === "tv" && item.__nextEpisode && Number.isFinite(item.__seriesProgress))
     .slice(0, 8);
   if (!rowItems.length) return null;
 
@@ -3746,18 +3746,24 @@ function ContinueWatchingRow({ items, onOpen, onWatched }) {
     <section className="mg-home-v3-section mg-home-v3-section--continue">
       <div className="mg-home-v3-section-head"><h2>Continue Watching</h2></div>
       <div className="mg-home-v3-rail mg-home-v3-rail--continue">
-        {rowItems.map((item, index) => {
-          const progress = Math.max(8, Math.min(96, Number(item.seriesProgress || item.progress || 35 + index * 12) || 42));
-          const nextLabel = item.nextEpisodeLabel || item.next_episode || `Continue S${item.nextSeason || 1} E${item.nextEpisode || 1}`;
+        {rowItems.map((item) => {
+          const progress = Math.max(1, Math.min(99, item.__seriesProgress));
+          const nextLabel = `S${item.__nextEpisode.season_number} E${item.__nextEpisode.episode_number} next`;
+          const hasBackdrop = Boolean(item.backdrop_path);
+          const fallbackPoster = posterUrl(item.poster_path, "w500");
           return (
-            <article key={`${keyOf(item)}-${index}`} className="mg-home-v3-progress-card">
-              <button type="button" onClick={() => onOpen(item)}>
-              <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+            <article key={keyOf(item)} className="mg-home-v3-progress-card">
+              <div className={`mg-home-v3-progress-art${hasBackdrop ? " has-landscape" : " has-poster-fallback"}`}>
+                <button type="button" onClick={() => onOpen(item)}>
+                  <img className="mg-home-v3-art-primary" src={hasBackdrop ? backdropUrl(item.backdrop_path, "w780") : fallbackPoster} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = hasBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
+                </button>
+                <button className="mg-home-v3-progress-check" type="button" aria-label={`Mark ${nextLabel} watched for ${titleOf(item)}`} onClick={() => onWatched?.(item)}><Icon name="check" /></button>
+                <i><b style={{ width: `${progress}%` }} /></i>
+              </div>
+              <button className="mg-home-v3-progress-copy" type="button" onClick={() => onOpen(item)}>
                 <strong>{titleOf(item)}</strong>
                 <small>{nextLabel}</small>
-                <i><b style={{ width: `${progress}%` }} /></i>
               </button>
-              <button type="button" aria-label={`Mark next episode watched for ${titleOf(item)}`} onClick={() => onWatched?.(item)}><Icon name="check" /></button>
             </article>
           );
         })}
@@ -4045,10 +4051,50 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
   );
 }
 
-function HomeStorySheet({ story, onClose }) {
+function HomeStorySheet({ story, onClose, apiFetch }) {
   const [query, setQuery] = useState("");
-  if (!story) return null;
+  const [mediaName, setMediaName] = useState("");
+  const [results, setResults] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null);
   const isMine = story === "mine";
+  useEffect(() => {
+    if (!isMine || !apiFetch || query.trim().length < 2) {
+      setResults([]);
+      return undefined;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      apiFetch("/search/multi", { query: query.trim(), include_adult: false, page: 1 })
+        .then((data) => {
+          if (!alive) return;
+          setResults(normalizeSearch(data?.results || []).filter((item) => ["movie", "tv"].includes(mediaType(item))).slice(0, 5));
+        })
+        .catch(() => { if (alive) setResults([]); });
+    }, 280);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [apiFetch, isMine, query]);
+  if (!story) return null;
+  const postStory = () => {
+    if (!selectedItem && !mediaName) return;
+    const existing = readHomeCache("moviegram.homeStories.v1", []);
+    const payload = {
+      id: `story:${Date.now()}`,
+      created_at: new Date().toISOString(),
+      media_name: mediaName,
+      recommendation: selectedItem ? {
+        item_key: homeCanonicalKey(selectedItem),
+        tmdb_id: selectedItem.id,
+        media_type: mediaType(selectedItem),
+        title: titleOf(selectedItem),
+        poster_path: selectedItem.poster_path || ""
+      } : null
+    };
+    persist("moviegram.homeStories.v1", [payload, ...existing].slice(0, 20));
+    onClose();
+  };
   return (
     <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
       <section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}>
@@ -4059,10 +4105,17 @@ function HomeStorySheet({ story, onClose }) {
             <p>Post a recommendation or share something from MovieGram.</p>
             <label>
               Recommendation of the Day
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any movie or show" />
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedItem(null); }} placeholder="Search any movie or show" />
             </label>
-            <button type="button" onClick={onClose}>{query.trim() ? `Post "${query.trim()}"` : "Post recommendation"}</button>
-            <button type="button" onClick={onClose}>Share photo, video, reel, or other content</button>
+            {results.length > 0 && <div className="mg-home-v3-story-results">{results.map((item) => <button className={selectedItem && homeCanonicalKey(selectedItem) === homeCanonicalKey(item) ? "active" : ""} key={homeCanonicalKey(item)} type="button" onClick={() => setSelectedItem(item)}>{item.poster_path && <img src={posterUrl(item.poster_path, "w92")} alt="" />}<span><strong>{titleOf(item)}</strong><small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {yearOf(item)}</small></span></button>)}</div>}
+            {selectedItem && <p>Recommendation attached: {titleOf(selectedItem)}</p>}
+            <label>
+              Optional photo or video
+              <input type="file" accept="image/*,video/*" onChange={(event) => setMediaName(event.target.files?.[0]?.name || "")} />
+            </label>
+            {mediaName && <p>{mediaName} ready to share.</p>}
+            <button type="button" disabled={!selectedItem && !mediaName} onClick={postStory}>{selectedItem ? `Post ${titleOf(selectedItem)}` : "Share media"}</button>
+            <button type="button" onClick={onClose}>Skip recommendation and share something else</button>
           </>
         ) : (
           <>
@@ -4075,12 +4128,17 @@ function HomeStorySheet({ story, onClose }) {
   );
 }
 
-function HomeStories({ onOpenStory }) {
+function HomeStories({ user, onOpenStory }) {
+  const ownAvatar = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || "";
   return (
     <div className="mg-home-v3-stories">
       {friends.map((friend, index) => (
         <button className="mg-home-v3-story" key={friend.id} type="button" onClick={() => onOpenStory(index === 0 ? "mine" : friend)}>
-          <Avatar friend={friend} />
+          <span className="mg-home-v3-story-avatar">
+            {index === 0 && ownAvatar
+              ? <img className="mg-home-v3-story-photo" src={ownAvatar} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+              : <Avatar friend={friend} />}
+          </span>
           {index === 0 && <i>+</i>}
           <span>{index === 0 ? "Your Story" : friend.name}</span>
         </button>
@@ -4089,50 +4147,118 @@ function HomeStories({ onOpenStory }) {
   );
 }
 
+const HOME_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+const HOME_HERO_CACHE_KEY = "moviegram.home.hero.v6";
+const HOME_HERO_CACHE_VERSION = 6;
+const HOME_HERO_RETRY_MS = 15 * 60 * 1000;
+
 function readHomeHeroCache() {
   if (typeof window === "undefined") return null;
   try {
-    return JSON.parse(window.localStorage.getItem("moviegram.homeHeroPool.v2") || "null");
+    return JSON.parse(window.localStorage.getItem(HOME_HERO_CACHE_KEY) || "null");
   } catch {
     return null;
   }
 }
 
-function saveHomeHeroCache(items) {
+function isHomeHeroCacheFresh(cache, now = Date.now()) {
+  return Boolean(cache?.version === HOME_HERO_CACHE_VERSION && cache?.items?.length && Number(cache.expiresAt) > now && Number(cache.createdAt) <= now);
+}
+
+function refreshedHomeHeroPool(items = [], previousCache = null, now = Date.now()) {
+  const artCandidates = dedupe(items).filter((item) => item?.backdrop_path || item?.poster_path);
+  const landscapeCandidates = artCandidates.filter((item) => item?.backdrop_path);
+  const candidates = (landscapeCandidates.length >= 4 ? landscapeCandidates : artCandidates).slice(0, 12);
+  if (candidates.length < 2) return candidates;
+  const timeSlot = Math.floor(now / HOME_CACHE_TTL_MS);
+  const offset = timeSlot % candidates.length;
+  let rotated = [...candidates.slice(offset), ...candidates.slice(0, offset)];
+  const previousLead = previousCache?.previousLeadItemKey || homeCanonicalKey(previousCache?.items?.[0]);
+  if (previousLead && homeCanonicalKey(rotated[0]) === previousLead) rotated = [...rotated.slice(1), rotated[0]];
+  return rotated;
+}
+
+function resolveHomeHeroPool(items = [], now = Date.now()) {
+  const cache = readHomeHeroCache();
+  if (isHomeHeroCacheFresh(cache, now)) return cache.items;
+  const refreshed = refreshedHomeHeroPool(items, cache, now);
+  return refreshed.length ? refreshed : (cache?.items || []);
+}
+
+function saveHomeHeroCache(items, now = Date.now()) {
   if (typeof window === "undefined" || !items?.length) return;
-  persist("moviegram.homeHeroPool.v2", { timestamp: Date.now(), items: items.slice(0, 12) });
+  persist(HOME_HERO_CACHE_KEY, {
+    version: HOME_HERO_CACHE_VERSION,
+    createdAt: now,
+    expiresAt: now + HOME_CACHE_TTL_MS,
+    previousLeadItemKey: homeCanonicalKey(items[0]),
+    items: items.slice(0, 12)
+  });
 }
 
 function HomeHero({ items, watchlist, onOpen, onWatchlist }) {
   const labels = ["Tonight's Pick", "Trending", "Editor's Choice", "Popular With Friends", "New For You"];
   const [index, setIndex] = useState(0);
-  const [pool, setPool] = useState(items);
+  const [pool, setPool] = useState(() => resolveHomeHeroPool(items));
   useEffect(() => {
-    const cache = readHomeHeroCache();
-    const expired = !cache?.timestamp || Date.now() - cache.timestamp > 12 * 60 * 60 * 1000;
-    if ((expired || !cache?.items?.length) && items.length) {
-      setPool(items.slice(0, 12));
-      saveHomeHeroCache(items);
-      return;
-    }
-    setPool(items);
+    let retryTimer;
+    const refreshPool = () => {
+      const cache = readHomeHeroCache();
+      if (isHomeHeroCacheFresh(cache)) {
+        setPool(cache.items);
+        return;
+      }
+      const nextPool = refreshedHomeHeroPool(items, cache);
+      if (!nextPool.length) {
+        if (cache?.items?.length) setPool(cache.items);
+        window.clearTimeout(retryTimer);
+        retryTimer = window.setTimeout(refreshPool, HOME_HERO_RETRY_MS);
+        return;
+      }
+      setPool(nextPool);
+      setIndex(0);
+      saveHomeHeroCache(nextPool);
+    };
+    refreshPool();
+    const onVisibility = () => { if (document.visibilityState === "visible") refreshPool(); };
+    window.addEventListener("focus", refreshPool);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshPool);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearTimeout(retryTimer);
+    };
   }, [items]);
   useEffect(() => {
     if (pool.length < 2) return undefined;
-    const timer = window.setInterval(() => setIndex((current) => (current + 1) % pool.length), 5200);
+    const timer = window.setInterval(() => setIndex((current) => (current + 1) % pool.length), 5000);
     return () => window.clearInterval(timer);
   }, [pool.length]);
+  useEffect(() => {
+    if (typeof window === "undefined" || !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) return undefined;
+    window.__moviegramHomeHeroCache = {
+      key: HOME_HERO_CACHE_KEY,
+      ttlMs: HOME_CACHE_TTL_MS,
+      isFreshAt: (timestamp = Date.now()) => isHomeHeroCacheFresh(readHomeHeroCache(), timestamp),
+      simulateExpired: () => {
+        const cache = readHomeHeroCache();
+        return cache ? isHomeHeroCacheFresh({ ...cache, expiresAt: Date.now() - 1 }) : false;
+      }
+    };
+    return () => { delete window.__moviegramHomeHeroCache; };
+  }, []);
   const hero = pool[index % Math.max(1, pool.length)] || items[0];
   if (!hero) return null;
   const saved = hasStoredItem(hero, watchlist);
   const label = labels[index % labels.length];
   return (
-    <section className="mg-home-v3-hero">
-      <img src={backdropUrl(hero.backdrop_path || hero.poster_path, "w1280")} alt="" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+    <section className="mg-home-v3-hero" style={{ "--mg-home-hero-position": hero.home_focal_position || hero.focal_position || "70% center" }}>
+      <img src={hero.backdrop_path ? backdropUrl(hero.backdrop_path, "w1280") : posterUrl(hero.poster_path, "w780")} alt="" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
       <div className="mg-home-v3-hero-copy">
         <span><Icon name="sparkle" /> {label}</span>
         <h2>{titleOf(hero)}</h2>
         <small>{yearOf(hero)} - {mediaType(hero) === "tv" ? "TV" : "Movie"} - {hero.vote_average ? hero.vote_average.toFixed(1) : "NR"}</small>
+        {hero.overview && <p>{hero.overview}</p>}
         <div>
           <button type="button" onClick={() => onOpen(hero)}><Icon name="play" /> Watch Trailer</button>
           <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(hero)} aria-label={saved ? "Remove from Watchlist" : "Add to Watchlist"}>{saved ? <Icon name="check" /> : "+"}</button>
@@ -4145,8 +4271,12 @@ function HomeHero({ items, watchlist, onOpen, onWatchlist }) {
   );
 }
 
-function HomeRailCard({ item, reason, action = "open", variant = "standard", saved, watchAsap, onOpen, onWatchlist, onWatchAsap, onWatched }) {
-  const useBackdrop = Boolean(item.backdrop_path);
+function HomeRailCard({ item, badge, action = "open", variant = "standard", saved, watchAsap, onOpen, onWatchlist, onWatchAsap, onWatched }) {
+  const isShow = mediaType(item) === "tv";
+  const hasShowBackdrop = isShow && Boolean(item.backdrop_path);
+  const useBackdrop = hasShowBackdrop || (!isShow && !item.poster_path && Boolean(item.backdrop_path));
+  const artworkUrl = useBackdrop ? backdropUrl(item.backdrop_path, "w780") : posterUrl(item.poster_path, "w500");
+  const focalPosition = item.home_focal_position || item.focal_position || item.object_position || (isShow ? "center" : "50% 20%");
   const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
   const showAction = action !== "open";
   const handleMainAction = (event) => {
@@ -4156,18 +4286,59 @@ function HomeRailCard({ item, reason, action = "open", variant = "standard", sav
     else onWatchlist?.(item);
   };
   return (
-    <article className={`mg-home-v3-card mg-home-v3-card--${variant}`}>
-      <button type="button" onClick={() => onOpen(item)}>
-        <img src={useBackdrop ? backdropUrl(item.backdrop_path, "w780") : posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = useBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
-        {reason && <span>{reason}</span>}
+    <article className={`mg-home-v3-card mg-home-v3-card--${variant}${isShow ? " is-tv" : " is-movie"}`}>
+      <div className={`mg-home-v3-card-art${isShow ? hasShowBackdrop ? " has-landscape" : " has-poster-fallback" : " has-poster"}`} style={{ "--mg-home-object-position": focalPosition }}>
+        <button type="button" onClick={() => onOpen(item)}>
+          <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = useBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
+        </button>
+        {showAction && <button type="button" className={`mg-home-v3-card-action${saved || watchAsap ? " active" : ""}`} onClick={handleMainAction} aria-label={action === "watch" ? `Mark watched ${titleOf(item)}` : `Save ${titleOf(item)}`}>
+          {action === "watch" ? <Icon name="check" /> : action === "asap" ? <Icon name="clock" /> : saved ? <Icon name="check" /> : "+"}
+        </button>}
+      </div>
+      <button className="mg-home-v3-card-copy" type="button" onClick={() => onOpen(item)}>
         <strong>{titleOf(item)}</strong>
-        <small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {runtime ? `${runtime}m` : yearOf(item)}</small>
+        <small>{badge && /^(ASAP|Watchlist)$/i.test(badge) ? `${badge} - ` : ""}{isShow ? "TV" : "Movie"} - {runtime ? `${runtime}m` : yearOf(item)}</small>
       </button>
-      {showAction && <button type="button" className={`mg-home-v3-card-action${saved || watchAsap ? " active" : ""}`} onClick={handleMainAction} aria-label={action === "watch" ? `Mark watched ${titleOf(item)}` : `Save ${titleOf(item)}`}>
-        {action === "watch" ? <Icon name="check" /> : action === "asap" ? <Icon name="clock" /> : saved ? <Icon name="check" /> : "+"}
-      </button>}
     </article>
   );
+}
+
+function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8, renderItem }) {
+  const mountedLimit = Math.min(items.length, 48);
+  const [visibleCount, setVisibleCount] = useState(() => Math.min(initialCount, mountedLimit));
+  const tickingRef = useRef(false);
+  useEffect(() => {
+    setVisibleCount(Math.min(initialCount, mountedLimit));
+  }, [initialCount, items, mountedLimit]);
+  const appendIfNeeded = (event) => {
+    if (tickingRef.current || visibleCount >= mountedLimit) return;
+    const rail = event.currentTarget;
+    tickingRef.current = true;
+    window.requestAnimationFrame(() => {
+      tickingRef.current = false;
+      const progress = (rail.scrollLeft + rail.clientWidth) / Math.max(1, rail.scrollWidth);
+      if (progress >= 0.8) {
+        setVisibleCount((current) => Math.min(mountedLimit, current + step));
+      }
+    });
+  };
+  return (
+    <div className={`mg-home-v3-rail ${className}`.trim()} onScroll={appendIfNeeded}>
+      {items.slice(0, visibleCount).map(renderItem)}
+    </div>
+  );
+}
+
+function interleaveHomeMedia(items = []) {
+  const movies = [];
+  const shows = [];
+  items.forEach((entry) => (mediaType(entry?.item || entry) === "tv" ? shows : movies).push(entry));
+  const output = [];
+  for (let index = 0; index < Math.max(movies.length, shows.length); index += 1) {
+    if (movies[index]) output.push(movies[index]);
+    if (shows[index]) output.push(shows[index]);
+  }
+  return output;
 }
 
 function HomeShelf({ title, variant = "standard", children }) {
@@ -4222,81 +4393,428 @@ function homeCanonicalKey(entry = {}) {
   return type && tmdbId ? `${type}:${tmdbId}` : "";
 }
 
-function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onWatchlist, onWatchAsap }) {
-  const [commentItem, setCommentItem] = useState(null);
-  const [activeVideoIndex, setActiveVideoIndex] = useState(0);
-  const videoRefs = useRef([]);
+function homeReelPresentation(reel = {}) {
+  const metadata = reel.metadata || {};
+  const width = Number(reel.width || reel.video_width || metadata.width || metadata.video_width || 0);
+  const height = Number(reel.height || reel.video_height || metadata.height || metadata.video_height || 0);
+  const explicitRatio = Number(reel.aspect_ratio || reel.aspectRatio || metadata.aspect_ratio || metadata.aspectRatio || 0);
+  const ratio = explicitRatio || (width > 0 && height > 0 ? width / height : 0);
+  if (ratio >= 1.18) return "landscape";
+  if (ratio > 0 && ratio <= 0.82) return "portrait";
+  const sourceText = `${reel.source || ""} ${reel.video_url || reel.videoUrl || reel.source_url || reel.sourceUrl || ""} ${reel.tags || ""}`;
+  if (/shorts|vertical|portrait/i.test(sourceText)) return "portrait";
+  if (/youtube|youtu\.be|trailer|clip/i.test(sourceText)) return "landscape";
+  return "unknown";
+}
+
+function isHomeAnimeItem(item = {}) {
+  const genres = item.genre_ids || item.genres?.map((genre) => genre.id) || [];
+  const origins = item.origin_country || [];
+  return genres.includes(16) && (item.original_language === "ja" || origins.includes("JP"));
+}
+
+const HOME_SERIES_CACHE_KEY = "moviegram.homeSeriesDetails.v1";
+const HOME_REELS_CACHE_KEY = "moviegram.homePlayableReels.v1";
+
+function readHomeCache(key, fallback) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    return JSON.parse(window.localStorage.getItem(key) || "null") || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function releasedEpisodeMap(details = {}) {
+  const lastEpisode = details.last_episode_to_air;
+  if (!lastEpisode?.season_number || !lastEpisode?.episode_number) return [];
+  return normalSeasonsOf(details).flatMap((season) => {
+    let releasedCount = 0;
+    if (season.season_number < lastEpisode.season_number) releasedCount = season.episode_count || 0;
+    if (season.season_number === lastEpisode.season_number) releasedCount = Math.min(season.episode_count || lastEpisode.episode_number, lastEpisode.episode_number);
+    return Array.from({ length: releasedCount }, (_, index) => ({
+      season_number: season.season_number,
+      episode_number: index + 1,
+      air_date: season.season_number === lastEpisode.season_number && index + 1 === lastEpisode.episode_number ? lastEpisode.air_date : ""
+    }));
+  });
+}
+
+function deriveHomeSeriesProgress(details, episodeProgress = {}) {
+  if (!details?.id || mediaType(details) !== "tv") return null;
+  const releasedEpisodes = releasedEpisodeMap(details);
+  if (!releasedEpisodes.length) return null;
+  const watchedCount = releasedEpisodes.filter((episode) => episodeProgress[episodeKey(details.id, episode.season_number, episode.episode_number)]).length;
+  const nextEpisode = releasedEpisodes.find((episode) => !episodeProgress[episodeKey(details.id, episode.season_number, episode.episode_number)]);
+  if (!nextEpisode || watchedCount < 1) return null;
+  return {
+    ...details,
+    media_type: "tv",
+    __homeDetails: details,
+    __nextEpisode: nextEpisode,
+    __releasedEpisodeCount: releasedEpisodes.length,
+    __watchedEpisodeCount: watchedCount,
+    __seriesProgress: Math.round((watchedCount / releasedEpisodes.length) * 100)
+  };
+}
+
+function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
+  const [items, setItems] = useState([]);
+  const watchedShowIds = useMemo(() => [...new Set(Object.keys(episodeProgress || {})
+    .map(parseEpisodeProgressKey)
+    .filter(Boolean)
+    .map((entry) => entry.showId))], [episodeProgress]);
+  const candidateMap = useMemo(() => {
+    const map = new Map();
+    dedupe(candidates || []).forEach((item) => {
+      if (mediaType(item) === "tv" && item?.id) map.set(Number(item.id), item);
+    });
+    return map;
+  }, [candidates]);
+  const requestKey = watchedShowIds.join("|");
+
   useEffect(() => {
-    const videos = videoRefs.current.filter(Boolean);
-    if (!videos.length || typeof IntersectionObserver === "undefined") return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (!visible) return;
-      const nextIndex = Number(visible.target.dataset.homeReelIndex || 0);
-      setActiveVideoIndex(nextIndex);
-    }, { threshold: [0.55, 0.75] });
-    videos.forEach((video) => observer.observe(video));
-    return () => observer.disconnect();
+    let alive = true;
+    if (!requestKey || !apiFetch) {
+      setItems([]);
+      return undefined;
+    }
+    const cache = readHomeCache(HOME_SERIES_CACHE_KEY, {});
+    async function hydrate() {
+      const settled = await Promise.allSettled(watchedShowIds.slice(0, 12).map(async (showId) => {
+        const cached = cache[showId];
+        const fresh = cached?.timestamp && Date.now() - cached.timestamp < HOME_CACHE_TTL_MS && cached.details?.id;
+        if (fresh) return cached.details;
+        try {
+          const details = await apiFetch(`/tv/${showId}`);
+          if (!details?.id) throw new Error(`TV ${showId} details unavailable`);
+          cache[showId] = { timestamp: Date.now(), details: { ...candidateMap.get(showId), ...details, media_type: "tv" } };
+          return cache[showId].details;
+        } catch (error) {
+          if (cached?.details?.id) return cached.details;
+          throw error;
+        }
+      }));
+      if (!alive) return;
+      persist(HOME_SERIES_CACHE_KEY, cache);
+      setItems(settled
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => deriveHomeSeriesProgress(result.value, episodeProgress))
+        .filter(Boolean)
+        .sort((a, b) => b.__watchedEpisodeCount - a.__watchedEpisodeCount));
+    }
+    hydrate();
+    return () => { alive = false; };
+  }, [apiFetch, candidateMap, episodeProgress, requestKey]);
+
+  return items;
+}
+
+function homeReelContent(reel = {}) {
+  return reel.item || {
+    id: reel.tmdb_id,
+    tmdb_id: reel.tmdb_id,
+    item_key: reel.item_key,
+    media_type: reel.media_type || "movie",
+    title: reel.title || reel.videoTitle || reel.video_title || "MovieGram reel",
+    name: reel.media_type === "tv" ? reel.title : undefined,
+    poster_path: reel.poster_path || "",
+    backdrop_path: reel.backdrop_path || ""
+  };
+}
+
+function homeReelEmbedUrl(reel = {}, muted = true) {
+  const youtubeId = getYouTubeVideoId(reel);
+  if (youtubeId) return buildYouTubeEmbedUrl(youtubeId, muted);
+  return reel.embedUrl || reel.embed_url || "";
+}
+
+let homeReelWarningShown = false;
+async function loadHomePlayableReels(seedItems = []) {
+  const cached = readHomeCache(HOME_REELS_CACHE_KEY, null);
+  if (!supabase) return cached?.rows?.length ? cached.rows : [];
+  const modernSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,poster_path,backdrop_path,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,approved,active,quality_score,playable,created_at,updated_at";
+  const compatibleSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,approved,quality_score,playable,created_at,updated_at";
+  let response = await supabase
+    .from("reel_cache")
+    .select(modernSelect)
+    .or("source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null")
+    .order("quality_score", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(80);
+  if (response.error?.code === "42703") {
+    response = await supabase
+      .from("reel_cache")
+      .select(compatibleSelect)
+      .or("source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null")
+      .order("quality_score", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(80);
+  }
+  if (response.error) {
+    if (!homeReelWarningShown && process.env.NODE_ENV === "development") {
+      homeReelWarningShown = true;
+      console.warn("MovieGram Home reels unavailable; keeping playable cache.", { code: response.error.code });
+    }
+    return cached?.rows?.length ? cached.rows : [];
+  }
+  const seedMap = new Map(seedItems.map((item) => [keyOf(item), item]));
+  const seen = new Set();
+  const itemCounts = new Map();
+  const rows = (response.data || [])
+    .filter((row) => row.active !== false && reelRowHasPlayableSource(row))
+    .map((row) => reelCacheRowToVideo(row, seedMap.get(row.item_key) || homeReelContent(row), row.reason || "Discover on MovieGram"))
+    .filter((reel) => {
+      const identity = reel && reelIdentity(reel);
+      if (!identity || seen.has(identity)) return false;
+      const itemKey = homeCanonicalKey(homeReelContent(reel));
+      const itemCount = itemCounts.get(itemKey) || 0;
+      if (itemKey && itemCount >= 2) return false;
+      seen.add(identity);
+      if (itemKey) itemCounts.set(itemKey, itemCount + 1);
+      return true;
+    })
+    .slice(0, 24);
+  if (rows.length) persist(HOME_REELS_CACHE_KEY, { timestamp: Date.now(), rows });
+  if (rows.length) return rows;
+
+  // The direct Home query can be empty while the established Reels loader can
+  // still resolve seed-linked or compatible global cache rows. Only use this
+  // path after a successful empty query; failures above keep the last Home cache.
+  if (seedItems.length) {
+    const sharedCandidates = seedItems.slice(0, 48).map((item, index) => ({
+      item,
+      reason: "Discover on MovieGram",
+      score: 48 - index
+    }));
+    const sharedResult = await loadReelCacheForSeeds(sharedCandidates, "forYou");
+    const sharedSeen = new Set();
+    const sharedItemCounts = new Map();
+    const sharedRows = (sharedResult?.reels || [])
+      .filter((reel) => reelRowHasPlayableSource(reel))
+      .filter((reel) => {
+        const identity = reelIdentity(reel);
+        if (!identity || sharedSeen.has(identity)) return false;
+        const itemKey = homeCanonicalKey(homeReelContent(reel));
+        const itemCount = sharedItemCounts.get(itemKey) || 0;
+        if (itemKey && itemCount >= 2) return false;
+        sharedSeen.add(identity);
+        if (itemKey) sharedItemCounts.set(itemKey, itemCount + 1);
+        return true;
+      })
+      .slice(0, 24);
+    if (sharedRows.length) {
+      persist(HOME_REELS_CACHE_KEY, { timestamp: Date.now(), rows: sharedRows });
+      return sharedRows;
+    }
+  }
+
+  return cached?.rows || [];
+}
+
+function useHomePlayableReels(seedItems, apiFetch) {
+  const [reels, setReels] = useState(() => readHomeCache(HOME_REELS_CACHE_KEY, {})?.rows || []);
+  const seedKey = useMemo(() => seedItems.map(keyOf).filter(Boolean).slice(0, 40).join("|"), [seedItems]);
+  useEffect(() => {
+    let alive = true;
+    loadHomePlayableReels(seedItems).then(async (loaded) => {
+      if (!alive) return;
+      const hydrated = await Promise.allSettled(loaded.slice(0, 16).map(async (reel) => {
+        const item = homeReelContent(reel);
+        if (!apiFetch || !item.id || (item.poster_path && item.backdrop_path)) return reel;
+        try {
+          const details = await apiFetch(`/${mediaType(item)}/${item.id}`);
+          return { ...reel, item: { ...item, ...details, media_type: mediaType(item) } };
+        } catch {
+          return reel;
+        }
+      }));
+      if (alive) setReels(hydrated.map((result, index) => result.status === "fulfilled" ? result.value : loaded[index]).filter(Boolean));
+    });
+    return () => { alive = false; };
+  }, [apiFetch, seedKey]);
+  return reels;
+}
+
+const HOME_REEL_SOUND_SESSION_KEY = "moviegram.homeReelsSound.v1";
+
+function readHomeReelSoundPreference() {
+  if (typeof window === "undefined") return true;
+  const stored = window.sessionStorage.getItem(HOME_REEL_SOUND_SESSION_KEY);
+  return stored === null ? true : stored === "on";
+}
+
+function saveHomeReelSoundPreference(enabled) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(HOME_REEL_SOUND_SESSION_KEY, enabled ? "on" : "off");
+}
+
+function HomeReelMedia({ reel, active, onOpen, priority = false, soundEnabled = false, onEnableSound }) {
+  const videoRef = useRef(null);
+  const [muted, setMuted] = useState(!soundEnabled);
+  const [showMutedHint, setShowMutedHint] = useState(false);
+  const content = homeReelContent(reel);
+  const directUrl = homeInlineVideoUrl(reel);
+  const embedUrl = homeReelEmbedUrl(reel, muted);
+  const thumbnail = reel.thumbnailUrl || reel.thumbnail_url || backdropUrl(content.backdrop_path || content.poster_path, "w780");
+  const presentation = homeReelPresentation(reel);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (active) {
+      video.muted = !soundEnabled;
+      setMuted(!soundEnabled);
+      const attempt = video.play();
+      if (attempt?.catch) attempt.catch(() => {
+        video.muted = true;
+        setMuted(true);
+        video.play().catch(() => {});
+      });
+    } else video.pause();
+  }, [active, soundEnabled]);
+  useEffect(() => {
+    if (!active || !muted || !directUrl) {
+      setShowMutedHint(false);
+      return undefined;
+    }
+    setShowMutedHint(true);
+    const timer = window.setTimeout(() => setShowMutedHint(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [active, directUrl, muted]);
+  const handleOpen = () => {
+    const video = videoRef.current;
+    if (active && video && video.muted) {
+      video.muted = false;
+      setMuted(false);
+      onEnableSound?.();
+      video.play().catch(() => {
+        video.muted = true;
+        setMuted(true);
+      });
+    }
+    onOpen?.();
+  };
+  return (
+    <div className={`mg-home-v3-reel-media is-${presentation}`}>
+      <img className="mg-home-v3-reel-backdrop" src={thumbnail || BACKDROP_FALLBACK} alt="" aria-hidden="true" loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+      {directUrl ? (
+        <video className="mg-home-v3-reel-content" ref={videoRef} src={directUrl} muted={muted} playsInline loop preload={priority ? "metadata" : "none"} poster={thumbnail} />
+      ) : active && embedUrl ? (
+        <iframe className="mg-home-v3-reel-content" src={embedUrl} title={reel.videoTitle || titleOf(content)} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading={priority ? "eager" : "lazy"} />
+      ) : (
+        <img className="mg-home-v3-reel-content" src={thumbnail || BACKDROP_FALLBACK} alt={titleOf(content)} loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+      )}
+      {(onOpen || directUrl) && <button className="mg-home-v3-reel-open" type="button" onClick={handleOpen} aria-label={active && muted ? `Enable sound for ${titleOf(content)}` : onOpen ? `Open ${titleOf(content)} in Home discovery player` : `Play ${titleOf(content)}`}>{!active && <Icon name="play" />}</button>}
+      {showMutedHint && <small className="mg-home-v3-reel-muted-hint">Tap for sound</small>}
+    </div>
+  );
+}
+
+function shareHomeReel(reel) {
+  const item = homeReelContent(reel);
+  const url = reel.watchUrl || reel.sourceUrl || (typeof window !== "undefined" ? window.location.href : "");
+  if (typeof navigator !== "undefined" && navigator.share) {
+    navigator.share({ title: titleOf(item), url }).catch(() => {});
+    return;
+  }
+  navigator?.clipboard?.writeText(url).catch(() => {});
+}
+
+function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpenDetails, onWatchlist, onWatchAsap }) {
+  const [commentItem, setCommentItem] = useState(null);
+  const [activeVideoIndex, setActiveVideoIndex] = useState(-1);
+  const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
+  const [visibleCount, setVisibleCount] = useState(() => Math.min(4, items.length));
+  const postRefs = useRef([]);
+  const ratiosRef = useRef(new Map());
+  const loadMoreRef = useRef(null);
+  const enableSound = () => {
+    saveHomeReelSoundPreference(true);
+    setSoundEnabled(true);
+  };
+  useEffect(() => {
+    setVisibleCount(Math.min(4, items.length));
   }, [items]);
   useEffect(() => {
-    videoRefs.current.forEach((video, index) => {
-      if (!video) return;
-      if (index === activeVideoIndex) {
-        const playAttempt = video.play?.();
-        if (playAttempt?.catch) playAttempt.catch(() => {});
-      } else {
-        video.pause?.();
+    const enableAfterInteraction = () => enableSound();
+    window.addEventListener("pointerdown", enableAfterInteraction, { once: true, passive: true });
+    window.addEventListener("keydown", enableAfterInteraction, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", enableAfterInteraction);
+      window.removeEventListener("keydown", enableAfterInteraction);
+    };
+  }, []);
+  useEffect(() => {
+    const sentinel = loadMoreRef.current;
+    if (!sentinel || visibleCount >= items.length || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisibleCount((current) => Math.min(items.length, current + 4));
       }
-    });
-  }, [activeVideoIndex, items]);
+    }, { rootMargin: "500px 0px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [items.length, visibleCount]);
+  useEffect(() => {
+    const posts = postRefs.current.filter(Boolean);
+    if (!posts.length || typeof IntersectionObserver === "undefined") return undefined;
+    const chooseActiveReel = () => {
+      if (document.visibilityState === "hidden") {
+        setActiveVideoIndex(-1);
+        return;
+      }
+      const ratios = [...ratiosRef.current.entries()];
+      const [bestIndex, bestRatio] = ratios.sort((a, b) => b[1] - a[1])[0] || [-1, 0];
+      setActiveVideoIndex((current) => {
+        const currentRatio = ratiosRef.current.get(current) || 0;
+        if (current >= 0 && currentRatio >= 0.2 && currentRatio >= bestRatio - 0.08) return current;
+        if (bestRatio >= 0.48) return bestIndex;
+        return currentRatio < 0.2 ? -1 : current;
+      });
+    };
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => ratiosRef.current.set(Number(entry.target.dataset.homeReelIndex || 0), entry.isIntersecting ? entry.intersectionRatio : 0));
+      chooseActiveReel();
+    }, { threshold: [0, 0.2, 0.35, 0.48, 0.6, 0.75, 0.9, 1] });
+    posts.forEach((post) => observer.observe(post));
+    document.addEventListener("visibilitychange", chooseActiveReel);
+    return () => {
+      observer.disconnect();
+      ratiosRef.current.clear();
+      document.removeEventListener("visibilitychange", chooseActiveReel);
+    };
+  }, [items, visibleCount]);
   if (!items.length) return null;
   return (
     <section className="mg-home-v3-section mg-home-v3-discover">
       <div className="mg-home-v3-section-head"><h2>More to Discover</h2></div>
       <div className="mg-home-v3-reel-feed">
-        {items.slice(0, 8).map((item, index) => {
-          const id = `home-reel:${keyOf(item)}`;
-          const playableUrl = homeInlineVideoUrl(item);
+        {items.slice(0, visibleCount).map((reel, index) => {
+          const item = homeReelContent(reel);
+          const id = `home-reel:${reelIdentity(reel)}`;
           return (
-            <article key={id} className="mg-home-v3-reel-post">
+            <article ref={(node) => { postRefs.current[index] = node; }} data-home-reel-index={index} key={id} className="mg-home-v3-reel-post">
               <header>
                 <Avatar friend={friends[index % friends.length]} size="sm" />
-                <span><strong>MovieGram</strong><small>{item.__recReasons?.[0] || "Suggested for you"}</small></span>
-                <button type="button" onClick={onOpenReels}>Follow</button>
+                <span><strong>{reel.channelTitle || "MovieGram"}</strong><small>{reel.reason || "Suggested for you"}</small></span>
+                <small>{reelTypeLabel(reel) || "Reel"}</small>
               </header>
-              <button className="mg-home-v3-reel-media" type="button" onClick={() => onOpenReels(item)}>
-                {playableUrl ? (
-                  <video
-                    ref={(node) => { videoRefs.current[index] = node; }}
-                    data-home-reel-index={index}
-                    src={playableUrl}
-                    muted
-                    playsInline
-                    autoPlay
-                    loop
-                    preload="metadata"
-                    poster={backdropUrl(item.backdrop_path || item.poster_path, "w780")}
-                  />
-                ) : (
-                  <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-                )}
-                {!playableUrl && <span><Icon name="play" /></span>}
-              </button>
+              <HomeReelMedia reel={reel} active={activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} onOpen={() => onOpenReels(index)} />
               <footer>
                 <strong>{titleOf(item)}</strong>
                 <div>
                   <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /> Like</button>
                   <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /> Comment</button>
-                  <button type="button"><Icon name="send" /> Share</button>
+                  <button type="button" onClick={() => onOpenDetails(item)}><Icon name="info" /> Details</button>
                   <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /> List</button>
                   <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /> ASAP</button>
+                  <button type="button" onClick={() => shareHomeReel(reel)}><Icon name="send" /> Share</button>
                 </div>
               </footer>
             </article>
           );
         })}
+        {visibleCount < items.length && <div ref={loadMoreRef} className="mg-home-v3-reel-sentinel" aria-hidden="true" />}
       </div>
       {commentItem && (
         <div className="mg2-sheet-backdrop" onMouseDown={() => setCommentItem(null)}>
@@ -4312,19 +4830,94 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onWatc
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onOpenReels }) {
+function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, onClose, onOpen, onWatchlist, onWatchAsap }) {
+  const [activeIndex, setActiveIndex] = useState(initialIndex || 0);
+  const [commentItem, setCommentItem] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
+  const slideRefs = useRef([]);
+  const enableSound = () => {
+    saveHomeReelSoundPreference(true);
+    setSoundEnabled(true);
+  };
+  useEffect(() => {
+    slideRefs.current[initialIndex]?.scrollIntoView({ block: "start" });
+  }, [initialIndex]);
+  useEffect(() => {
+    const slides = slideRefs.current.filter(Boolean);
+    if (!slides.length || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      const active = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (active) setActiveIndex(Number(active.target.dataset.discoveryIndex || 0));
+    }, { root: document.querySelector(".mg-home-v3-discovery-player-list"), threshold: [0.55, 0.8] });
+    slides.forEach((slide) => observer.observe(slide));
+    return () => observer.disconnect();
+  }, [items]);
+  return (
+    <section className="mg-home-v3-discovery-player" aria-label="Home discovery player">
+      <button className="mg-home-v3-discovery-back" type="button" onClick={onClose}><Icon name="back" /> Home</button>
+      <div className="mg-home-v3-discovery-player-list">
+        {items.map((reel, index) => {
+          const item = homeReelContent(reel);
+          const id = `home-reel:${reelIdentity(reel)}`;
+          return (
+            <article ref={(node) => { slideRefs.current[index] = node; }} data-discovery-index={index} key={id}>
+              <HomeReelMedia reel={reel} active={activeIndex === index} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={enableSound} />
+              <div className="mg-home-v3-discovery-context"><strong>{titleOf(item)}</strong><small>{reel.reason || reelTypeLabel(reel) || "MovieGram discovery"}</small></div>
+              <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
+                <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /><span>Like</span></button>
+                <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /><span>Comment</span></button>
+                <button type="button" onClick={() => { onClose(); onOpen(item); }}><Icon name="info" /><span>Details</span></button>
+                <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /><span>List</span></button>
+                <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /><span>ASAP</span></button>
+                <button type="button" onClick={() => shareHomeReel(reel)}><Icon name="send" /><span>Share</span></button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {commentItem && <div className="mg2-sheet-backdrop" onMouseDown={() => setCommentItem(null)}><section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}><span /><h3>Comments</h3><p>Comments for {titleOf(commentItem)} will appear here when the reel thread is available.</p><button type="button" onClick={() => setCommentItem(null)}>Close</button></section></div>}
+    </section>
+  );
+}
+
+function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onAdvanceEpisode, apiFetch }) {
   const [storySheet, setStorySheet] = useState(null);
+  const [discoveryIndex, setDiscoveryIndex] = useState(null);
+  const homeRootRef = useRef(null);
+  const homeScrollRef = useRef(0);
+  const restoreHomeScrollRef = useRef(false);
   const watchedKeys = useMemo(() => new Set(Object.values(watched || {}).map(keyOf)), [watched]);
   const watchlistItems = useMemo(() => Object.values(watchlist || {}).filter((item) => !watchedKeys.has(keyOf(item))), [watchedKeys, watchlist]);
   const watchAsapItems = useMemo(() => watchlistItems.filter((item) => item.watch_asap || item.watchAsap), [watchlistItems]);
-  const reliableContinue = useMemo(() => (continueWatching || []).filter((item) => mediaType(item) === "tv" && (item.nextEpisodeLabel || item.next_episode || item.progress || item.episodeProgress)), [continueWatching]);
+  const homeSourceItems = useMemo(() => dedupe([
+    ...Object.values(rows || {}).flatMap((row) => Array.isArray(row) ? row : []),
+    ...(continueWatching || []),
+    ...watchlistItems,
+    ...Object.values(watched || {}),
+    ...(recommended || []),
+    ...(feedItems || []).map((entry) => entry.item || entry),
+    ...(socialActivity || []).map((entry) => entry.item).filter(Boolean)
+  ]), [continueWatching, feedItems, recommended, rows, socialActivity, watched, watchlistItems]);
+  const reliableContinue = useHomeSeriesProgress({ episodeProgress, candidates: homeSourceItems, apiFetch });
+  const playableHomeReels = useHomePlayableReels(homeSourceItems, apiFetch);
   const homeData = useMemo(() => {
     const used = new Set();
     const validArt = (item) => Boolean(item?.poster_path || item?.backdrop_path);
     const canonical = (entry) => entry?.item || entry;
+    const preparePool = (items = []) => {
+      const seen = new Set();
+      return items.filter((entry) => {
+        const item = canonical(entry);
+        const key = homeCanonicalKey(item);
+        if (!key || seen.has(key) || !validArt(item)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
     const takeUnique = (items = [], limit = 10) => {
       const output = [];
-      dedupe(items).forEach((entry) => {
+      preparePool(items).forEach((entry) => {
+        if (output.length >= limit) return;
         const item = canonical(entry);
         const key = homeCanonicalKey(item);
         if (!key || used.has(key) || !validArt(item)) return;
@@ -4332,6 +4925,20 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
         output.push(entry);
       });
       return output.slice(0, limit);
+    };
+    const takeMixedUnique = (items = [], limit = 40, blockedKeys = new Set()) => {
+      const available = preparePool(items).filter((entry) => {
+        const key = homeCanonicalKey(canonical(entry));
+        return !used.has(key) && !blockedKeys.has(key);
+      });
+      const movies = available.filter((entry) => mediaType(canonical(entry)) === "movie");
+      const shows = available.filter((entry) => mediaType(canonical(entry)) === "tv");
+      const balancedLead = movies.length >= 2 && shows.length >= 2
+        ? interleaveHomeMedia([...movies.slice(0, 3), ...shows.slice(0, 3)]).slice(0, 6)
+        : available.slice(0, 6);
+      const leadKeys = new Set(balancedLead.map((entry) => homeCanonicalKey(canonical(entry))));
+      const ordered = [...balancedLead, ...available.filter((entry) => !leadKeys.has(homeCanonicalKey(canonical(entry))))];
+      return takeUnique(ordered, limit);
     };
 
     const heroCandidates = dedupe([
@@ -4343,72 +4950,132 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
     ])
       .filter(validArt)
       .sort((a, b) => Number(Boolean(b.backdrop_path)) - Number(Boolean(a.backdrop_path)));
-    const cachedHero = readHomeHeroCache();
-    const cachedHeroIsFresh = cachedHero?.timestamp && Date.now() - cachedHero.timestamp < 12 * 60 * 60 * 1000;
-    const heroItems = takeUnique(cachedHeroIsFresh && cachedHero?.items?.length ? cachedHero.items : heroCandidates, 6);
-    const continueItems = takeUnique(reliableContinue, 8);
-
-    const saved = [
-      ...watchAsapItems.map((item) => ({ ...item, __homeReason: "From Watch ASAP" })),
-      ...watchlistItems
-        .filter((item) => !watchAsapItems.some((asap) => itemMatches(asap, item)))
-        .map((item) => ({ ...item, __homeReason: "From Watchlist" }))
-    ];
-    const startFallback = dedupe([...(recommended || []), ...(rows.trending || [])]).map((item) => ({ ...item, __homeReason: "Trending now" }));
-    const startWatching = takeUnique([...saved, ...startFallback], 10);
-
-    const realFriends = (socialActivity || []).filter((entry) => validArt(entry?.item)).map((entry) => ({
+    const heroPool = preparePool(resolveHomeHeroPool(heroCandidates));
+    const asapSavedItems = interleaveHomeMedia(watchAsapItems.map((item) => ({ ...item, __homeBadge: "ASAP" })));
+    const regularSavedItems = interleaveHomeMedia(watchlistItems
+      .filter((item) => !watchAsapItems.some((asap) => itemMatches(asap, item)))
+      .map((item) => ({ ...item, __homeBadge: "Watchlist" })));
+    const savedItems = [...asapSavedItems, ...regularSavedItems];
+    const savedPool = preparePool([
+      ...savedItems,
+      ...(recommended || []),
+      ...(rows.trending || [])
+    ]);
+    const friendPool = preparePool((socialActivity || []).filter((entry) => validArt(entry?.item)).map((entry) => ({
       ...entry,
       reason: /review|rate/i.test(entry.action || entry.actionLabel || "") ? "rated by friend" : /watch/i.test(entry.action || entry.actionLabel || "") ? "watched by friend" : "popular with friends"
-    }));
-    const friendItems = takeUnique(realFriends, 10);
+    })));
+    const tastePool = interleaveHomeMedia(preparePool([
+      ...(intelligenceRows?.becauseWatched || []),
+      ...(intelligenceRows?.forYou || []),
+      ...(recommended || []),
+      ...(intelligenceRows?.topRated || []),
+      ...(rows.topRated || []),
+      ...(rows.trending || []),
+      ...(rows.movies || []),
+      ...(rows.series || [])
+    ].filter((item) => !isHomeAnimeItem(canonical(item)))));
+    const bingePool = interleaveHomeMedia(preparePool([
+      ...(intelligenceRows?.binge || []),
+      ...(rows.bingeShows || []),
+      ...(rows.series || []),
+      ...(rows.topRated || []),
+      ...(rows.movies || [])
+    ].filter((item) => !isHomeAnimeItem(canonical(item)))));
+    const hiddenPool = interleaveHomeMedia(preparePool([
+      ...(intelligenceRows?.hidden || []),
+      ...(rows.hiddenGems || []),
+      ...(rows.topRated || []),
+      ...(rows.movies || []),
+      ...(rows.series || [])
+    ].filter((item) => !isHomeAnimeItem(canonical(item)))));
+    const animePool = interleaveHomeMedia(preparePool([...(rows.anime || []), ...(rows.series || []), ...(rows.movies || [])].filter((item) => isHomeAnimeItem(canonical(item)))));
+    const recentPool = interleaveHomeMedia(preparePool((continueWatching || []).filter((item) => validArt(item))));
 
-    const tasteItems = takeUnique(dedupe([...(intelligenceRows?.becauseWatched || []), ...(intelligenceRows?.forYou || []), ...(recommended || []), ...(rows.anime || [])]), 10);
-    const bingeItems = takeUnique(dedupe([...(intelligenceRows?.binge || []), ...(rows.bingeShows || []), ...(rows.series || [])]).filter((item) => mediaType(item) === "tv"), 10);
-    const hiddenItems = takeUnique(dedupe([...(intelligenceRows?.hidden || []), ...(rows.hiddenGems || []), ...(rows.movies || [])]), 10);
-    const inlineSeen = new Set();
-    const inlineReels = dedupe([...(feedItems || []), ...(rows.trending || []), ...(recommended || []), ...(rows.movies || [])])
-      .filter((entry) => validArt(canonical(entry)))
-      .sort((a, b) => Number(Boolean(homeInlineVideoUrl(b))) - Number(Boolean(homeInlineVideoUrl(a))))
-      .filter((entry) => {
-        const identity = reelIdentity(entry) || homeCanonicalKey(entry);
-        if (!identity || inlineSeen.has(identity)) return false;
-        inlineSeen.add(identity);
-        return true;
-      })
-      .slice(0, 12);
+    const heroItems = takeUnique(heroPool, 5);
+    const continueItems = takeUnique(reliableContinue, 24);
+    const startPrimary = takeUnique(savedItems, 40);
+    const startFallbackTarget = startPrimary.length ? 8 : 4;
+    const startWatching = startPrimary.length >= startFallbackTarget
+      ? startPrimary
+      : [...startPrimary, ...takeMixedUnique(savedPool, startFallbackTarget - startPrimary.length)];
+    const friendItems = takeUnique(friendPool, 24);
+    const firstUnused = (pool, blockedKeys = new Set()) => preparePool(pool).find((entry) => {
+      const key = homeCanonicalKey(canonical(entry));
+      return key && !used.has(key) && !blockedKeys.has(key);
+    });
+    const bingeReserved = firstUnused(bingePool);
+    const bingeReservedKey = bingeReserved ? homeCanonicalKey(canonical(bingeReserved)) : "";
+    const hiddenReserved = firstUnused(hiddenPool, new Set(bingeReservedKey ? [bingeReservedKey] : []));
+    const hiddenReservedKey = hiddenReserved ? homeCanonicalKey(canonical(hiddenReserved)) : "";
+    const laterSectionReservations = new Set([bingeReservedKey, hiddenReservedKey].filter(Boolean));
+    const tasteItems = takeMixedUnique(tastePool, 40, laterSectionReservations);
+    const bingeItems = takeMixedUnique(
+      bingeReserved ? [bingeReserved, ...bingePool] : bingePool,
+      40,
+      new Set(hiddenReservedKey ? [hiddenReservedKey] : [])
+    );
+    const hiddenItems = takeMixedUnique(hiddenReserved ? [hiddenReserved, ...hiddenPool] : hiddenPool, 40);
+    const animeItems = takeMixedUnique(animePool, 40);
+    const recentlyOpened = takeMixedUnique(recentPool, 40);
 
-    return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, inlineReels };
-  }, [feedItems, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+    return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, animeItems, recentlyOpened };
+  }, [continueWatching, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+
+  const openDiscovery = (index) => {
+    const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
+    homeScrollRef.current = scrollContainer?.scrollTop || 0;
+    setDiscoveryIndex(index);
+  };
+  const closeDiscovery = () => {
+    restoreHomeScrollRef.current = true;
+    setDiscoveryIndex(null);
+  };
+  useEffect(() => {
+    if (discoveryIndex !== null || !restoreHomeScrollRef.current) return undefined;
+    restoreHomeScrollRef.current = false;
+    const restore = () => {
+      const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
+      if (scrollContainer) scrollContainer.scrollTop = homeScrollRef.current;
+    };
+    const firstFrame = window.requestAnimationFrame(restore);
+    const settledTimer = window.setTimeout(restore, 180);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.clearTimeout(settledTimer);
+    };
+  }, [discoveryIndex]);
 
   return (
-    <div className="mg-home-v3">
-      <HomeStories onOpenStory={setStorySheet} />
+    <div ref={homeRootRef} className="mg-home-v3">
+      <HomeStories user={user} onOpenStory={setStorySheet} />
       <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
-      <ContinueWatchingRow items={homeData.continueItems} onOpen={onOpen} onWatched={onWatched} />
+      <ContinueWatchingRow items={homeData.continueItems} onOpen={onOpen} onWatched={onAdvanceEpisode} />
       {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start">
-        <div className="mg-home-v3-rail mg-home-v3-rail--start">
-          {homeData.startWatching.map((item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} reason={item.__homeReason} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
-        </div>
+        <HomeAppendableRail className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} />
       {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste">
-        <div className="mg-home-v3-rail mg-home-v3-rail--taste">
-          {homeData.tasteItems.map((item) => <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" reason={item.__recReasons?.[0] || "Similar to your taste"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
-        </div>
+        <HomeAppendableRail className="mg-home-v3-rail--taste" items={homeData.tasteItems} renderItem={(item) => {
+            const reason = item.__recReasons?.find((value) => /^(because|more like)/i.test(value));
+            return <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" badge={reason} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />;
+          }} />
       </HomeShelf>}
-      {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Shows" variant="compact">
-        <div className="mg-home-v3-rail mg-home-v3-rail--compact">
-          {homeData.bingeItems.map((item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" reason={item.__recReasons?.[0] || "Binge-worthy"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
-        </div>
+      {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Content" variant="compact">
+        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.bingeItems} renderItem={(item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       {homeData.hiddenItems.length > 0 && <HomeShelf title="Hidden Gems" variant="compact">
-        <div className="mg-home-v3-rail mg-home-v3-rail--compact">
-          {homeData.hiddenItems.map((item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" reason={item.__recReasons?.[0] || "Hidden gem"} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />)}
-        </div>
+        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.hiddenItems} renderItem={(item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      <HomeInlineReels items={homeData.inlineReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={onOpenReels} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
-      <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} />
+      {homeData.animeItems.length > 0 && <HomeShelf title="Anime" variant="anime">
+        <HomeAppendableRail className="mg-home-v3-rail--anime" items={homeData.animeItems} renderItem={(item) => <HomeRailCard key={`anime-${keyOf(item)}`} item={item} variant="anime" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      </HomeShelf>}
+      {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent">
+        <HomeAppendableRail className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      </HomeShelf>}
+      <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
+      <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} apiFetch={apiFetch} />
+      {discoveryIndex !== null && <HomeDiscoveryPlayer items={playableHomeReels} initialIndex={discoveryIndex} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onClose={closeDiscovery} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />}
     </div>
   );
 }
@@ -10586,6 +11253,14 @@ export default function Home() {
     logActivity("episode_watched", normalized, { watchedAt, episodeKey: progressKey, seasonNumber: episode.season_number, episodeNumber: episode.episode_number });
   }
 
+  function advanceHomeEpisode(show) {
+    const episode = show?.__nextEpisode;
+    const showDetails = show?.__homeDetails;
+    if (!episode || !showDetails?.id) return;
+    const season = normalSeasonsOf(showDetails).find((entry) => entry.season_number === episode.season_number) || { season_number: episode.season_number };
+    applyEpisodeWatched(show, episode, season, showDetails, new Date().toISOString());
+  }
+
   function syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt) {
     const source = showDetails?.id === normalized.id ? showDetails : details;
     const knownKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => (
@@ -10957,7 +11632,7 @@ export default function Home() {
   } else if (activeSocial === "settings") {
     screen = <SettingsScreen user={supabaseUser} profile={profileIdentity} syncStatus={syncStatus} onBack={() => setActiveSocial(null)} onLogout={handleLogout} onSaveProfile={handleProfileSave} onSafetyAction={openSafetyAction} />;
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onOpenReels={() => setActiveTab("reels")} onNotInterested={hideRecommendation} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onAdvanceEpisode={advanceHomeEpisode} apiFetch={apiFetch} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
