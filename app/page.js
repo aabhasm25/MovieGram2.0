@@ -3736,7 +3736,7 @@ function CastActorCard({ person, type, character, onOpenPerson }) {
   );
 }
 
-function ContinueWatchingCard({ item, onOpen, onWatched }) {
+function ContinueWatchingCard({ item, onOpenEpisode, onWatched }) {
   const [tickState, setTickState] = useState("idle");
   const resetTimerRef = useRef(null);
   const nextEpisode = item.__nextEpisode;
@@ -3773,13 +3773,13 @@ function ContinueWatchingCard({ item, onOpen, onWatched }) {
   return (
     <article className="mg-home-v3-progress-card" data-episode-key={episodeKeyValue}>
       <div className={`mg-home-v3-progress-art${artworkPath ? " has-landscape" : " has-poster-fallback"}`} style={{ "--mg-home-object-position": item.home_focal_position || item.focal_position || "center" }}>
-        <button type="button" onClick={() => onOpen(item)}>
+        <button type="button" onClick={() => onOpenEpisode(item, nextEpisode)}>
           <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = artworkPath ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
         </button>
         <i><b style={{ width: `${progress}%` }} /></i>
       </div>
       <div className="mg-home-v3-progress-copy">
-        <button className="mg-home-v3-progress-details" type="button" onClick={() => onOpen(item)}>
+        <button className="mg-home-v3-progress-details" type="button" onClick={() => onOpenEpisode(item, nextEpisode)}>
           <strong>{titleOf(item)}</strong>
           <small>{episodeLine}</small>
           <em>{remainingLabel}</em>
@@ -3798,7 +3798,7 @@ function ContinueWatchingCard({ item, onOpen, onWatched }) {
   );
 }
 
-function ContinueWatchingRow({ items, onOpen, onWatched }) {
+function ContinueWatchingRow({ items, onOpenEpisode, onWatched, onSeeAll }) {
   const rowItems = items
     .filter((item) => mediaType(item) === "tv" && item.__nextEpisode && Number.isFinite(item.__seriesProgress))
     .slice(0, 8);
@@ -3806,9 +3806,9 @@ function ContinueWatchingRow({ items, onOpen, onWatched }) {
 
   return (
     <section className="mg-home-v3-section mg-home-v3-section--continue">
-      <div className="mg-home-v3-section-head"><h2>Continue Watching</h2></div>
-      <div className="mg-home-v3-rail mg-home-v3-rail--continue">
-        {rowItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} onOpen={onOpen} onWatched={onWatched} />)}
+      <div className="mg-home-v3-section-head"><h2>Continue Watching</h2><button className="mg-home-v3-see-all" type="button" onClick={onSeeAll}>See All <span aria-hidden="true">›</span></button></div>
+      <div className="mg-home-v3-rail mg-home-v3-rail--continue" data-home-shelf="continue">
+        {rowItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} onOpenEpisode={onOpenEpisode} onWatched={onWatched} />)}
       </div>
     </section>
   );
@@ -4351,7 +4351,7 @@ function HomeRailCard({ item, badge, action = "open", variant = "standard", save
   );
 }
 
-function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8, renderItem }) {
+function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8, shelfKey = "", renderItem }) {
   const mountedLimit = Math.min(items.length, 48);
   const [visibleCount, setVisibleCount] = useState(() => Math.min(initialCount, mountedLimit));
   const tickingRef = useRef(false);
@@ -4373,7 +4373,7 @@ function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8
     });
   };
   return (
-    <div ref={railRef} className={`mg-home-v3-rail ${className}`.trim()} onScroll={appendIfNeeded}>
+    <div ref={railRef} className={`mg-home-v3-rail ${className}`.trim()} data-home-shelf={shelfKey || undefined} onScroll={appendIfNeeded}>
       {items.slice(0, visibleCount).map(renderItem)}
     </div>
   );
@@ -4391,11 +4391,11 @@ function interleaveHomeMedia(items = []) {
   return output;
 }
 
-function HomeShelf({ title, variant = "standard", children }) {
+function HomeShelf({ title, variant = "standard", onSeeAll, children }) {
   if (!children) return null;
   return (
     <section className={`mg-home-v3-section mg-home-v3-section--${variant}`}>
-      <div className="mg-home-v3-section-head"><h2>{title}</h2></div>
+      <div className="mg-home-v3-section-head"><h2>{title}</h2>{onSeeAll && <button className="mg-home-v3-see-all" type="button" onClick={onSeeAll}>See All <span aria-hidden="true">›</span></button>}</div>
       {children}
     </section>
   );
@@ -4410,7 +4410,7 @@ function FromFriendsShelf({ items, onOpen }) {
           <button key={`${entry.id || keyOf(entry.item || entry)}-${index}`} type="button" onClick={() => onOpen(entry.item || entry)}>
             {entry.profile ? <PublicAvatar profile={entry.profile} size="sm" /> : <Avatar friend={friends[index % friends.length]} size="sm" />}
             <span>
-              <small>{entry.reason || entry.actionLabel || "popular with friends"}</small>
+              <small><b>{entry.profile ? publicProfileName(entry.profile) : friends[index % friends.length]?.name}</b> {entry.reason || entry.actionLabel || "shared this"}</small>
               <strong>{entry.title || titleOf(entry.item || entry)}</strong>
               <em>{entry.metadata?.rating ? formatUserRating(entry.metadata.rating) : entry.time || "Recently"}</em>
             </span>
@@ -4419,6 +4419,156 @@ function FromFriendsShelf({ items, onOpen }) {
         ))}
       </div>
     </HomeShelf>
+  );
+}
+
+function homeShelfGenres(item = {}) {
+  const names = (item.genres || []).map((genre) => genre?.name).filter(Boolean);
+  if (names.length) return names.slice(0, 2).join(", ");
+  return (item.genre_ids || []).map((id) => REEL_GENRE_NAMES[id]).filter(Boolean).slice(0, 2).join(", ");
+}
+
+function HomeShelfListCard({ item, onOpen, watchlist, watched, ratings }) {
+  const type = mediaType(item);
+  const rating = Number(item.vote_average || 0);
+  const userRating = ratingForItem(item, ratings || {});
+  const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
+  const countLabel = type === "tv"
+    ? Number(item.number_of_episodes) > 0 ? `${item.number_of_episodes} eps.` : Number(item.number_of_seasons) > 0 ? `${item.number_of_seasons} seasons` : "TV"
+    : runtime > 0 ? `${runtime} min` : "Movie";
+  const certification = item.certification || item.content_rating || item.rating_code || "";
+  const saved = hasStoredItem(item, watchlist || {});
+  const seen = hasStoredItem(item, watched || {});
+  return (
+    <button className="mg-home-v3-list-card" type="button" onClick={() => onOpen(item)}>
+      {item.backdrop_path && <img className="mg-home-v3-list-backdrop" src={backdropUrl(item.backdrop_path, "w780")} alt="" loading="lazy" />}
+      <span className="mg-home-v3-list-shade" />
+      <img className="mg-home-v3-list-poster" src={item.poster_path ? posterUrl(item.poster_path, "w342") : POSTER_FALLBACK} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+      <span className="mg-home-v3-list-info">
+        <strong>{titleOf(item)}</strong>
+        <small>{homeShelfGenres(item) || (type === "tv" ? "Series" : "Movie")}</small>
+        <em>{yearOf(item)} · {countLabel}{certification ? ` · ${certification}` : ""}</em>
+        <span>{rating > 0 && <b>TMDB {rating.toFixed(1)}</b>}{userRating ? <b>MovieGram {formatUserRating(userRating)}</b> : null}</span>
+      </span>
+      {(seen || saved) && <i>{seen ? "Watched" : "Watchlist"}</i>}
+    </button>
+  );
+}
+
+function HomeShelfPage({ shelf, watchlist, watched, ratings, onBack, onOpen, onOpenEpisode }) {
+  const [filter, setFilter] = useState("all");
+  const [limit, setLimit] = useState(30);
+  const pageRef = useRef(null);
+  const items = useMemo(() => dedupe(shelf.items || []).filter((item) => {
+    if (filter === "movie") return mediaType(item) === "movie";
+    if (filter === "tv") return mediaType(item) === "tv";
+    return true;
+  }), [filter, shelf.items]);
+  const visible = items.slice(0, limit);
+  const mixed = shelf.key !== "continue";
+  useEffect(() => setLimit(30), [filter, shelf.key]);
+  const loadMore = (event) => {
+    const node = event.currentTarget;
+    if (node.scrollTop + node.clientHeight >= node.scrollHeight - 360) setLimit((current) => Math.min(items.length, current + 20));
+  };
+  return (
+    <section ref={pageRef} className="mg-home-v3-browser" onScroll={loadMore}>
+      <header><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>{shelf.title}</h2></header>
+      {mixed && <div className="mg-home-v3-browser-filters" role="tablist" aria-label={`${shelf.title} filters`}>
+        <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All</button>
+        <button className={filter === "movie" ? "active" : ""} type="button" onClick={() => setFilter("movie")}>{shelf.key === "anime" ? "Anime Movies" : "Movies"}</button>
+        <button className={filter === "tv" ? "active" : ""} type="button" onClick={() => setFilter("tv")}>{shelf.key === "anime" ? "Anime Shows" : "Shows"}</button>
+      </div>}
+      <div className="mg-home-v3-browser-list">
+        {visible.map((item) => <HomeShelfListCard key={homeCanonicalKey(item)} item={item} watchlist={watchlist} watched={watched} ratings={ratings} onOpen={() => shelf.key === "continue" ? onOpenEpisode(item, item.__nextEpisode, "shelf") : onOpen(item)} />)}
+      </div>
+      {!visible.length && <div className="mg-home-v3-browser-empty">No genuine items are available for this filter.</div>}
+    </section>
+  );
+}
+
+function HomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBack, onWatched, onOpenPerson }) {
+  const [episodeRef, setEpisodeRef] = useState({ season_number: episodeSeed.season_number, episode_number: episodeSeed.episode_number });
+  const [data, setData] = useState({ loading: true, episode: episodeSeed, show: show.__homeDetails || show, season: [], credits: null, externalId: "", imdbRating: "" });
+  const [tickState, setTickState] = useState("idle");
+  const currentKey = episodeKey(show.id, episodeRef.season_number, episodeRef.episode_number);
+  const watched = Boolean(episodeProgress?.[currentKey]);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadEpisode() {
+      setData((current) => ({ ...current, loading: true }));
+      const showId = show.tmdb_id || show.id;
+      const seasonNumber = episodeRef.season_number;
+      const episodeNumber = episodeRef.episode_number;
+      const settled = await Promise.allSettled([
+        apiFetch(`/tv/${showId}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/credits`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/external_ids`)
+      ]);
+      if (!alive) return;
+      const value = (index, fallback) => settled[index].status === "fulfilled" ? settled[index].value : fallback;
+      const showDetails = { ...show, ...value(0, show.__homeDetails || show), media_type: "tv" };
+      const seasonDetails = value(1, {});
+      const exactEpisode = { ...episodeSeed, ...value(2, episodeSeed), season_number: seasonNumber, episode_number: episodeNumber };
+      const credits = value(3, null);
+      const externalId = value(4, {})?.imdb_id || "";
+      let imdbRating = "";
+      if (externalId) {
+        try {
+          const verified = await getVerifiedExternalRatings({ media_type: "tv", tmdb_id: showId, imdb_id: externalId, tmdb_rating: 0 });
+          imdbRating = verified.ratings?.find((entry) => entry.source === "IMDb")?.value || "";
+        } catch {
+          imdbRating = "";
+        }
+      }
+      if (alive) setData({ loading: false, episode: exactEpisode, show: showDetails, season: seasonDetails.episodes || [], credits, externalId, imdbRating });
+    }
+    loadEpisode();
+    return () => { alive = false; };
+  }, [apiFetch, episodeRef.episode_number, episodeRef.season_number, episodeSeed, show]);
+
+  const releasedEpisodes = data.season.filter((episode) => !episode.air_date || new Date(episode.air_date).getTime() <= Date.now());
+  const currentIndex = data.season.findIndex((episode) => Number(episode.episode_number) === Number(data.episode.episode_number));
+  const director = data.credits?.crew?.find((person) => person.job === "Director") || data.episode.crew?.find((person) => person.job === "Director");
+  const cast = (data.credits?.cast || data.episode.guest_stars || []).filter((person) => person?.id && person?.name).slice(0, 20);
+  const canMark = !data.episode.air_date || new Date(data.episode.air_date).getTime() <= Date.now();
+  const markWatched = async () => {
+    if (tickState !== "idle" || watched || !canMark) return;
+    setTickState("loading");
+    const result = await Promise.resolve(onWatched({ ...data.show, __homeDetails: data.show, __nextEpisode: data.episode }));
+    if (result === false) { setTickState("idle"); return; }
+    setTickState("success");
+    window.setTimeout(() => setTickState("idle"), 700);
+  };
+  const selectEpisode = (episode) => setEpisodeRef({ season_number: episode.season_number, episode_number: episode.episode_number });
+  const shareEpisode = async () => {
+    const textValue = `${titleOf(data.show)} S${data.episode.season_number} E${data.episode.episode_number} ${data.episode.name || ""}`.trim();
+    if (navigator.share) await navigator.share({ title: textValue, text: textValue }).catch(() => {});
+    else navigator.clipboard?.writeText(textValue).catch(() => {});
+  };
+  return (
+    <section className="mg-home-v3-episode-page">
+      <header><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><button type="button" onClick={shareEpisode} aria-label="Share"><Icon name="send" /></button></header>
+      <div className="mg-home-v3-episode-hero">{data.episode.still_path || data.show.backdrop_path ? <img src={data.episode.still_path ? backdropUrl(data.episode.still_path, "w780") : backdropUrl(data.show.backdrop_path, "w780")} alt="" /> : null}</div>
+      <div className="mg-home-v3-episode-identity">
+        <small>{titleOf(data.show)} / S{data.episode.season_number} · E{data.episode.episode_number}</small>
+        <h2>{data.episode.name || "Episode title unavailable"}</h2>
+        <p>{[data.episode.air_date ? new Date(data.episode.air_date).getFullYear() : "", data.episode.runtime ? `${data.episode.runtime} min` : "", homeShelfGenres(data.show)].filter(Boolean).join(" · ")}</p>
+      </div>
+      <div className="mg-home-v3-episode-ratings">
+        {Number(data.episode.vote_average) > 0 && <span><b>TMDB episode</b>{Number(data.episode.vote_average).toFixed(1)}</span>}
+        {data.imdbRating && <span><b>IMDb episode</b>{String(data.imdbRating).replace(/\/10$/, "")}</span>}
+      </div>
+      {director && <p className="mg-home-v3-episode-director">Directed by <strong>{director.name}</strong></p>}
+      <button className={`mg-home-v3-episode-watched is-${tickState}${watched ? " is-watched" : ""}`} type="button" disabled={!canMark || watched || tickState !== "idle"} onClick={markWatched}>{tickState === "loading" ? <span /> : <Icon name="check" />}<b>{watched ? "Watched" : canMark ? "Mark episode watched" : "Not released"}</b></button>
+      <section className="mg-home-v3-episode-overview"><h3>Overview</h3><p>{data.episode.overview || "No episode overview is available."}</p></section>
+      {cast.length > 0 && <section className="mg-home-v3-episode-cast"><h3>Episode Cast</h3><div>{cast.map((person) => <button key={person.id} type="button" onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span /> }<strong>{person.name}</strong><small>{person.character || ""}</small></button>)}</div></section>}
+      {data.season.length > 0 && <section className="mg-home-v3-episode-season"><h3>Season {episodeRef.season_number}</h3><div>{data.season.map((episode, index) => { const isCurrent = index === currentIndex; const isReleasedEpisode = !episode.air_date || new Date(episode.air_date).getTime() <= Date.now(); const isSeen = Boolean(episodeProgress?.[episodeKey(show.id, episode.season_number, episode.episode_number)]); return <button key={episode.id || episode.episode_number} className={isCurrent ? "active" : ""} type="button" onClick={() => selectEpisode(episode)}><span>{episode.still_path && <img src={backdropUrl(episode.still_path, "w300")} alt="" />}</span><strong>E{episode.episode_number} · {episode.name || "Episode"}</strong><small>{isCurrent ? "Current" : isSeen ? "Watched" : isReleasedEpisode ? "Released" : "Unreleased"}</small></button>; })}</div></section>}
+      {data.loading && <div className="mg-home-v3-episode-loading">Loading episode details…</div>}
+    </section>
   );
 }
 
@@ -5052,11 +5202,13 @@ function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, o
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onAdvanceEpisode, apiFetch }) {
+function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onAdvanceEpisode, apiFetch }) {
   const [storySheet, setStorySheet] = useState(null);
   const [discoveryIndex, setDiscoveryIndex] = useState(null);
+  const [homeView, setHomeView] = useState(null);
   const homeRootRef = useRef(null);
   const homeScrollRef = useRef(0);
+  const shelfScrollRef = useRef(0);
   const restoreHomeScrollRef = useRef(false);
   const watchedKeys = useMemo(() => new Set(Object.values(watched || {}).map(keyOf)), [watched]);
   const watchlistItems = useMemo(() => Object.values(watchlist || {}).filter((item) => !watchedKeys.has(keyOf(item))), [watchedKeys, watchlist]);
@@ -5112,6 +5264,23 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       const ordered = [...balancedLead, ...available.filter((entry) => !leadKeys.has(homeCanonicalKey(canonical(entry))))];
       return takeUnique(ordered, limit);
     };
+    const balancedPool = (items = [], limit = 40, targetEach = 8) => {
+      const pool = preparePool(items);
+      const movies = pool.filter((entry) => mediaType(canonical(entry)) === "movie");
+      const shows = pool.filter((entry) => mediaType(canonical(entry)) === "tv");
+      const balanced = interleaveHomeMedia([
+        ...movies.slice(0, targetEach),
+        ...shows.slice(0, targetEach)
+      ]);
+      const leadKeys = new Set(balanced.map((entry) => homeCanonicalKey(canonical(entry))));
+      return [...balanced, ...pool.filter((entry) => !leadKeys.has(homeCanonicalKey(canonical(entry))))].slice(0, limit);
+    };
+    const selectShelfPool = (items = [], visibleLead = 10) => {
+      const available = items.filter((entry) => !used.has(homeCanonicalKey(canonical(entry))));
+      const lead = available.slice(0, visibleLead);
+      lead.forEach((entry) => used.add(homeCanonicalKey(canonical(entry))));
+      return available.slice(0, 40);
+    };
     const takeIndependentShelf = (items = [], limit = 8, minimum = 6) => {
       const pool = preparePool(items);
       const selected = [];
@@ -5144,11 +5313,6 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       .filter((item) => !watchAsapItems.some((asap) => itemMatches(asap, item)))
       .map((item) => ({ ...item, __homeBadge: "Watchlist" })));
     const savedItems = [...asapSavedItems, ...regularSavedItems];
-    const savedPool = preparePool([
-      ...savedItems,
-      ...(recommended || []),
-      ...(rows.trending || [])
-    ]);
     const friendPool = preparePool((socialActivity || []).filter((entry) => validArt(entry?.item)).map((entry) => ({
       ...entry,
       reason: /review|rate/i.test(entry.action || entry.actionLabel || "") ? "rated by friend" : /watch/i.test(entry.action || entry.actionLabel || "") ? "watched by friend" : "popular with friends"
@@ -5184,24 +5348,24 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       ...homeSourceItems
     ].filter((item) => !isHomeAnimeItem(canonical(item)))));
     const animePool = interleaveHomeMedia(preparePool([...(rows.anime || []), ...(rows.series || []), ...(rows.movies || [])].filter((item) => isHomeAnimeItem(canonical(item)))));
-    const recentPool = preparePool((continueWatching || []).filter((item) => validArt(item)));
+    const recentActivityItems = Object.values(profileActivity || {})
+      .filter((entry) => entry?.item && /^(opened|details_open|viewed_details)$/i.test(entry.type || ""))
+      .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+      .map((entry) => entry.item);
+    const recentPool = preparePool([...recentActivityItems, ...(continueWatching || [])].filter((item) => validArt(item)));
 
     const heroItems = takeUnique(heroPool, 5);
     const continueItems = takeUnique(reliableContinue, 24);
-    const startPrimary = takeUnique(savedItems, 40);
-    const startFallbackTarget = startPrimary.length ? 8 : 4;
-    const startWatching = startPrimary.length >= startFallbackTarget
-      ? startPrimary
-      : [...startPrimary, ...takeMixedUnique(savedPool, startFallbackTarget - startPrimary.length)];
+    const startWatching = takeUnique(savedItems, 40);
     const friendItems = takeUnique(friendPool, 24);
-    const tasteItems = takeMixedUnique(tastePool, 40);
-    const bingeItems = takeIndependentShelf(bingePool, 8, 6);
-    const hiddenItems = takeIndependentShelf(hiddenPool, 8, 6);
-    const animeItems = takeMixedUnique(animePool, 40);
+    const tasteItems = selectShelfPool(balancedPool(tastePool, 40, 8));
+    const bingeItems = selectShelfPool(balancedPool(bingePool, 40, 8));
+    const hiddenItems = selectShelfPool(balancedPool(hiddenPool, 40, 8));
+    const animeItems = selectShelfPool(balancedPool(animePool, 40, 8));
     const recentlyOpened = takeIndependentShelf(recentPool, 10, 1);
 
     return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, animeItems, recentlyOpened };
-  }, [continueWatching, homeSourceItems, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+  }, [continueWatching, homeSourceItems, intelligenceRows, profileActivity, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
   const homeShowArtworkItems = useMemo(() => dedupe([
     ...homeData.startWatching,
     ...homeData.tasteItems,
@@ -5211,6 +5375,37 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
     ...homeData.recentlyOpened
   ]).filter((item) => mediaType(item) === "tv"), [homeData]);
   const homeShowArtwork = useHomeShowArtwork(homeShowArtworkItems, apiFetch);
+
+  const scrollContainer = () => homeRootRef.current?.closest?.(".mg2-screen");
+  const openShelf = (key, title, items) => {
+    homeScrollRef.current = scrollContainer()?.scrollTop || 0;
+    setHomeView({ type: "shelf", key, title, items });
+    window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
+  };
+  const openEpisode = (show, episode, parent = "home") => {
+    if (!episode) return;
+    if (homeView?.type === "shelf") shelfScrollRef.current = scrollContainer()?.scrollTop || 0;
+    else homeScrollRef.current = scrollContainer()?.scrollTop || 0;
+    setHomeView({ type: "episode", show, episode, parent: parent === "shelf" ? homeView : null });
+    window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
+  };
+  const closeHomeView = () => {
+    if (homeView?.type === "episode" && homeView.parent) {
+      setHomeView(homeView.parent);
+      window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = shelfScrollRef.current; });
+      return;
+    }
+    setHomeView(null);
+    restoreHomeScrollRef.current = true;
+  };
+  useEffect(() => {
+    if (homeView || !restoreHomeScrollRef.current) return undefined;
+    restoreHomeScrollRef.current = false;
+    const restore = () => { const node = scrollContainer(); if (node) node.scrollTop = homeScrollRef.current; };
+    const frame = window.requestAnimationFrame(restore);
+    const timer = window.setTimeout(restore, 120);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [homeView]);
 
   const openDiscovery = (index) => {
     const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
@@ -5236,32 +5431,39 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
     };
   }, [discoveryIndex]);
 
+  if (homeView?.type === "shelf") {
+    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeShelfPage shelf={homeView} watchlist={watchlist} watched={watched} ratings={ratings} onBack={closeHomeView} onOpen={onOpen} onOpenEpisode={openEpisode} /></div>;
+  }
+  if (homeView?.type === "episode") {
+    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeEpisodeDetails show={homeView.show} episodeSeed={homeView.episode} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeHomeView} onWatched={onAdvanceEpisode} onOpenPerson={onOpenPerson} /></div>;
+  }
+
   return (
     <div ref={homeRootRef} className="mg-home-v3">
       <HomeStories user={user} onOpenStory={setStorySheet} />
       <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
-      <ContinueWatchingRow items={homeData.continueItems} onOpen={onOpen} onWatched={onAdvanceEpisode} />
-      {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start">
-        <HomeAppendableRail className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      <ContinueWatchingRow items={homeData.continueItems} onOpenEpisode={openEpisode} onWatched={onAdvanceEpisode} onSeeAll={() => openShelf("continue", "Continue Watching", homeData.continueItems)} />
+      {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start" onSeeAll={() => openShelf("start", "Start Watching", homeData.startWatching)}>
+        <HomeAppendableRail shelfKey="start" className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} />
-      {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste">
-        <HomeAppendableRail className="mg-home-v3-rail--taste" items={homeData.tasteItems} renderItem={(item) => {
+      {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste" onSeeAll={() => openShelf("taste", "Because of Your Taste", homeData.tasteItems)}>
+        <HomeAppendableRail shelfKey="taste" className="mg-home-v3-rail--taste" items={homeData.tasteItems} renderItem={(item) => {
             const reason = item.__recReasons?.find((value) => /^(because|more like)/i.test(value));
             return <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" badge={reason} saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />;
           }} />
       </HomeShelf>}
-      {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Content" variant="compact">
-        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.bingeItems} renderItem={(item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Content" variant="compact" onSeeAll={() => openShelf("binge", "Binge-worthy Content", homeData.bingeItems)}>
+        <HomeAppendableRail shelfKey="binge" className="mg-home-v3-rail--compact" items={homeData.bingeItems} renderItem={(item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      {homeData.hiddenItems.length > 0 && <HomeShelf title="Hidden Gems" variant="compact">
-        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.hiddenItems} renderItem={(item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      {homeData.hiddenItems.length > 0 && <HomeShelf title="Hidden Gems" variant="compact" onSeeAll={() => openShelf("hidden", "Hidden Gems", homeData.hiddenItems)}>
+        <HomeAppendableRail shelfKey="hidden" className="mg-home-v3-rail--compact" items={homeData.hiddenItems} renderItem={(item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      {homeData.animeItems.length > 0 && <HomeShelf title="Anime" variant="anime">
-        <HomeAppendableRail className="mg-home-v3-rail--anime" items={homeData.animeItems} renderItem={(item) => <HomeRailCard key={`anime-${keyOf(item)}`} item={item} variant="anime" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      {homeData.animeItems.length > 0 && <HomeShelf title="Anime" variant="anime" onSeeAll={() => openShelf("anime", "Anime", homeData.animeItems)}>
+        <HomeAppendableRail shelfKey="anime" className="mg-home-v3-rail--anime" items={homeData.animeItems} renderItem={(item) => <HomeRailCard key={`anime-${keyOf(item)}`} item={item} variant="anime" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent">
-        <HomeAppendableRail className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+      {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent" onSeeAll={() => openShelf("recent", "Recently Opened", homeData.recentlyOpened)}>
+        <HomeAppendableRail shelfKey="recent" className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
       <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} apiFetch={apiFetch} />
@@ -11823,7 +12025,7 @@ export default function Home() {
   } else if (activeSocial === "settings") {
     screen = <SettingsScreen user={supabaseUser} profile={profileIdentity} syncStatus={syncStatus} onBack={() => setActiveSocial(null)} onLogout={handleLogout} onSaveProfile={handleProfileSave} onSafetyAction={openSafetyAction} />;
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onAdvanceEpisode={advanceHomeEpisode} apiFetch={apiFetch} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPerson={openPerson} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onAdvanceEpisode={advanceHomeEpisode} apiFetch={apiFetch} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
