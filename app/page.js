@@ -3736,7 +3736,7 @@ function CastActorCard({ person, type, character, onOpenPerson }) {
   );
 }
 
-function ContinueWatchingCard({ item, onOpenEpisode, onWatched }) {
+function ContinueWatchingCard({ item, episodeProgress, onOpenEpisode, onToggleEpisode }) {
   const [tickState, setTickState] = useState("idle");
   const resetTimerRef = useRef(null);
   const nextEpisode = item.__nextEpisode;
@@ -3751,17 +3751,18 @@ function ContinueWatchingCard({ item, onOpenEpisode, onWatched }) {
     ? backdropUrl(artworkPath, "w780")
     : posterUrl(item.poster_path, "w500");
   const episodeKeyValue = `${nextEpisode.season_number}:${nextEpisode.episode_number}`;
+  const watched = Boolean(episodeProgress?.[episodeKey(item.id, nextEpisode.season_number, nextEpisode.episode_number)]);
 
   useEffect(() => () => {
     if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
   }, []);
 
-  const markNextEpisodeWatched = async (event) => {
+  const toggleNextEpisode = async (event) => {
     event.stopPropagation();
     if (tickState !== "idle") return;
     setTickState("loading");
     try {
-      const result = await Promise.resolve(onWatched?.(item));
+      const result = await Promise.resolve(onToggleEpisode?.(item, nextEpisode));
       if (result === false) throw new Error("Episode progress was not updated");
       setTickState("success");
       resetTimerRef.current = window.setTimeout(() => setTickState("idle"), 650);
@@ -3788,8 +3789,9 @@ function ContinueWatchingCard({ item, onOpenEpisode, onWatched }) {
           className={`mg-home-v3-progress-check is-${tickState}`}
           type="button"
           disabled={tickState !== "idle"}
-          aria-label={`Mark ${nextLabel} watched for ${titleOf(item)}`}
-          onClick={markNextEpisodeWatched}
+          aria-label={`Mark ${nextLabel} ${watched ? "unwatched" : "watched"} for ${titleOf(item)}`}
+          aria-pressed={watched}
+          onClick={toggleNextEpisode}
         >
           {tickState === "loading" ? <span aria-hidden="true" /> : <Icon name="check" />}
         </button>
@@ -3798,7 +3800,7 @@ function ContinueWatchingCard({ item, onOpenEpisode, onWatched }) {
   );
 }
 
-function ContinueWatchingRow({ items, onOpenEpisode, onWatched, onSeeAll }) {
+function ContinueWatchingRow({ items, episodeProgress, onOpenEpisode, onToggleEpisode, onSeeAll }) {
   const rowItems = items
     .filter((item) => mediaType(item) === "tv" && item.__nextEpisode && Number.isFinite(item.__seriesProgress))
     .slice(0, 8);
@@ -3808,7 +3810,7 @@ function ContinueWatchingRow({ items, onOpenEpisode, onWatched, onSeeAll }) {
     <section className="mg-home-v3-section mg-home-v3-section--continue">
       <div className="mg-home-v3-section-head"><h2>Continue Watching</h2><button className="mg-home-v3-see-all" type="button" onClick={onSeeAll}>See All <span aria-hidden="true">›</span></button></div>
       <div className="mg-home-v3-rail mg-home-v3-rail--continue" data-home-shelf="continue">
-        {rowItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} onOpenEpisode={onOpenEpisode} onWatched={onWatched} />)}
+        {rowItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} episodeProgress={episodeProgress} onOpenEpisode={onOpenEpisode} onToggleEpisode={onToggleEpisode} />)}
       </div>
     </section>
   );
@@ -4401,10 +4403,10 @@ function HomeShelf({ title, variant = "standard", onSeeAll, children }) {
   );
 }
 
-function FromFriendsShelf({ items, onOpen }) {
+function FromFriendsShelf({ items, onOpen, onSeeAll }) {
   if (!items.length) return null;
   return (
-    <HomeShelf title="From Friends" variant="friends">
+    <HomeShelf title="From Friends" variant="friends" onSeeAll={onSeeAll}>
       <div className="mg-home-v3-rail mg-home-v3-friends-rail">
         {items.slice(0, 8).map((entry, index) => (
           <button key={`${entry.id || keyOf(entry.item || entry)}-${index}`} type="button" onClick={() => onOpen(entry.item || entry)}>
@@ -4430,6 +4432,9 @@ function homeShelfGenres(item = {}) {
 
 function HomeShelfListCard({ item, onOpen, watchlist, watched, ratings }) {
   const type = mediaType(item);
+  const details = item.__homeDetails || item;
+  const posterPath = details.poster_path || item.poster_path;
+  const backdropPath = details.backdrop_path || item.backdrop_path;
   const rating = Number(item.vote_average || 0);
   const userRating = ratingForItem(item, ratings || {});
   const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
@@ -4441,9 +4446,9 @@ function HomeShelfListCard({ item, onOpen, watchlist, watched, ratings }) {
   const seen = hasStoredItem(item, watched || {});
   return (
     <button className="mg-home-v3-list-card" type="button" onClick={() => onOpen(item)}>
-      {item.backdrop_path && <img className="mg-home-v3-list-backdrop" src={backdropUrl(item.backdrop_path, "w780")} alt="" loading="lazy" />}
+      {backdropPath && <img className="mg-home-v3-list-backdrop" src={backdropUrl(backdropPath, "w780")} alt="" loading="lazy" />}
       <span className="mg-home-v3-list-shade" />
-      <img className="mg-home-v3-list-poster" src={item.poster_path ? posterUrl(item.poster_path, "w342") : POSTER_FALLBACK} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+      <img className="mg-home-v3-list-poster" src={posterPath ? posterUrl(posterPath, "w342") : POSTER_FALLBACK} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
       <span className="mg-home-v3-list-info">
         <strong>{titleOf(item)}</strong>
         <small>{homeShelfGenres(item) || (type === "tv" ? "Series" : "Movie")}</small>
@@ -4452,6 +4457,48 @@ function HomeShelfListCard({ item, onOpen, watchlist, watched, ratings }) {
       </span>
       {(seen || saved) && <i>{seen ? "Watched" : "Watchlist"}</i>}
     </button>
+  );
+}
+
+function friendActivityKind(entry = {}) {
+  const text = `${entry.type || ""} ${entry.action || ""} ${entry.actionLabel || ""} ${entry.reason || ""}`.toLowerCase();
+  if (/review|rate/.test(text)) return "rated";
+  if (/watch/.test(text)) return "watched";
+  if (/add|list|asap|recommend/.test(text)) return "added";
+  return "all";
+}
+
+function HomeFriendsPage({ shelf, onBack, onOpen }) {
+  const [filter, setFilter] = useState("all");
+  const availableKinds = useMemo(() => new Set((shelf.items || []).map(friendActivityKind)), [shelf.items]);
+  const items = useMemo(() => (shelf.items || []).filter((entry) => filter === "all" || friendActivityKind(entry) === filter), [filter, shelf.items]);
+  return (
+    <section className="mg-home-v3-browser mg-home-v3-social-browser">
+      <header><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>From Friends</h2></header>
+      <div className="mg-home-v3-browser-filters" role="tablist" aria-label="Friend activity filters">
+        <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All</button>
+        {availableKinds.has("watched") && <button className={filter === "watched" ? "active" : ""} type="button" onClick={() => setFilter("watched")}>Watched</button>}
+        {availableKinds.has("rated") && <button className={filter === "rated" ? "active" : ""} type="button" onClick={() => setFilter("rated")}>Rated</button>}
+        {availableKinds.has("added") && <button className={filter === "added" ? "active" : ""} type="button" onClick={() => setFilter("added")}>Added</button>}
+      </div>
+      <div className="mg-home-v3-social-list">
+        {items.map((entry, index) => {
+          const item = entry.item || entry;
+          const profile = entry.profile;
+          const name = profile ? publicProfileName(profile) : friends[index % friends.length]?.name;
+          const backdropPath = item.__homeDetails?.backdrop_path || item.backdrop_path;
+          const timeLabel = entry.time || (entry.timestamp ? new Date(entry.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Recently");
+          return <button key={`${entry.id || homeCanonicalKey(item)}-${index}`} className="mg-home-v3-social-card" type="button" onClick={() => onOpen(item)}>
+            {backdropPath && <img className="mg-home-v3-social-backdrop" src={backdropUrl(backdropPath, "w780")} alt="" loading="lazy" />}
+            <span className="mg-home-v3-social-shade" />
+            <span className="mg-home-v3-social-avatar">{profile ? <PublicAvatar profile={profile} size="sm" /> : <Avatar friend={friends[index % friends.length]} size="sm" />}</span>
+            <span className="mg-home-v3-social-copy"><strong>{name}</strong><small>{entry.actionLabel || entry.reason || "shared this"}</small><b>{entry.title || titleOf(item)}</b><em>{timeLabel}</em></span>
+            <img className="mg-home-v3-social-poster" src={item.poster_path ? posterUrl(item.poster_path, "w185") : POSTER_FALLBACK} alt="" loading="lazy" />
+          </button>;
+        })}
+      </div>
+      {!items.length && <div className="mg-home-v3-browser-empty">No genuine friend activity is available for this filter.</div>}
+    </section>
   );
 }
 
@@ -4487,7 +4534,7 @@ function HomeShelfPage({ shelf, watchlist, watched, ratings, onBack, onOpen, onO
   );
 }
 
-function HomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBack, onWatched, onOpenPerson }) {
+function LegacyHomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBack, onWatched, onOpenPerson }) {
   const [episodeRef, setEpisodeRef] = useState({ season_number: episodeSeed.season_number, episode_number: episodeSeed.episode_number });
   const [data, setData] = useState({ loading: true, episode: episodeSeed, show: show.__homeDetails || show, season: [], credits: null, externalId: "", imdbRating: "" });
   const [tickState, setTickState] = useState("idle");
@@ -4568,6 +4615,451 @@ function HomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBa
       {cast.length > 0 && <section className="mg-home-v3-episode-cast"><h3>Episode Cast</h3><div>{cast.map((person) => <button key={person.id} type="button" onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span /> }<strong>{person.name}</strong><small>{person.character || ""}</small></button>)}</div></section>}
       {data.season.length > 0 && <section className="mg-home-v3-episode-season"><h3>Season {episodeRef.season_number}</h3><div>{data.season.map((episode, index) => { const isCurrent = index === currentIndex; const isReleasedEpisode = !episode.air_date || new Date(episode.air_date).getTime() <= Date.now(); const isSeen = Boolean(episodeProgress?.[episodeKey(show.id, episode.season_number, episode.episode_number)]); return <button key={episode.id || episode.episode_number} className={isCurrent ? "active" : ""} type="button" onClick={() => selectEpisode(episode)}><span>{episode.still_path && <img src={backdropUrl(episode.still_path, "w300")} alt="" />}</span><strong>E{episode.episode_number} · {episode.name || "Episode"}</strong><small>{isCurrent ? "Current" : isSeen ? "Watched" : isReleasedEpisode ? "Released" : "Unreleased"}</small></button>; })}</div></section>}
       {data.loading && <div className="mg-home-v3-episode-loading">Loading episode details…</div>}
+    </section>
+  );
+}
+
+function PreviousHomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBack, onToggleEpisode, onOpenPerson, onOpenSeason }) {
+  const [episodeRef, setEpisodeRef] = useState({ season_number: episodeSeed.season_number, episode_number: episodeSeed.episode_number });
+  const [data, setData] = useState({ loading: true, episode: episodeSeed, show: show.__homeDetails || show, season: [], credits: null, imdbRating: "" });
+  const [tickState, setTickState] = useState("idle");
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const currentKey = episodeKey(show.id, episodeRef.season_number, episodeRef.episode_number);
+  const watched = Boolean(episodeProgress?.[currentKey]);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadEpisode() {
+      setData((current) => ({ ...current, loading: true }));
+      const showId = show.tmdb_id || show.id;
+      const seasonNumber = episodeRef.season_number;
+      const episodeNumber = episodeRef.episode_number;
+      const settled = await Promise.allSettled([
+        apiFetch(`/tv/${showId}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/credits`),
+        apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/external_ids`)
+      ]);
+      if (!alive) return;
+      const value = (index, fallback) => settled[index].status === "fulfilled" ? settled[index].value : fallback;
+      const showDetails = { ...show, ...value(0, show.__homeDetails || show), media_type: "tv" };
+      const seasonDetails = value(1, {});
+      const exactEpisode = { ...episodeSeed, ...value(2, episodeSeed), season_number: seasonNumber, episode_number: episodeNumber };
+      const credits = value(3, null);
+      const externalId = value(4, {})?.imdb_id || "";
+      let imdbRating = "";
+      if (externalId) {
+        try {
+          const verified = await getVerifiedExternalRatings({ media_type: "tv", tmdb_id: showId, imdb_id: externalId, tmdb_rating: 0 });
+          imdbRating = verified.ratings?.find((entry) => entry.source === "IMDb")?.value || "";
+        } catch {
+          imdbRating = "";
+        }
+      }
+      if (alive) setData({ loading: false, episode: exactEpisode, show: showDetails, season: seasonDetails.episodes || [], credits, imdbRating });
+    }
+    loadEpisode();
+    return () => { alive = false; };
+  }, [apiFetch, episodeRef.episode_number, episodeRef.season_number, episodeSeed, show]);
+
+  useEffect(() => setOverviewExpanded(false), [episodeRef.episode_number, episodeRef.season_number]);
+
+  const currentIndex = data.season.findIndex((episode) => Number(episode.episode_number) === Number(data.episode.episode_number));
+  const cast = (data.credits?.cast || data.episode.guest_stars || []).filter((person) => person?.id && person?.name).slice(0, 20);
+  const canToggle = !data.episode.air_date || new Date(data.episode.air_date).getTime() <= Date.now();
+  const toggleWatched = async () => {
+    if (tickState !== "idle" || !canToggle) return;
+    setTickState("loading");
+    const result = await Promise.resolve(onToggleEpisode({ ...data.show, __homeDetails: data.show }, data.episode));
+    if (result === false) { setTickState("idle"); return; }
+    setTickState("success");
+    window.setTimeout(() => setTickState("idle"), 700);
+  };
+  const selectEpisode = (episode) => setEpisodeRef({ season_number: episode.season_number, episode_number: episode.episode_number });
+  const shareEpisode = async () => {
+    const textValue = `${titleOf(data.show)} S${data.episode.season_number} E${data.episode.episode_number} ${data.episode.name || ""}`.trim();
+    if (navigator.share) await navigator.share({ title: textValue, text: textValue }).catch(() => {});
+    else navigator.clipboard?.writeText(textValue).catch(() => {});
+  };
+  const heroPath = data.episode.still_path || data.show.backdrop_path;
+
+  return (
+    <section className="mg-home-v3-episode-page">
+      <div className="mg-home-v3-episode-hero">
+        {heroPath ? <img src={data.episode.still_path ? backdropUrl(heroPath, "w780") : backdropUrl(heroPath, "w780")} alt="" /> : null}
+        <button className="mg-home-v3-episode-back" type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
+        <button className="mg-home-v3-episode-share" type="button" onClick={shareEpisode} aria-label="Share"><Icon name="send" /></button>
+      </div>
+      <div className="mg-home-v3-episode-identity">
+        <small>{titleOf(data.show)} / S{data.episode.season_number} · E{data.episode.episode_number}</small>
+        <h2>{data.episode.name || "Episode title unavailable"}</h2>
+        <p>{[data.episode.air_date || "", data.episode.runtime ? `${data.episode.runtime} min` : "", homeShelfGenres(data.show)].filter(Boolean).join(" · ")}</p>
+      </div>
+      <div className="mg-home-v3-episode-ratings">
+        {Number(data.episode.vote_average) > 0 && <span className="tmdb"><b aria-hidden="true">★</b><em>TMDB</em>{Number(data.episode.vote_average).toFixed(1)}</span>}
+        {data.imdbRating && <span className="imdb"><b>IMDb</b>{String(data.imdbRating).replace(/\/10$/, "")}</span>}
+      </div>
+      <button className={`mg-home-v3-episode-watched is-${tickState}${watched ? " is-watched" : ""}`} type="button" disabled={!canToggle || tickState !== "idle"} aria-pressed={watched} onClick={toggleWatched}>{tickState === "loading" ? <span /> : <Icon name="check" />}<b>{watched ? "Mark episode unwatched" : canToggle ? "Mark episode watched" : "Not released"}</b></button>
+      <section className={`mg-home-v3-episode-overview${overviewExpanded ? " expanded" : ""}`}>
+        <h3>Overview</h3>
+        <p>{data.episode.overview || "No episode overview is available."}</p>
+        {data.episode.overview?.length > 220 && <button type="button" onClick={() => setOverviewExpanded((value) => !value)}>{overviewExpanded ? "See less" : "See more"}</button>}
+      </section>
+      {cast.length > 0 && <section className="mg-home-v3-episode-cast"><h3>Episode Cast</h3><div>{cast.map((person) => <button key={person.id} type="button" onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span /> }<strong>{person.name}</strong><small>{person.character || ""}</small></button>)}</div></section>}
+      {data.season.length > 0 && <section className="mg-home-v3-episode-season">
+        <div className="mg-home-v3-episode-section-head"><h3>Season {episodeRef.season_number}</h3><button type="button" onClick={() => onOpenSeason(data.show, episodeRef.season_number, data.episode)}>See All <span aria-hidden="true">›</span></button></div>
+        <div>{data.season.map((episode, index) => {
+          const isCurrent = index === currentIndex;
+          const isReleasedEpisode = !episode.air_date || new Date(episode.air_date).getTime() <= Date.now();
+          const isSeen = Boolean(episodeProgress?.[episodeKey(show.id, episode.season_number, episode.episode_number)]);
+          return <button key={episode.id || episode.episode_number} className={`${isCurrent ? "active" : ""}${isSeen ? " watched" : ""}${!isReleasedEpisode ? " unreleased" : ""}`} type="button" onClick={() => selectEpisode(episode)}><span>{episode.still_path && <img src={backdropUrl(episode.still_path, "w300")} alt="" />}{episode.runtime ? <em>{episode.runtime}m</em> : null}{isSeen ? <i><Icon name="check" /></i> : null}</span><strong>{episode.name || `Episode ${episode.episode_number}`}</strong><small>S{episode.season_number} · E{episode.episode_number}{isCurrent ? " · Current" : !isReleasedEpisode ? " · Unreleased" : ""}</small></button>;
+        })}</div>
+      </section>}
+      {data.loading && <div className="mg-home-v3-episode-loading">Loading episode details…</div>}
+    </section>
+  );
+}
+
+const HOME_EPISODE_DETAIL_CACHE = new Map();
+const HOME_SEASON_DETAIL_CACHE = new Map();
+const HOME_SHOW_DETAIL_CACHE = new Map();
+
+function homeEpisodeDetailKey(showId, seasonNumber, episodeNumber) {
+  return `${showId}:${seasonNumber}:${episodeNumber}`;
+}
+
+function mergeHomeEpisodeDetailCache(key, patch) {
+  const value = { ...(HOME_EPISODE_DETAIL_CACHE.get(key) || {}), ...patch };
+  HOME_EPISODE_DETAIL_CACHE.set(key, value);
+  return value;
+}
+
+function homeReleasedEpisode(episode = {}) {
+  return !episode.air_date || new Date(episode.air_date).getTime() <= Date.now();
+}
+
+function prefetchHomeEpisode(apiFetch, showId, episode) {
+  if (!episode?.episode_number || !episode?.season_number) return;
+  const key = homeEpisodeDetailKey(showId, episode.season_number, episode.episode_number);
+  if (HOME_EPISODE_DETAIL_CACHE.get(key)?.episode) return;
+  apiFetch(`/tv/${showId}/season/${episode.season_number}/episode/${episode.episode_number}`)
+    .then((value) => mergeHomeEpisodeDetailCache(key, { episode: value }))
+    .catch(() => {});
+}
+
+function HomeEpisodeDetails({ show, episodeSeed, episodeProgress, apiFetch, onBack, onToggleEpisode, onOpenPerson, onOpenSeason }) {
+  const showId = show.tmdb_id || show.id;
+  const initialKey = homeEpisodeDetailKey(showId, episodeSeed.season_number, episodeSeed.episode_number);
+  const initialCached = HOME_EPISODE_DETAIL_CACHE.get(initialKey) || {};
+  const initialSeason = HOME_SEASON_DETAIL_CACHE.get(`${showId}:${episodeSeed.season_number}`);
+  const [episodeRef, setEpisodeRef] = useState({ season_number: episodeSeed.season_number, episode_number: episodeSeed.episode_number });
+  const [data, setData] = useState({
+    episode: initialCached.episode || episodeSeed,
+    show: HOME_SHOW_DETAIL_CACHE.get(showId) || show.__homeDetails || show,
+    season: initialSeason?.episodes || [],
+    credits: initialCached.credits || null,
+    creditsLoading: !initialCached.credits,
+    seasonLoading: !initialSeason,
+    imdbRating: initialCached.imdbRating || ""
+  });
+  const [tickState, setTickState] = useState("idle");
+  const [optimisticWatched, setOptimisticWatched] = useState(null);
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const currentKey = episodeKey(showId, episodeRef.season_number, episodeRef.episode_number);
+  const canonicalWatched = Boolean(episodeProgress?.[currentKey]);
+  const watched = optimisticWatched === null ? canonicalWatched : optimisticWatched;
+
+  useEffect(() => {
+    let alive = true;
+    const seasonNumber = Number(episodeRef.season_number);
+    const episodeNumber = Number(episodeRef.episode_number);
+    const cacheKey = homeEpisodeDetailKey(showId, seasonNumber, episodeNumber);
+    const seasonKey = `${showId}:${seasonNumber}`;
+    const cachedEpisode = HOME_EPISODE_DETAIL_CACHE.get(cacheKey) || {};
+    const cachedSeason = HOME_SEASON_DETAIL_CACHE.get(seasonKey);
+    setData((current) => ({
+      ...current,
+      episode: cachedEpisode.episode || (Number(current.episode?.season_number) === seasonNumber && Number(current.episode?.episode_number) === episodeNumber ? current.episode : { ...episodeSeed, season_number: seasonNumber, episode_number: episodeNumber }),
+      season: cachedSeason?.episodes || (Number(current.episode?.season_number) === seasonNumber ? current.season : []),
+      credits: cachedEpisode.credits || null,
+      creditsLoading: !cachedEpisode.credits,
+      seasonLoading: !cachedSeason,
+      imdbRating: cachedEpisode.imdbRating || ""
+    }));
+
+    const showPromise = HOME_SHOW_DETAIL_CACHE.has(showId)
+      ? Promise.resolve(HOME_SHOW_DETAIL_CACHE.get(showId))
+      : apiFetch(`/tv/${showId}`).then((value) => ({ ...show, ...value, media_type: "tv" })).catch(() => show.__homeDetails || show);
+    const seasonPromise = cachedSeason
+      ? Promise.resolve(cachedSeason)
+      : apiFetch(`/tv/${showId}/season/${seasonNumber}`).then((value) => ({ ...value, episodes: value.episodes || [] })).catch(() => ({ episodes: [] }));
+    const episodePromise = cachedEpisode.episode
+      ? Promise.resolve(cachedEpisode.episode)
+      : apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}`).catch(() => ({ ...episodeSeed, season_number: seasonNumber, episode_number: episodeNumber }));
+    const creditsPromise = cachedEpisode.credits
+      ? Promise.resolve(cachedEpisode.credits)
+      : apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/credits`).catch(() => null);
+    const externalPromise = cachedEpisode.externalIds
+      ? Promise.resolve(cachedEpisode.externalIds)
+      : apiFetch(`/tv/${showId}/season/${seasonNumber}/episode/${episodeNumber}/external_ids`).catch(() => ({}));
+
+    showPromise.then((showDetails) => {
+      HOME_SHOW_DETAIL_CACHE.set(showId, showDetails);
+      if (alive) setData((current) => ({ ...current, show: showDetails }));
+    });
+    episodePromise.then((episode) => {
+      const exactEpisode = { ...episode, season_number: seasonNumber, episode_number: episodeNumber };
+      mergeHomeEpisodeDetailCache(cacheKey, { episode: exactEpisode });
+      if (alive) setData((current) => ({ ...current, episode: exactEpisode }));
+    });
+    seasonPromise.then((seasonDetails) => {
+      HOME_SEASON_DETAIL_CACHE.set(seasonKey, seasonDetails);
+      if (alive) setData((current) => ({ ...current, season: seasonDetails.episodes || [], seasonLoading: false }));
+      const episodes = seasonDetails.episodes || [];
+      const index = episodes.findIndex((episode) => Number(episode.episode_number) === episodeNumber);
+      [episodes[index - 1], episodes[index + 1]].filter(Boolean).forEach((episode) => prefetchHomeEpisode(apiFetch, showId, episode));
+      if (index === episodes.length - 1) {
+        const nextSeason = seasonNumber + 1;
+        const nextSeasonKey = `${showId}:${nextSeason}`;
+        if (!HOME_SEASON_DETAIL_CACHE.has(nextSeasonKey)) {
+          apiFetch(`/tv/${showId}/season/${nextSeason}`).then((value) => {
+            const normalized = { ...value, episodes: value.episodes || [] };
+            HOME_SEASON_DETAIL_CACHE.set(nextSeasonKey, normalized);
+            prefetchHomeEpisode(apiFetch, showId, normalized.episodes[0]);
+          }).catch(() => {});
+        }
+      }
+    });
+    creditsPromise.then((credits) => {
+      mergeHomeEpisodeDetailCache(cacheKey, { credits });
+      if (alive) setData((current) => ({ ...current, credits, creditsLoading: false }));
+    });
+    externalPromise.then(async (externalIds) => {
+      mergeHomeEpisodeDetailCache(cacheKey, { externalIds });
+      const imdbId = externalIds?.imdb_id || "";
+      if (!imdbId || cachedEpisode.imdbRating) return;
+      try {
+        const verified = await getVerifiedExternalRatings({ media_type: "tv", tmdb_id: showId, imdb_id: imdbId, tmdb_rating: 0 });
+        const imdbRating = verified.ratings?.find((entry) => entry.source === "IMDb")?.value || "";
+        mergeHomeEpisodeDetailCache(cacheKey, { imdbRating });
+        if (alive) setData((current) => ({ ...current, imdbRating }));
+      } catch {}
+    });
+    return () => { alive = false; };
+  }, [apiFetch, episodeRef.episode_number, episodeRef.season_number, showId]);
+
+  useEffect(() => {
+    setOverviewExpanded(false);
+    setOptimisticWatched(null);
+    setTickState("idle");
+  }, [episodeRef.episode_number, episodeRef.season_number]);
+  useEffect(() => {
+    if (optimisticWatched !== null && canonicalWatched === optimisticWatched && tickState !== "loading") setOptimisticWatched(null);
+  }, [canonicalWatched, optimisticWatched, tickState]);
+
+  const currentIndex = data.season.findIndex((episode) => Number(episode.episode_number) === Number(data.episode.episode_number));
+  const cast = (data.credits?.cast || data.credits?.guest_stars || data.episode.guest_stars || []).filter((person) => person?.id && person?.name).slice(0, 20);
+  const canToggle = homeReleasedEpisode(data.episode);
+  const toggleWatched = async () => {
+    if (tickState !== "idle" || !canToggle) return;
+    const previous = watched;
+    setOptimisticWatched(!previous);
+    setTickState("loading");
+    const result = await Promise.resolve(onToggleEpisode({ ...data.show, __homeDetails: data.show }, data.episode));
+    if (result === false) { setOptimisticWatched(previous); setTickState("idle"); return; }
+    setTickState("success");
+    window.setTimeout(() => setTickState("idle"), 650);
+  };
+  const selectEpisode = (episode) => {
+    mergeHomeEpisodeDetailCache(homeEpisodeDetailKey(showId, episode.season_number, episode.episode_number), { episode });
+    setEpisodeRef({ season_number: episode.season_number, episode_number: episode.episode_number });
+  };
+  const shareEpisode = async () => {
+    const textValue = `${titleOf(data.show)} S${data.episode.season_number} E${data.episode.episode_number} ${data.episode.name || ""}`.trim();
+    if (navigator.share) await navigator.share({ title: textValue, text: textValue }).catch(() => {});
+    else navigator.clipboard?.writeText(textValue).catch(() => {});
+  };
+  const heroPath = data.episode.still_path || data.show.backdrop_path;
+
+  return (
+    <section className="mg-home-v3-episode-page">
+      <div className="mg-home-v3-episode-hero">
+        {heroPath ? <img src={backdropUrl(heroPath, "w780")} alt="" /> : null}
+        <button className="mg-home-v3-episode-back" type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
+        <button className="mg-home-v3-episode-share" type="button" onClick={shareEpisode} aria-label="Share"><Icon name="send" /></button>
+      </div>
+      <div className="mg-home-v3-episode-identity">
+        <small>{titleOf(data.show)} / S{data.episode.season_number} · E{data.episode.episode_number}</small>
+        <h2>{data.episode.name || "Episode title unavailable"}</h2>
+        <p>{[data.episode.air_date || "", data.episode.runtime ? `${data.episode.runtime} min` : "", homeShelfGenres(data.show)].filter(Boolean).join(" · ")}</p>
+      </div>
+      <div className="mg-home-v3-episode-ratings">
+        {Number(data.episode.vote_average) > 0 && <span className="tmdb"><b aria-hidden="true">★</b>{Number(data.episode.vote_average).toFixed(1)}</span>}
+        {data.imdbRating && <span className="imdb"><b>IMDb</b>{String(data.imdbRating).replace(/\/10$/, "")}</span>}
+      </div>
+      <button className={`mg-home-v3-episode-watched is-${tickState}${watched ? " is-watched" : ""}`} type="button" disabled={!canToggle || tickState !== "idle"} aria-pressed={watched} onClick={toggleWatched}>{tickState === "loading" ? <span /> : <Icon name="check" />}<b>{watched ? "Mark episode unwatched" : canToggle ? "Mark episode watched" : "Not released"}</b></button>
+      <section className={`mg-home-v3-episode-overview${overviewExpanded ? " expanded" : ""}`}><h3>Overview</h3><p>{data.episode.overview || "No episode overview is available."}</p>{data.episode.overview?.length > 220 && <button type="button" onClick={() => setOverviewExpanded((value) => !value)}>{overviewExpanded ? "See less" : "See more"}</button>}</section>
+      {data.creditsLoading ? <section className="mg-home-v3-episode-cast"><h3>Episode Cast</h3><div className="mg-home-v3-episode-skeleton-rail"><i /><i /><i /></div></section> : cast.length > 0 && <section className="mg-home-v3-episode-cast"><h3>Episode Cast</h3><div>{cast.map((person) => <button key={person.id} type="button" onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span /> }<strong>{person.name}</strong><small>{person.character || ""}</small></button>)}</div></section>}
+      {data.season.length > 0 && <section className="mg-home-v3-episode-season">
+        <div className="mg-home-v3-episode-section-head"><h3>Season {episodeRef.season_number}</h3><button type="button" onClick={() => onOpenSeason(data.show, episodeRef.season_number, data.episode)}>See All <span aria-hidden="true">›</span></button></div>
+        <div className="mg-home-v3-episode-season-rail">{data.season.map((episode, index) => {
+          const isCurrent = index === currentIndex;
+          const isReleased = homeReleasedEpisode(episode);
+          const isSeen = Boolean(episodeProgress?.[episodeKey(showId, episode.season_number, episode.episode_number)]);
+          const badge = index === 0 ? "Premiere" : index === data.season.length - 1 ? "Finale" : "";
+          return <button key={episode.id || episode.episode_number} className={`${isCurrent ? "active" : ""}${isSeen ? " watched" : ""}${!isReleased ? " unreleased" : ""}`} type="button" onClick={() => selectEpisode(episode)}><span>{episode.still_path && <img src={backdropUrl(episode.still_path, "w300")} alt="" />}{episode.runtime ? <em>{episode.runtime}m</em> : null}{isSeen ? <i><Icon name="check" /></i> : null}{badge && <b className="mg-home-v3-episode-badge">{badge}</b>}</span><strong>{episode.name || `Episode ${episode.episode_number}`}</strong><small>S{episode.season_number} · E{episode.episode_number}{isCurrent ? " · Current" : !isReleased ? " · Unreleased" : ""}</small></button>;
+        })}</div>
+      </section>}
+      {data.seasonLoading && <div className="mg-home-v3-episode-loading">Loading season episodes...</div>}
+    </section>
+  );
+}
+
+function PreviousHomeSeasonPage({ show, initialSeason, episodeProgress, apiFetch, onBack, onOpenEpisode, onToggleEpisode }) {
+  const [seasonNumber, setSeasonNumber] = useState(Number(initialSeason || 1));
+  const [data, setData] = useState({ loading: true, show: show.__homeDetails || show, episodes: [] });
+  const [pendingKey, setPendingKey] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    async function loadSeason() {
+      setData((current) => ({ ...current, loading: true }));
+      const showId = show.tmdb_id || show.id;
+      const settled = await Promise.allSettled([apiFetch(`/tv/${showId}`), apiFetch(`/tv/${showId}/season/${seasonNumber}`)]);
+      if (!alive) return;
+      const showDetails = settled[0].status === "fulfilled" ? { ...show, ...settled[0].value, media_type: "tv" } : (show.__homeDetails || show);
+      const seasonDetails = settled[1].status === "fulfilled" ? settled[1].value : {};
+      setData({ loading: false, show: showDetails, episodes: seasonDetails.episodes || [] });
+    }
+    loadSeason();
+    return () => { alive = false; };
+  }, [apiFetch, seasonNumber, show]);
+
+  const seasons = normalSeasonsOf(data.show).filter((season) => Number(season.season_number) > 0);
+  const toggleEpisode = async (event, episode) => {
+    event.stopPropagation();
+    const key = episodeKey(show.id, episode.season_number, episode.episode_number);
+    if (pendingKey || (episode.air_date && new Date(episode.air_date).getTime() > Date.now())) return;
+    setPendingKey(key);
+    const result = await Promise.resolve(onToggleEpisode({ ...data.show, __homeDetails: data.show }, episode));
+    if (result === false) { setPendingKey(""); return; }
+    window.setTimeout(() => setPendingKey(""), 500);
+  };
+
+  return (
+    <section className="mg-home-v3-season-page">
+      <header><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><div><h2>Season {seasonNumber}</h2><p>{titleOf(data.show)}</p></div></header>
+      {seasons.length > 0 && <div className="mg-home-v3-season-selector">{seasons.map((season) => <button key={season.season_number} className={Number(season.season_number) === seasonNumber ? "active" : ""} type="button" onClick={() => setSeasonNumber(Number(season.season_number))}><span>{season.poster_path ? <img src={posterUrl(season.poster_path, "w342")} alt="" /> : null}</span><strong>Season {season.season_number}</strong><small>{season.episode_count || 0} eps.</small></button>)}</div>}
+      <div className="mg-home-v3-season-list">{data.episodes.map((episode) => {
+        const key = episodeKey(show.id, episode.season_number, episode.episode_number);
+        const watched = Boolean(episodeProgress?.[key]);
+        const released = !episode.air_date || new Date(episode.air_date).getTime() <= Date.now();
+        return <article key={episode.id || key} className={`${watched ? "watched" : ""}${!released ? " unreleased" : ""}`}><button className="mg-home-v3-season-open" type="button" onClick={() => onOpenEpisode(data.show, episode)}><span>{episode.still_path ? <img src={backdropUrl(episode.still_path, "w500")} alt="" /> : null}</span><div><strong>{episode.name || `Episode ${episode.episode_number}`}</strong><small>S{episode.season_number} · E{episode.episode_number}</small><em>{episode.runtime ? `${episode.runtime} min` : released ? "Released" : "Unreleased"}</em></div></button><button className={`mg-home-v3-season-toggle${pendingKey === key ? " loading" : ""}`} type="button" disabled={!released || Boolean(pendingKey)} aria-pressed={watched} aria-label={`Mark episode ${watched ? "unwatched" : "watched"}`} onClick={(event) => toggleEpisode(event, episode)}>{pendingKey === key ? <span /> : <Icon name="check" />}</button></article>;
+      })}</div>
+      {data.loading && <div className="mg-home-v3-episode-loading">Loading season…</div>}
+    </section>
+  );
+}
+
+function homeSeasonProgress(show, season, episodeProgress, optimistic = {}, selectedEpisodes = []) {
+  const seasonNumber = Number(season.season_number);
+  const lastEpisode = show.last_episode_to_air;
+  let releasedCount = 0;
+  if (selectedEpisodes.length && Number(selectedEpisodes[0]?.season_number) === seasonNumber) {
+    releasedCount = selectedEpisodes.filter(homeReleasedEpisode).length;
+  } else if (lastEpisode?.season_number) {
+    if (seasonNumber < Number(lastEpisode.season_number)) releasedCount = Number(season.episode_count || 0);
+    else if (seasonNumber === Number(lastEpisode.season_number)) releasedCount = Math.min(Number(season.episode_count || 0), Number(lastEpisode.episode_number || 0));
+  } else if (!season.air_date || new Date(season.air_date).getTime() <= Date.now()) {
+    releasedCount = Number(season.episode_count || 0);
+  }
+  let watchedCount = 0;
+  for (let episodeNumber = 1; episodeNumber <= releasedCount; episodeNumber += 1) {
+    const key = episodeKey(show.id, seasonNumber, episodeNumber);
+    const value = Object.prototype.hasOwnProperty.call(optimistic, key) ? optimistic[key] : Boolean(episodeProgress?.[key]);
+    if (value) watchedCount += 1;
+  }
+  return { releasedCount, watchedCount, complete: releasedCount > 0 && watchedCount === releasedCount, progress: releasedCount ? watchedCount / releasedCount : 0 };
+}
+
+function HomeSeasonPage({ show, initialSeason, episodeProgress, apiFetch, onBack, onOpenEpisode, onToggleEpisode }) {
+  const showId = show.tmdb_id || show.id;
+  const firstSeason = Number(initialSeason || 1);
+  const cachedSeason = HOME_SEASON_DETAIL_CACHE.get(`${showId}:${firstSeason}`);
+  const [seasonNumber, setSeasonNumber] = useState(firstSeason);
+  const [data, setData] = useState({ loading: !cachedSeason, show: HOME_SHOW_DETAIL_CACHE.get(showId) || show.__homeDetails || show, episodes: cachedSeason?.episodes || [] });
+  const [pendingKey, setPendingKey] = useState("");
+  const [optimistic, setOptimistic] = useState({});
+
+  useEffect(() => {
+    let alive = true;
+    const seasonKey = `${showId}:${seasonNumber}`;
+    const cached = HOME_SEASON_DETAIL_CACHE.get(seasonKey);
+    if (cached) setData((current) => ({ ...current, loading: false, episodes: cached.episodes || [] }));
+    else setData((current) => ({ ...current, loading: true, episodes: [] }));
+    const showPromise = HOME_SHOW_DETAIL_CACHE.has(showId)
+      ? Promise.resolve(HOME_SHOW_DETAIL_CACHE.get(showId))
+      : apiFetch(`/tv/${showId}`).then((value) => ({ ...show, ...value, media_type: "tv" })).catch(() => show.__homeDetails || show);
+    const seasonPromise = cached
+      ? Promise.resolve(cached)
+      : apiFetch(`/tv/${showId}/season/${seasonNumber}`).then((value) => ({ ...value, episodes: value.episodes || [] })).catch(() => ({ episodes: [] }));
+    showPromise.then((showDetails) => {
+      HOME_SHOW_DETAIL_CACHE.set(showId, showDetails);
+      if (alive) setData((current) => ({ ...current, show: showDetails }));
+    });
+    seasonPromise.then((seasonDetails) => {
+      HOME_SEASON_DETAIL_CACHE.set(seasonKey, seasonDetails);
+      (seasonDetails.episodes || []).forEach((episode) => mergeHomeEpisodeDetailCache(homeEpisodeDetailKey(showId, episode.season_number, episode.episode_number), { episode }));
+      if (alive) setData((current) => ({ ...current, loading: false, episodes: seasonDetails.episodes || [] }));
+      const nextSeasonNumber = seasonNumber + 1;
+      const nextKey = `${showId}:${nextSeasonNumber}`;
+      if (!HOME_SEASON_DETAIL_CACHE.has(nextKey)) {
+        apiFetch(`/tv/${showId}/season/${nextSeasonNumber}`).then((value) => {
+          const normalized = { ...value, episodes: value.episodes || [] };
+          HOME_SEASON_DETAIL_CACHE.set(nextKey, normalized);
+          prefetchHomeEpisode(apiFetch, showId, normalized.episodes[0]);
+        }).catch(() => {});
+      }
+    });
+    return () => { alive = false; };
+  }, [apiFetch, seasonNumber, showId]);
+
+  const seasons = normalSeasonsOf(data.show).filter((season) => Number(season.season_number) > 0);
+  const toggleEpisode = async (event, episode) => {
+    event.stopPropagation();
+    const key = episodeKey(showId, episode.season_number, episode.episode_number);
+    if (pendingKey || !homeReleasedEpisode(episode)) return;
+    const previous = Object.prototype.hasOwnProperty.call(optimistic, key) ? optimistic[key] : Boolean(episodeProgress?.[key]);
+    setOptimistic((current) => ({ ...current, [key]: !previous }));
+    setPendingKey(key);
+    const result = await Promise.resolve(onToggleEpisode({ ...data.show, __homeDetails: data.show }, episode));
+    if (result === false) {
+      setOptimistic((current) => ({ ...current, [key]: previous }));
+      setPendingKey("");
+      return;
+    }
+    window.setTimeout(() => {
+      setOptimistic((current) => { const next = { ...current }; delete next[key]; return next; });
+      setPendingKey("");
+    }, 550);
+  };
+
+  return (
+    <section className="mg-home-v3-season-page">
+      <header><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><div><h2>Season {seasonNumber}</h2><p>{titleOf(data.show)}</p></div></header>
+      {seasons.length > 0 && <div className="mg-home-v3-season-selector">{seasons.map((season) => {
+        const stats = homeSeasonProgress(data.show, season, episodeProgress, optimistic, Number(season.season_number) === seasonNumber ? data.episodes : []);
+        return <button key={season.season_number} className={`${Number(season.season_number) === seasonNumber ? "active" : ""}${stats.complete ? " complete" : stats.progress > 0 ? " partial" : ""}`} style={{ "--season-progress": `${Math.round(stats.progress * 100)}%` }} type="button" onClick={() => setSeasonNumber(Number(season.season_number))}><span>{season.poster_path ? <img src={posterUrl(season.poster_path, "w342")} alt="" /> : null}{stats.complete ? <i><Icon name="check" /></i> : stats.progress > 0 ? <em /> : null}</span><strong>Season {season.season_number}</strong><small>{stats.watchedCount > 0 ? `${stats.watchedCount}/${stats.releasedCount} watched` : `${season.episode_count || 0} eps.`}</small></button>;
+      })}</div>}
+      <div className="mg-home-v3-season-list">{data.episodes.map((episode, index) => {
+        const key = episodeKey(showId, episode.season_number, episode.episode_number);
+        const watched = Object.prototype.hasOwnProperty.call(optimistic, key) ? optimistic[key] : Boolean(episodeProgress?.[key]);
+        const released = homeReleasedEpisode(episode);
+        const badge = index === 0 ? "Premiere" : index === data.episodes.length - 1 ? "Finale" : "";
+        return <article key={episode.id || key} className={`${watched ? "watched" : ""}${!released ? " unreleased" : ""}`}><button className="mg-home-v3-season-open" type="button" onClick={() => onOpenEpisode(data.show, episode)}><span>{episode.still_path ? <img src={backdropUrl(episode.still_path, "w500")} alt="" /> : null}{badge && <b className="mg-home-v3-season-badge">{badge}</b>}</span><div><strong>{episode.name || `Episode ${episode.episode_number}`}</strong><small>S{episode.season_number} · E{episode.episode_number}</small><em>{episode.runtime ? `${episode.runtime} min` : released ? "Released" : "Unreleased"}</em></div></button><button className={`mg-home-v3-season-toggle${pendingKey === key ? " loading" : ""}`} type="button" disabled={!released || Boolean(pendingKey)} aria-pressed={watched} aria-label={`Mark episode ${watched ? "unwatched" : "watched"}`} onClick={(event) => toggleEpisode(event, episode)}>{pendingKey === key ? <span /> : <Icon name="check" />}</button></article>;
+      })}</div>
+      {data.loading && <div className="mg-home-v3-episode-loading">Loading season...</div>}
     </section>
   );
 }
@@ -5202,7 +5694,7 @@ function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, o
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onAdvanceEpisode, apiFetch }) {
+function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onToggleEpisode, apiFetch }) {
   const [storySheet, setStorySheet] = useState(null);
   const [discoveryIndex, setDiscoveryIndex] = useState(null);
   const [homeView, setHomeView] = useState(null);
@@ -5382,17 +5874,33 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
     setHomeView({ type: "shelf", key, title, items });
     window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
   };
+  const openFriends = () => {
+    homeScrollRef.current = scrollContainer()?.scrollTop || 0;
+    setHomeView({ type: "friends", title: "From Friends", items: homeData.friendItems });
+    window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
+  };
   const openEpisode = (show, episode, parent = "home") => {
     if (!episode) return;
-    if (homeView?.type === "shelf") shelfScrollRef.current = scrollContainer()?.scrollTop || 0;
-    else homeScrollRef.current = scrollContainer()?.scrollTop || 0;
-    setHomeView({ type: "episode", show, episode, parent: parent === "shelf" ? homeView : null });
+    const currentScroll = scrollContainer()?.scrollTop || 0;
+    if (homeView) shelfScrollRef.current = currentScroll;
+    else homeScrollRef.current = currentScroll;
+    const parentView = parent === "home" || !homeView ? null : { ...homeView, scrollTop: currentScroll };
+    setHomeView({ type: "episode", show, episode, parent: parentView });
+    window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
+  };
+  const openSeason = (show, seasonNumber, episode) => {
+    const currentScroll = scrollContainer()?.scrollTop || 0;
+    const parentView = homeView ? { ...homeView, ...(homeView.type === "episode" ? { show, episode } : {}), scrollTop: currentScroll } : null;
+    setHomeView({ type: "season", show, seasonNumber, episode, parent: parentView });
     window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = 0; });
   };
   const closeHomeView = () => {
-    if (homeView?.type === "episode" && homeView.parent) {
-      setHomeView(homeView.parent);
-      window.requestAnimationFrame(() => { const node = scrollContainer(); if (node) node.scrollTop = shelfScrollRef.current; });
+    if (homeView?.parent) {
+      const parentView = homeView.parent;
+      setHomeView(parentView);
+      const restore = () => { const node = scrollContainer(); if (node) node.scrollTop = parentView.scrollTop || 0; };
+      window.requestAnimationFrame(restore);
+      window.setTimeout(restore, 100);
       return;
     }
     setHomeView(null);
@@ -5434,19 +5942,25 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
   if (homeView?.type === "shelf") {
     return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeShelfPage shelf={homeView} watchlist={watchlist} watched={watched} ratings={ratings} onBack={closeHomeView} onOpen={onOpen} onOpenEpisode={openEpisode} /></div>;
   }
+  if (homeView?.type === "friends") {
+    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeFriendsPage shelf={homeView} onBack={closeHomeView} onOpen={onOpen} /></div>;
+  }
   if (homeView?.type === "episode") {
-    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeEpisodeDetails show={homeView.show} episodeSeed={homeView.episode} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeHomeView} onWatched={onAdvanceEpisode} onOpenPerson={onOpenPerson} /></div>;
+    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeEpisodeDetails key={`${homeView.show.id}-${homeView.episode.season_number}-${homeView.episode.episode_number}`} show={homeView.show} episodeSeed={homeView.episode} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeHomeView} onToggleEpisode={onToggleEpisode} onOpenPerson={onOpenPerson} onOpenSeason={openSeason} /></div>;
+  }
+  if (homeView?.type === "season") {
+    return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeSeasonPage key={`${homeView.show.id}-${homeView.seasonNumber}`} show={homeView.show} initialSeason={homeView.seasonNumber} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeHomeView} onOpenEpisode={(show, episode) => openEpisode(show, episode, "current")} onToggleEpisode={onToggleEpisode} /></div>;
   }
 
   return (
     <div ref={homeRootRef} className="mg-home-v3">
       <HomeStories user={user} onOpenStory={setStorySheet} />
       <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
-      <ContinueWatchingRow items={homeData.continueItems} onOpenEpisode={openEpisode} onWatched={onAdvanceEpisode} onSeeAll={() => openShelf("continue", "Continue Watching", homeData.continueItems)} />
+      <ContinueWatchingRow items={homeData.continueItems} episodeProgress={episodeProgress} onOpenEpisode={openEpisode} onToggleEpisode={onToggleEpisode} onSeeAll={() => openShelf("continue", "Continue Watching", homeData.continueItems)} />
       {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start" onSeeAll={() => openShelf("start", "Start Watching", homeData.startWatching)}>
         <HomeAppendableRail shelfKey="start" className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} />
+      <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} onSeeAll={openFriends} />
       {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste" onSeeAll={() => openShelf("taste", "Because of Your Taste", homeData.tasteItems)}>
         <HomeAppendableRail shelfKey="taste" className="mg-home-v3-rail--taste" items={homeData.tasteItems} renderItem={(item) => {
             const reason = item.__recReasons?.find((value) => /^(because|more like)/i.test(value));
@@ -11654,6 +12168,23 @@ export default function Home() {
     return applyEpisodeWatched(show, episode, season, showDetails, new Date().toISOString());
   }
 
+  function toggleHomeEpisodeWatched(show, episode) {
+    const showDetails = show?.__homeDetails || show;
+    if (!showDetails?.id || !episode?.season_number || !episode?.episode_number) return false;
+    const normalized = { ...showDetails, ...show, id: showDetails.id, media_type: "tv" };
+    const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
+    if (episodeProgress[progressKey]) {
+      const nextEpisodes = { ...episodeProgress };
+      delete nextEpisodes[progressKey];
+      syncEpisodeProgress(normalized, showDetails, nextEpisodes);
+      logActivity("episode_unwatched", normalized, { episodeKey: progressKey, seasonNumber: episode.season_number, episodeNumber: episode.episode_number });
+      return { watched: false };
+    }
+    const season = normalSeasonsOf(showDetails).find((entry) => Number(entry.season_number) === Number(episode.season_number)) || { season_number: episode.season_number };
+    const updated = applyEpisodeWatched(normalized, episode, season, showDetails, new Date().toISOString());
+    return updated ? { watched: true } : false;
+  }
+
   function syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt) {
     const source = showDetails?.id === normalized.id ? showDetails : details;
     const knownKeys = normalSeasonsOf(source || {}).flatMap((seasonItem) => (
@@ -12025,7 +12556,7 @@ export default function Home() {
   } else if (activeSocial === "settings") {
     screen = <SettingsScreen user={supabaseUser} profile={profileIdentity} syncStatus={syncStatus} onBack={() => setActiveSocial(null)} onLogout={handleLogout} onSaveProfile={handleProfileSave} onSafetyAction={openSafetyAction} />;
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPerson={openPerson} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onAdvanceEpisode={advanceHomeEpisode} apiFetch={apiFetch} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPerson={openPerson} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onToggleEpisode={toggleHomeEpisodeWatched} apiFetch={apiFetch} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
