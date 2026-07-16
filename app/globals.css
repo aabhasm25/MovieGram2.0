@@ -645,7 +645,7 @@
   line-height: 12px;
 }
 
-.mg-home-v3-progress-art i {
+.mg-home-v3-progress-art > i {
   position: absolute;
   z-index: 3;
   right: 0;
@@ -658,11 +658,46 @@
   background: rgba(255, 255, 255, .56);
 }
 
-.mg-home-v3-progress-art i b {
+.mg-home-v3-progress-art > i b {
   display: block;
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #d8b4fe, #8b5cf6 72%, #6d28d9);
+}
+
+.mg-home-v3-progress-position {
+  position: absolute;
+  z-index: 4;
+  bottom: 11px;
+  left: 8px;
+  display: inline-flex;
+  max-width: calc(100% - 16px);
+  min-height: 22px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(8, 6, 14, .68);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(9px);
+}
+
+.mg-home-v3-progress-position > i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #a855f7;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, .2);
 }
 
 .mg-home-v3-progress-check {

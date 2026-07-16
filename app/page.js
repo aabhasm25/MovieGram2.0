@@ -3752,6 +3752,11 @@ function ContinueWatchingCard({ item, episodeProgress, onOpenEpisode, onToggleEp
     : posterUrl(item.poster_path, "w500");
   const episodeKeyValue = `${nextEpisode.season_number}:${nextEpisode.episode_number}`;
   const watched = Boolean(episodeProgress?.[episodeKey(item.id, nextEpisode.season_number, nextEpisode.episode_number)]);
+  const seasonEpisodeCount = Number((item.__homeDetails?.seasons || item.seasons || [])
+    .find((season) => Number(season.season_number) === Number(nextEpisode.season_number))?.episode_count || 0);
+  const isPremiere = Number(nextEpisode.episode_number) === 1;
+  const isFinale = seasonEpisodeCount > 0 && Number(nextEpisode.episode_number) === seasonEpisodeCount;
+  const positionBadge = isPremiere && isFinale ? "Premiere \u00b7 Finale" : isPremiere ? "Premiere" : isFinale ? "Finale" : "";
 
   useEffect(() => () => {
     if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
@@ -3777,6 +3782,7 @@ function ContinueWatchingCard({ item, episodeProgress, onOpenEpisode, onToggleEp
         <button type="button" onClick={() => onOpenEpisode(item, nextEpisode)}>
           <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = artworkPath ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
         </button>
+        {positionBadge && <span className="mg-home-v3-progress-position"><i aria-hidden="true" />{positionBadge}</span>}
         <i><b style={{ width: `${progress}%` }} /></i>
       </div>
       <div className="mg-home-v3-progress-copy">
@@ -5337,9 +5343,14 @@ function homeReelContent(reel = {}) {
   };
 }
 
-function homeReelEmbedUrl(reel = {}, muted = true) {
+function homeReelEmbedUrl(reel = {}, muted = true, playback = {}) {
   const youtubeId = getYouTubeVideoId(reel);
-  if (youtubeId) return buildYouTubeEmbedUrl(youtubeId, muted);
+  if (youtubeId) {
+    const url = new URL(buildYouTubeEmbedUrl(youtubeId, muted));
+    url.searchParams.set("autoplay", playback.playing === false ? "0" : "1");
+    if (Number(playback.currentTime) > 0) url.searchParams.set("start", String(Math.max(0, Math.floor(playback.currentTime))));
+    return url.toString();
+  }
   return reel.embedUrl || reel.embed_url || "";
 }
 
@@ -5451,6 +5462,20 @@ function useHomePlayableReels(seedItems, apiFetch) {
 }
 
 const HOME_REEL_SOUND_SESSION_KEY = "moviegram.homeReelsSound.v1";
+let activeHomeDiscoveryMedia = null;
+
+function claimHomeDiscoveryMedia(controller) {
+  if (activeHomeDiscoveryMedia && activeHomeDiscoveryMedia !== controller) activeHomeDiscoveryMedia.pause(false);
+  activeHomeDiscoveryMedia = controller;
+}
+
+function releaseHomeDiscoveryMedia(controller) {
+  if (activeHomeDiscoveryMedia === controller) activeHomeDiscoveryMedia = null;
+}
+
+function pauseActiveHomeDiscoveryMedia(report = true) {
+  activeHomeDiscoveryMedia?.pause?.(report);
+}
 
 function readHomeReelSoundPreference() {
   if (typeof window === "undefined") return true;
@@ -5463,29 +5488,163 @@ function saveHomeReelSoundPreference(enabled) {
   window.sessionStorage.setItem(HOME_REEL_SOUND_SESSION_KEY, enabled ? "on" : "off");
 }
 
-function HomeReelMedia({ reel, active, onOpen, priority = false, soundEnabled = false, onEnableSound }) {
+function HomeReelMedia({ reel, index = 0, surface = "inline", active, onOpen, priority = false, soundEnabled = false, onEnableSound, playbackRef, interactive = false }) {
   const videoRef = useRef(null);
+  const iframeRef = useRef(null);
+  const restoredTransferRef = useRef("");
+  const currentTimeRef = useRef(0);
+  const playingRef = useRef(false);
+  const playStartedAtRef = useRef(0);
+  const playStartedMediaTimeRef = useRef(0);
+  const openingRef = useRef(false);
+  const openTimerRef = useRef(null);
   const [muted, setMuted] = useState(!soundEnabled);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [showMutedHint, setShowMutedHint] = useState(false);
   const content = homeReelContent(reel);
+  const reelId = reelIdentity(reel);
   const directUrl = homeInlineVideoUrl(reel);
-  const embedUrl = homeReelEmbedUrl(reel, muted);
+  const transfer = playbackRef?.current?.reelId === reelId ? playbackRef.current : null;
+  const embedPlaybackRef = useRef({ key: "", value: {} });
+  const embedPlaybackKey = `${surface}:${reelId}:${transfer?.transferId || 0}`;
+  if (embedPlaybackRef.current.key !== embedPlaybackKey) embedPlaybackRef.current = { key: embedPlaybackKey, value: transfer || {} };
+  const embedUrl = homeReelEmbedUrl(reel, transfer?.muted ?? muted, embedPlaybackRef.current.value);
   const thumbnail = reel.thumbnailUrl || reel.thumbnail_url || backdropUrl(content.backdrop_path || content.poster_path, "w780");
   const presentation = homeReelPresentation(reel);
+
+  const reportPlayback = (patch = {}) => {
+    if (!playbackRef) return;
+    const current = playbackRef.current || {};
+    if (current.owner && current.owner !== surface && !active) return;
+    playbackRef.current = {
+      ...current,
+      reelId,
+      index,
+      owner: surface,
+      currentTime: Number.isFinite(Number(patch.currentTime)) ? Number(patch.currentTime) : currentTimeRef.current,
+      playing: patch.playing ?? playingRef.current,
+      muted: patch.muted ?? muted,
+      soundEnabled: patch.soundEnabled ?? soundEnabled
+    };
+  };
+
+  const sendEmbedCommand = (func, args = []) => {
+    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+  };
+
+  const captureEmbedClock = () => {
+    if (!playingRef.current || !playStartedAtRef.current) return currentTimeRef.current;
+    currentTimeRef.current = playStartedMediaTimeRef.current + ((Date.now() - playStartedAtRef.current) / 1000);
+    playStartedMediaTimeRef.current = currentTimeRef.current;
+    playStartedAtRef.current = Date.now();
+    return currentTimeRef.current;
+  };
+
+  const startEmbedClock = () => {
+    playStartedMediaTimeRef.current = currentTimeRef.current;
+    playStartedAtRef.current = Date.now();
+  };
+
+  const pauseMedia = (report = true) => {
+    const video = videoRef.current;
+    if (video) {
+      currentTimeRef.current = Number(video.currentTime || currentTimeRef.current || 0);
+      video.pause();
+    } else captureEmbedClock();
+    sendEmbedCommand("pauseVideo");
+    playingRef.current = false;
+    setIsPlaying(false);
+    if (report) reportPlayback({ playing: false });
+  };
+
+  const controllerRef = useRef(null);
+  if (!controllerRef.current) controllerRef.current = { pause: pauseMedia };
+  controllerRef.current.pause = pauseMedia;
+
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-    if (active) {
-      video.muted = !soundEnabled;
-      setMuted(!soundEnabled);
-      const attempt = video.play();
-      if (attempt?.catch) attempt.catch(() => {
-        video.muted = true;
-        setMuted(true);
-        video.play().catch(() => {});
-      });
-    } else video.pause();
-  }, [active, soundEnabled]);
+    if (!active) {
+      pauseMedia(false);
+      releaseHomeDiscoveryMedia(controllerRef.current);
+      return undefined;
+    }
+
+    claimHomeDiscoveryMedia(controllerRef.current);
+    const snapshot = playbackRef?.current?.reelId === reelId ? playbackRef.current : null;
+    const transferKey = snapshot ? `${snapshot.transferId || 0}:${surface}:${reelId}` : "";
+    const shouldPlay = snapshot?.playing !== false;
+    const preferredMuted = snapshot?.muted ?? !soundEnabled;
+    currentTimeRef.current = Number(snapshot?.currentTime || currentTimeRef.current || 0);
+    playingRef.current = shouldPlay;
+    if (shouldPlay && !video) startEmbedClock();
+    setIsPlaying(shouldPlay);
+    setMuted(preferredMuted);
+
+    if (video) {
+      video.muted = preferredMuted;
+      const restoreTime = () => {
+        if (!transferKey || restoredTransferRef.current === transferKey || !Number.isFinite(video.duration)) return;
+        video.currentTime = Math.min(currentTimeRef.current, Math.max(0, video.duration - .05));
+        restoredTransferRef.current = transferKey;
+      };
+      restoreTime();
+      video.addEventListener("loadedmetadata", restoreTime, { once: true });
+      if (shouldPlay) {
+        const attempt = video.play();
+        if (attempt?.catch) attempt.catch(() => {
+          video.muted = true;
+          setMuted(true);
+          reportPlayback({ muted: true });
+          video.play().catch(() => {});
+        });
+      } else video.pause();
+    } else if (iframeRef.current) {
+      if (currentTimeRef.current > 0) sendEmbedCommand("seekTo", [currentTimeRef.current, true]);
+      sendEmbedCommand(preferredMuted ? "mute" : "unMute");
+      sendEmbedCommand(shouldPlay ? "playVideo" : "pauseVideo");
+    }
+    reportPlayback({ playing: shouldPlay, muted: preferredMuted });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") pauseMedia(true);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      pauseMedia(false);
+      releaseHomeDiscoveryMedia(controllerRef.current);
+    };
+  }, [active, reelId, soundEnabled, surface]);
+
+  useEffect(() => {
+    const frame = iframeRef.current;
+    if (!frame) return undefined;
+    const handleMessage = (event) => {
+      if (event.source !== frame.contentWindow) return;
+      let payload = event.data;
+      if (typeof payload === "string") {
+        try { payload = JSON.parse(payload); } catch { return; }
+      }
+      if (payload?.event === "infoDelivery") {
+        if (Number.isFinite(Number(payload.info?.currentTime))) {
+          currentTimeRef.current = Number(payload.info.currentTime);
+          if (playingRef.current) startEmbedClock();
+          reportPlayback({ currentTime: currentTimeRef.current });
+        }
+        if (Number.isFinite(Number(payload.info?.playerState))) {
+          const playing = Number(payload.info.playerState) === 1;
+          if (playingRef.current && !playing) captureEmbedClock();
+          playingRef.current = playing;
+          if (playing) startEmbedClock();
+          setIsPlaying(playing);
+          reportPlayback({ playing });
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [reelId, surface]);
+
   useEffect(() => {
     if (!active || !muted || !directUrl) {
       setShowMutedHint(false);
@@ -5495,30 +5654,79 @@ function HomeReelMedia({ reel, active, onOpen, priority = false, soundEnabled = 
     const timer = window.setTimeout(() => setShowMutedHint(false), 1800);
     return () => window.clearTimeout(timer);
   }, [active, directUrl, muted]);
+  useEffect(() => () => {
+    if (openTimerRef.current) window.clearTimeout(openTimerRef.current);
+  }, []);
   const handleOpen = () => {
     const video = videoRef.current;
+    if (onOpen) {
+      if (openingRef.current) return;
+      const wasPlaying = video ? !video.paused : playingRef.current;
+      const transferredMuted = video ? video.muted : muted;
+      const finishOpen = () => {
+        if (!openingRef.current) return;
+        openingRef.current = false;
+        if (openTimerRef.current) window.clearTimeout(openTimerRef.current);
+        openTimerRef.current = null;
+        const snapshot = {
+          reelId,
+          index,
+          owner: surface,
+          currentTime: video ? Number(video.currentTime || 0) : currentTimeRef.current,
+          playing: wasPlaying,
+          muted: transferredMuted,
+          soundEnabled
+        };
+        pauseMedia(false);
+        if (playbackRef) playbackRef.current = snapshot;
+        onOpen(snapshot);
+      };
+      openingRef.current = true;
+      if (!video && iframeRef.current) {
+        // Ask once for the embed clock before transferring playback ownership.
+        captureEmbedClock();
+        sendEmbedCommand("getCurrentTime");
+        sendEmbedCommand("pauseVideo");
+        playingRef.current = false;
+        setIsPlaying(false);
+        openTimerRef.current = window.setTimeout(finishOpen, 140);
+      } else finishOpen();
+      return;
+    }
     if (active && video && video.muted) {
       video.muted = false;
       setMuted(false);
       onEnableSound?.();
+      reportPlayback({ muted: false, soundEnabled: true });
       video.play().catch(() => {
         video.muted = true;
         setMuted(true);
       });
+      return;
     }
-    onOpen?.();
+    if (!interactive) return;
+    if (playingRef.current) pauseMedia(true);
+    else {
+      claimHomeDiscoveryMedia(controllerRef.current);
+      playingRef.current = true;
+      if (!video) startEmbedClock();
+      setIsPlaying(true);
+      if (video) video.play().catch(() => pauseMedia(true));
+      else sendEmbedCommand("playVideo");
+      reportPlayback({ playing: true });
+    }
   };
   return (
     <div className={`mg-home-v3-reel-media is-${presentation}`}>
       <img className="mg-home-v3-reel-backdrop" src={thumbnail || BACKDROP_FALLBACK} alt="" aria-hidden="true" loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
       {directUrl ? (
-        <video className="mg-home-v3-reel-content" ref={videoRef} src={directUrl} muted={muted} playsInline loop preload={priority ? "metadata" : "none"} poster={thumbnail} />
+        <video className="mg-home-v3-reel-content" ref={videoRef} src={directUrl} muted={muted} playsInline loop preload={priority ? "metadata" : "none"} poster={thumbnail} onTimeUpdate={(event) => { currentTimeRef.current = event.currentTarget.currentTime; reportPlayback({ currentTime: currentTimeRef.current }); }} onPlay={() => { playingRef.current = true; setIsPlaying(true); reportPlayback({ playing: true }); }} onPause={() => { playingRef.current = false; setIsPlaying(false); }} />
       ) : active && embedUrl ? (
-        <iframe className="mg-home-v3-reel-content" src={embedUrl} title={reel.videoTitle || titleOf(content)} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading={priority ? "eager" : "lazy"} />
+        <iframe className="mg-home-v3-reel-content" ref={iframeRef} src={embedUrl} title={reel.videoTitle || titleOf(content)} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading={priority ? "eager" : "lazy"} onLoad={() => { iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: `home-${surface}-${index}` }), "*"); sendEmbedCommand("addEventListener", ["onStateChange"]); if (currentTimeRef.current > 0) sendEmbedCommand("seekTo", [currentTimeRef.current, true]); sendEmbedCommand((playbackRef?.current?.playing === false) ? "pauseVideo" : "playVideo"); }} />
       ) : (
         <img className="mg-home-v3-reel-content" src={thumbnail || BACKDROP_FALLBACK} alt={titleOf(content)} loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
       )}
-      {(onOpen || directUrl) && <button className="mg-home-v3-reel-open" type="button" onClick={handleOpen} aria-label={active && muted ? `Enable sound for ${titleOf(content)}` : onOpen ? `Open ${titleOf(content)} in Home discovery player` : `Play ${titleOf(content)}`}>{!active && <Icon name="play" />}</button>}
+      {(onOpen || directUrl || interactive) && <button className="mg-home-v3-reel-open" type="button" onClick={handleOpen} aria-label={onOpen ? `Open ${titleOf(content)} in Home discovery player` : isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{(!active || (interactive && !isPlaying)) && <Icon name="play" />}</button>}
       {showMutedHint && <small className="mg-home-v3-reel-muted-hint">Tap for sound</small>}
     </div>
   );
@@ -5534,7 +5742,7 @@ function shareHomeReel(reel) {
   navigator?.clipboard?.writeText(url).catch(() => {});
 }
 
-function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpenDetails, onWatchlist, onWatchAsap }) {
+function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpenDetails, onWatchlist, onWatchAsap, playbackOwner, playbackRef }) {
   const [commentItem, setCommentItem] = useState(null);
   const [activeVideoIndex, setActiveVideoIndex] = useState(-1);
   const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
@@ -5613,7 +5821,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpen
                 <span><strong>{reel.channelTitle || "MovieGram"}</strong><small>{reel.reason || "Suggested for you"}</small></span>
                 <small>{reelTypeLabel(reel) || "Reel"}</small>
               </header>
-              <HomeReelMedia reel={reel} active={activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} onOpen={() => onOpenReels(index)} />
+              <HomeReelMedia reel={reel} index={index} surface="inline" active={playbackOwner === "inline" && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onOpen={(snapshot) => onOpenReels(index, snapshot)} />
               <footer>
                 <strong>{titleOf(item)}</strong>
                 <div>
@@ -5644,7 +5852,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpen
   );
 }
 
-function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, onClose, onOpen, onWatchlist, onWatchAsap }) {
+function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, onClose, onOpen, onWatchlist, onWatchAsap, playbackRef }) {
   const [activeIndex, setActiveIndex] = useState(initialIndex || 0);
   const [commentItem, setCommentItem] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
@@ -5652,6 +5860,13 @@ function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, o
   const enableSound = () => {
     saveHomeReelSoundPreference(true);
     setSoundEnabled(true);
+  };
+  const closePlayer = (afterClose) => {
+    const wasPlaying = playbackRef?.current?.playing !== false;
+    pauseActiveHomeDiscoveryMedia(true);
+    const snapshot = { ...(playbackRef?.current || {}), playing: wasPlaying };
+    onClose(snapshot);
+    afterClose?.();
   };
   useEffect(() => {
     slideRefs.current[initialIndex]?.scrollIntoView({ block: "start" });
@@ -5668,19 +5883,19 @@ function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, o
   }, [items]);
   return (
     <section className="mg-home-v3-discovery-player" aria-label="Home discovery player">
-      <button className="mg-home-v3-discovery-back" type="button" onClick={onClose}><Icon name="back" /> Home</button>
+      <button className="mg-home-v3-discovery-back" type="button" onClick={() => closePlayer()}><Icon name="back" /> Home</button>
       <div className="mg-home-v3-discovery-player-list">
         {items.map((reel, index) => {
           const item = homeReelContent(reel);
           const id = `home-reel:${reelIdentity(reel)}`;
           return (
             <article ref={(node) => { slideRefs.current[index] = node; }} data-discovery-index={index} key={id}>
-              <HomeReelMedia reel={reel} active={activeIndex === index} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={enableSound} />
+              <HomeReelMedia reel={reel} index={index} surface="fullscreen" active={activeIndex === index} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} interactive />
               <div className="mg-home-v3-discovery-context"><strong>{titleOf(item)}</strong><small>{reel.reason || reelTypeLabel(reel) || "MovieGram discovery"}</small></div>
               <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
                 <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /><span>Like</span></button>
                 <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /><span>Comment</span></button>
-                <button type="button" onClick={() => { onClose(); onOpen(item); }}><Icon name="info" /><span>Details</span></button>
+                <button type="button" onClick={() => closePlayer(() => onOpen(item))}><Icon name="info" /><span>Details</span></button>
                 <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /><span>List</span></button>
                 <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /><span>ASAP</span></button>
                 <button type="button" onClick={() => shareHomeReel(reel)}><Icon name="send" /><span>Share</span></button>
@@ -5697,11 +5912,13 @@ function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, o
 function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onToggleEpisode, apiFetch }) {
   const [storySheet, setStorySheet] = useState(null);
   const [discoveryIndex, setDiscoveryIndex] = useState(null);
+  const [discoveryPlaybackOwner, setDiscoveryPlaybackOwner] = useState("inline");
   const [homeView, setHomeView] = useState(null);
   const homeRootRef = useRef(null);
   const homeScrollRef = useRef(0);
   const shelfScrollRef = useRef(0);
   const restoreHomeScrollRef = useRef(false);
+  const discoveryPlaybackRef = useRef({ owner: "inline", reelId: "", index: -1, currentTime: 0, playing: false, muted: true, soundEnabled: false, transferId: 0 });
   const watchedKeys = useMemo(() => new Set(Object.values(watched || {}).map(keyOf)), [watched]);
   const watchlistItems = useMemo(() => Object.values(watchlist || {}).filter((item) => !watchedKeys.has(keyOf(item))), [watchedKeys, watchlist]);
   const watchAsapItems = useMemo(() => watchlistItems.filter((item) => item.watch_asap || item.watchAsap), [watchlistItems]);
@@ -5915,12 +6132,27 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
     return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [homeView]);
 
-  const openDiscovery = (index) => {
+  const openDiscovery = (index, snapshot = {}) => {
     const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
     homeScrollRef.current = scrollContainer?.scrollTop || 0;
+    discoveryPlaybackRef.current = {
+      ...discoveryPlaybackRef.current,
+      ...snapshot,
+      index,
+      owner: "fullscreen",
+      transferId: Number(discoveryPlaybackRef.current.transferId || 0) + 1
+    };
+    setDiscoveryPlaybackOwner("fullscreen");
     setDiscoveryIndex(index);
   };
-  const closeDiscovery = () => {
+  const closeDiscovery = (snapshot = {}) => {
+    discoveryPlaybackRef.current = {
+      ...discoveryPlaybackRef.current,
+      ...snapshot,
+      owner: "inline",
+      transferId: Number(discoveryPlaybackRef.current.transferId || 0) + 1
+    };
+    setDiscoveryPlaybackOwner("inline");
     restoreHomeScrollRef.current = true;
     setDiscoveryIndex(null);
   };
@@ -5979,9 +6211,9 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
       {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent" onSeeAll={() => openShelf("recent", "Recently Opened", homeData.recentlyOpened)}>
         <HomeAppendableRail shelfKey="recent" className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
+      <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} playbackOwner={discoveryPlaybackOwner} playbackRef={discoveryPlaybackRef} />
       <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} apiFetch={apiFetch} />
-      {discoveryIndex !== null && <HomeDiscoveryPlayer items={playableHomeReels} initialIndex={discoveryIndex} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onClose={closeDiscovery} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />}
+      {discoveryIndex !== null && <HomeDiscoveryPlayer items={playableHomeReels} initialIndex={discoveryIndex} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onClose={closeDiscovery} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} playbackRef={discoveryPlaybackRef} />}
     </div>
   );
 }
