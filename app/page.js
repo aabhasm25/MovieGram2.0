@@ -3736,6 +3736,68 @@ function CastActorCard({ person, type, character, onOpenPerson }) {
   );
 }
 
+function ContinueWatchingCard({ item, onOpen, onWatched }) {
+  const [tickState, setTickState] = useState("idle");
+  const resetTimerRef = useRef(null);
+  const nextEpisode = item.__nextEpisode;
+  const progress = Math.max(1, Math.min(99, item.__seriesProgress));
+  const nextLabel = `S${nextEpisode.season_number} \u00b7 E${nextEpisode.episode_number}`;
+  const episodeLine = nextEpisode.name ? `${nextLabel} \u00b7 ${nextEpisode.name}` : nextLabel;
+  const remainingEpisodes = Math.max(0, Number(item.__releasedEpisodeCount || 0) - Number(item.__watchedEpisodeCount || 0));
+  const remainingLabel = `${remainingEpisodes} episode${remainingEpisodes === 1 ? "" : "s"} left`;
+  const episodeStill = nextEpisode.still_path || "";
+  const artworkPath = episodeStill || item.backdrop_path || "";
+  const artworkUrl = artworkPath
+    ? backdropUrl(artworkPath, "w780")
+    : posterUrl(item.poster_path, "w500");
+  const episodeKeyValue = `${nextEpisode.season_number}:${nextEpisode.episode_number}`;
+
+  useEffect(() => () => {
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+  }, []);
+
+  const markNextEpisodeWatched = async (event) => {
+    event.stopPropagation();
+    if (tickState !== "idle") return;
+    setTickState("loading");
+    try {
+      const result = await Promise.resolve(onWatched?.(item));
+      if (result === false) throw new Error("Episode progress was not updated");
+      setTickState("success");
+      resetTimerRef.current = window.setTimeout(() => setTickState("idle"), 650);
+    } catch {
+      setTickState("idle");
+    }
+  };
+
+  return (
+    <article className="mg-home-v3-progress-card" data-episode-key={episodeKeyValue}>
+      <div className={`mg-home-v3-progress-art${artworkPath ? " has-landscape" : " has-poster-fallback"}`} style={{ "--mg-home-object-position": item.home_focal_position || item.focal_position || "center" }}>
+        <button type="button" onClick={() => onOpen(item)}>
+          <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = artworkPath ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
+        </button>
+        <i><b style={{ width: `${progress}%` }} /></i>
+      </div>
+      <div className="mg-home-v3-progress-copy">
+        <button className="mg-home-v3-progress-details" type="button" onClick={() => onOpen(item)}>
+          <strong>{titleOf(item)}</strong>
+          <small>{episodeLine}</small>
+          <em>{remainingLabel}</em>
+        </button>
+        <button
+          className={`mg-home-v3-progress-check is-${tickState}`}
+          type="button"
+          disabled={tickState !== "idle"}
+          aria-label={`Mark ${nextLabel} watched for ${titleOf(item)}`}
+          onClick={markNextEpisodeWatched}
+        >
+          {tickState === "loading" ? <span aria-hidden="true" /> : <Icon name="check" />}
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function ContinueWatchingRow({ items, onOpen, onWatched }) {
   const rowItems = items
     .filter((item) => mediaType(item) === "tv" && item.__nextEpisode && Number.isFinite(item.__seriesProgress))
@@ -3746,27 +3808,7 @@ function ContinueWatchingRow({ items, onOpen, onWatched }) {
     <section className="mg-home-v3-section mg-home-v3-section--continue">
       <div className="mg-home-v3-section-head"><h2>Continue Watching</h2></div>
       <div className="mg-home-v3-rail mg-home-v3-rail--continue">
-        {rowItems.map((item) => {
-          const progress = Math.max(1, Math.min(99, item.__seriesProgress));
-          const nextLabel = `S${item.__nextEpisode.season_number} E${item.__nextEpisode.episode_number} next`;
-          const hasBackdrop = Boolean(item.backdrop_path);
-          const fallbackPoster = posterUrl(item.poster_path, "w500");
-          return (
-            <article key={keyOf(item)} className="mg-home-v3-progress-card">
-              <div className={`mg-home-v3-progress-art${hasBackdrop ? " has-landscape" : " has-poster-fallback"}`}>
-                <button type="button" onClick={() => onOpen(item)}>
-                  <img className="mg-home-v3-art-primary" src={hasBackdrop ? backdropUrl(item.backdrop_path, "w780") : fallbackPoster} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = hasBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
-                </button>
-                <button className="mg-home-v3-progress-check" type="button" aria-label={`Mark ${nextLabel} watched for ${titleOf(item)}`} onClick={() => onWatched?.(item)}><Icon name="check" /></button>
-                <i><b style={{ width: `${progress}%` }} /></i>
-              </div>
-              <button className="mg-home-v3-progress-copy" type="button" onClick={() => onOpen(item)}>
-                <strong>{titleOf(item)}</strong>
-                <small>{nextLabel}</small>
-              </button>
-            </article>
-          );
-        })}
+        {rowItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} onOpen={onOpen} onWatched={onWatched} />)}
       </div>
     </section>
   );
@@ -4271,13 +4313,19 @@ function HomeHero({ items, watchlist, onOpen, onWatchlist }) {
   );
 }
 
-function HomeRailCard({ item, badge, action = "open", variant = "standard", saved, watchAsap, onOpen, onWatchlist, onWatchAsap, onWatched }) {
+function HomeRailCard({ item, badge, action = "open", variant = "standard", saved, watchAsap, showArtwork, onOpen, onWatchlist, onWatchAsap, onWatched }) {
   const isShow = mediaType(item) === "tv";
-  const hasShowBackdrop = isShow && Boolean(item.backdrop_path);
+  const selectedShowArtwork = isShow ? { path: item.poster_path || "", kind: "poster", position: "center" } : null;
+  const hasShowBackdrop = isShow && selectedShowArtwork?.kind !== "poster" && Boolean(selectedShowArtwork?.path);
   const useBackdrop = hasShowBackdrop || (!isShow && !item.poster_path && Boolean(item.backdrop_path));
-  const artworkUrl = useBackdrop ? backdropUrl(item.backdrop_path, "w780") : posterUrl(item.poster_path, "w500");
-  const focalPosition = item.home_focal_position || item.focal_position || item.object_position || (isShow ? "center" : "50% 20%");
+  const artworkPath = isShow ? selectedShowArtwork?.path : useBackdrop ? item.backdrop_path : item.poster_path;
+  const artworkUrl = useBackdrop ? backdropUrl(artworkPath, "w780") : posterUrl(artworkPath, "w500");
+  const focalPosition = selectedShowArtwork?.position || item.home_focal_position || item.focal_position || item.object_position || (isShow ? "center" : "50% 20%");
   const runtime = Number(item.runtime || item.episode_run_time?.[0] || 0);
+  const year = yearOf(item);
+  const metadata = variant === "recent"
+    ? `${isShow ? "TV" : "Movie"} · ${year}`
+    : `${badge && /^(ASAP|Watchlist)$/i.test(badge) ? `${badge} - ` : ""}${isShow ? "TV" : "Movie"} - ${runtime ? `${runtime}m` : year}`;
   const showAction = action !== "open";
   const handleMainAction = (event) => {
     event.stopPropagation();
@@ -4287,7 +4335,7 @@ function HomeRailCard({ item, badge, action = "open", variant = "standard", save
   };
   return (
     <article className={`mg-home-v3-card mg-home-v3-card--${variant}${isShow ? " is-tv" : " is-movie"}`}>
-      <div className={`mg-home-v3-card-art${isShow ? hasShowBackdrop ? " has-landscape" : " has-poster-fallback" : " has-poster"}`} style={{ "--mg-home-object-position": focalPosition }}>
+      <div className={`mg-home-v3-card-art${isShow ? ` has-show-${selectedShowArtwork?.kind || "poster"}` : " has-poster"}`} style={{ "--mg-home-object-position": focalPosition }}>
         <button type="button" onClick={() => onOpen(item)}>
           <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = useBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
         </button>
@@ -4297,7 +4345,7 @@ function HomeRailCard({ item, badge, action = "open", variant = "standard", save
       </div>
       <button className="mg-home-v3-card-copy" type="button" onClick={() => onOpen(item)}>
         <strong>{titleOf(item)}</strong>
-        <small>{badge && /^(ASAP|Watchlist)$/i.test(badge) ? `${badge} - ` : ""}{isShow ? "TV" : "Movie"} - {runtime ? `${runtime}m` : yearOf(item)}</small>
+        <small>{metadata}</small>
       </button>
     </article>
   );
@@ -4307,8 +4355,10 @@ function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8
   const mountedLimit = Math.min(items.length, 48);
   const [visibleCount, setVisibleCount] = useState(() => Math.min(initialCount, mountedLimit));
   const tickingRef = useRef(false);
+  const railRef = useRef(null);
   useEffect(() => {
     setVisibleCount(Math.min(initialCount, mountedLimit));
+    if (railRef.current) railRef.current.scrollLeft = 0;
   }, [initialCount, items, mountedLimit]);
   const appendIfNeeded = (event) => {
     if (tickingRef.current || visibleCount >= mountedLimit) return;
@@ -4323,7 +4373,7 @@ function HomeAppendableRail({ className = "", items, initialCount = 10, step = 8
     });
   };
   return (
-    <div className={`mg-home-v3-rail ${className}`.trim()} onScroll={appendIfNeeded}>
+    <div ref={railRef} className={`mg-home-v3-rail ${className}`.trim()} onScroll={appendIfNeeded}>
       {items.slice(0, visibleCount).map(renderItem)}
     </div>
   );
@@ -4414,6 +4464,7 @@ function isHomeAnimeItem(item = {}) {
 }
 
 const HOME_SERIES_CACHE_KEY = "moviegram.homeSeriesDetails.v1";
+const HOME_SHOW_ART_CACHE_KEY = "moviegram.homeShowArtwork.v2";
 const HOME_REELS_CACHE_KEY = "moviegram.homePlayableReels.v1";
 
 function readHomeCache(key, fallback) {
@@ -4440,12 +4491,17 @@ function releasedEpisodeMap(details = {}) {
   });
 }
 
-function deriveHomeSeriesProgress(details, episodeProgress = {}) {
+function deriveHomeSeriesProgress(details, episodeProgress = {}, exactNextEpisode = null) {
   if (!details?.id || mediaType(details) !== "tv") return null;
   const releasedEpisodes = releasedEpisodeMap(details);
   if (!releasedEpisodes.length) return null;
   const watchedCount = releasedEpisodes.filter((episode) => episodeProgress[episodeKey(details.id, episode.season_number, episode.episode_number)]).length;
-  const nextEpisode = releasedEpisodes.find((episode) => !episodeProgress[episodeKey(details.id, episode.season_number, episode.episode_number)]);
+  const nextEpisodeBase = releasedEpisodes.find((episode) => !episodeProgress[episodeKey(details.id, episode.season_number, episode.episode_number)]);
+  const nextEpisode = nextEpisodeBase && exactNextEpisode
+    && Number(exactNextEpisode.season_number) === Number(nextEpisodeBase.season_number)
+    && Number(exactNextEpisode.episode_number) === Number(nextEpisodeBase.episode_number)
+    ? { ...nextEpisodeBase, ...exactNextEpisode }
+    : nextEpisodeBase;
   if (!nextEpisode || watchedCount < 1) return null;
   return {
     ...details,
@@ -4496,10 +4552,42 @@ function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
         }
       }));
       if (!alive) return;
-      persist(HOME_SERIES_CACHE_KEY, cache);
-      setItems(settled
+      const progressSeeds = settled
         .filter((result) => result.status === "fulfilled")
         .map((result) => deriveHomeSeriesProgress(result.value, episodeProgress))
+        .filter(Boolean);
+      const enriched = await Promise.allSettled(progressSeeds.map(async (progressItem) => {
+        const showId = Number(progressItem.id);
+        const seasonNumber = Number(progressItem.__nextEpisode.season_number);
+        const seasonCache = cache[showId]?.seasons?.[seasonNumber];
+        const seasonFresh = seasonCache?.timestamp && Date.now() - seasonCache.timestamp < HOME_CACHE_TTL_MS && Array.isArray(seasonCache.episodes);
+        let episodes = seasonFresh ? seasonCache.episodes : null;
+        if (!episodes) {
+          try {
+            const seasonDetails = await apiFetch(`/tv/${showId}/season/${seasonNumber}`);
+            episodes = Array.isArray(seasonDetails?.episodes) ? seasonDetails.episodes : [];
+            cache[showId] = {
+              ...(cache[showId] || {}),
+              seasons: {
+                ...(cache[showId]?.seasons || {}),
+                [seasonNumber]: { timestamp: Date.now(), episodes }
+              }
+            };
+          } catch {
+            episodes = seasonCache?.episodes || [];
+          }
+        }
+        const exactEpisode = episodes.find((episode) => (
+          Number(episode.season_number) === seasonNumber
+          && Number(episode.episode_number) === Number(progressItem.__nextEpisode.episode_number)
+        ));
+        return deriveHomeSeriesProgress(progressItem.__homeDetails || progressItem, episodeProgress, exactEpisode);
+      }));
+      if (!alive) return;
+      persist(HOME_SERIES_CACHE_KEY, cache);
+      setItems(enriched
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
         .filter(Boolean)
         .sort((a, b) => b.__watchedEpisodeCount - a.__watchedEpisodeCount));
     }
@@ -4508,6 +4596,90 @@ function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
   }, [apiFetch, candidateMap, episodeProgress, requestKey]);
 
   return items;
+}
+
+function selectHomeShowArtwork(item = {}, hydrated = {}) {
+  const keyArtPath = hydrated.key_art_path || item.home_key_art_path || item.key_art_path || "";
+  const seasonArtPath = hydrated.season_art_path || item.season_poster_path || "";
+  const backdropPath = hydrated.backdrop_path || item.backdrop_path || item.__homeDetails?.backdrop_path || "";
+  const stillPath = item.still_path || item.episode_still_path || item.season_still_path || "";
+  const posterPath = hydrated.poster_path || item.poster_path || item.__homeDetails?.poster_path || "";
+  if (keyArtPath) return { path: keyArtPath, kind: "key-art", position: item.home_focal_position || item.focal_position || "center" };
+  if (seasonArtPath) return { path: seasonArtPath, kind: "season", position: item.home_focal_position || item.focal_position || "50% 20%" };
+  if (posterPath) return { path: posterPath, kind: "poster", position: item.home_focal_position || item.focal_position || "50% 20%" };
+  if (backdropPath) return { path: backdropPath, kind: "backdrop", position: item.home_focal_position || item.focal_position || "center" };
+  return { path: stillPath, kind: "still", position: item.home_focal_position || item.focal_position || "center" };
+}
+
+function useHomeShowArtwork(items, apiFetch) {
+  const [artworkByKey, setArtworkByKey] = useState({});
+  const showItems = useMemo(() => dedupe(items || []).filter((item) => mediaType(item) === "tv" && (item?.id || item?.tmdb_id)), [items]);
+  const requestKey = useMemo(() => showItems.map((item) => homeCanonicalKey(item)).filter(Boolean).join("|"), [showItems]);
+
+  useEffect(() => {
+    let alive = true;
+    const cache = readHomeCache(HOME_SHOW_ART_CACHE_KEY, {});
+    const initial = {};
+    showItems.forEach((item) => {
+      const key = homeCanonicalKey(item);
+      const cached = cache[key];
+      const fresh = cached?.timestamp && Date.now() - cached.timestamp < HOME_CACHE_TTL_MS;
+      initial[key] = selectHomeShowArtwork(item, fresh ? cached : {});
+    });
+    setArtworkByKey(initial);
+    if (!apiFetch || !requestKey) return () => { alive = false; };
+
+    async function hydrateMissingArtwork() {
+      const settled = await Promise.allSettled(showItems.slice(0, 24).map(async (item) => {
+        const key = homeCanonicalKey(item);
+        const cached = cache[key];
+        const fresh = cached?.timestamp && Date.now() - cached.timestamp < HOME_CACHE_TTL_MS && cached.resolved;
+        if (fresh) return { key, item, details: cached };
+        const tmdbId = item.id || item.tmdb_id;
+        const details = await apiFetch(`/tv/${tmdbId}`);
+        if (!details?.id) throw new Error(`TV ${tmdbId} artwork unavailable`);
+        const normalSeasonArt = [...(details.seasons || [])]
+          .filter((season) => Number(season.season_number) > 0 && season.poster_path)
+          .sort((a, b) => Number(b.season_number) - Number(a.season_number))[0]?.poster_path || "";
+        let backdropPath = details.backdrop_path || "";
+        let keyArtPath = item.home_key_art_path || item.key_art_path || "";
+        if (!keyArtPath && !normalSeasonArt && !backdropPath && !item.still_path && !item.episode_still_path && !item.season_still_path) {
+          try {
+            const images = await apiFetch(`/tv/${tmdbId}/images`, { include_image_language: "en,null" });
+            const alternate = [...(images?.posters || []), ...(images?.backdrops || [])]
+              .filter((image) => image?.file_path)
+              .sort((a, b) => Math.abs(Number(a.aspect_ratio || 0) - .91) - Math.abs(Number(b.aspect_ratio || 0) - .91)
+                || Number(b.vote_average || 0) - Number(a.vote_average || 0))[0];
+            keyArtPath = alternate?.file_path || "";
+          } catch {
+            keyArtPath = "";
+          }
+        }
+        cache[key] = {
+          timestamp: Date.now(),
+          resolved: true,
+          key_art_path: keyArtPath,
+          season_art_path: normalSeasonArt,
+          backdrop_path: backdropPath,
+          poster_path: details.poster_path || item.poster_path || ""
+        };
+        return { key, item, details: cache[key] };
+      }));
+      if (!alive) return;
+      const next = { ...initial };
+      settled.forEach((result) => {
+        if (result.status !== "fulfilled") return;
+        next[result.value.key] = selectHomeShowArtwork(result.value.item, result.value.details);
+      });
+      persist(HOME_SHOW_ART_CACHE_KEY, cache);
+      setArtworkByKey(next);
+    }
+
+    hydrateMissingArtwork();
+    return () => { alive = false; };
+  }, [apiFetch, requestKey, showItems]);
+
+  return artworkByKey;
 }
 
 function homeReelContent(reel = {}) {
@@ -5030,6 +5202,15 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
 
     return { heroItems, continueItems, startWatching, friendItems, tasteItems, bingeItems, hiddenItems, animeItems, recentlyOpened };
   }, [continueWatching, homeSourceItems, intelligenceRows, recommended, reliableContinue, rows, socialActivity, watchAsapItems, watchlistItems]);
+  const homeShowArtworkItems = useMemo(() => dedupe([
+    ...homeData.startWatching,
+    ...homeData.tasteItems,
+    ...homeData.bingeItems,
+    ...homeData.hiddenItems,
+    ...homeData.animeItems,
+    ...homeData.recentlyOpened
+  ]).filter((item) => mediaType(item) === "tv"), [homeData]);
+  const homeShowArtwork = useHomeShowArtwork(homeShowArtworkItems, apiFetch);
 
   const openDiscovery = (index) => {
     const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
@@ -5061,26 +5242,26 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPublicProfile, watchlis
       <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
       <ContinueWatchingRow items={homeData.continueItems} onOpen={onOpen} onWatched={onAdvanceEpisode} />
       {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start">
-        <HomeAppendableRail className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+        <HomeAppendableRail className="mg-home-v3-rail--start" items={homeData.startWatching} renderItem={(item) => <HomeRailCard key={`start-${keyOf(item)}`} item={item} badge={item.__homeBadge} action="watch" variant="start" saved={hasStoredItem(item, watchlist)} watchAsap={item.watch_asap || item.watchAsap} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       <FromFriendsShelf items={homeData.friendItems} onOpen={onOpen} />
       {homeData.tasteItems.length > 0 && <HomeShelf title="Because of Your Taste" variant="taste">
         <HomeAppendableRail className="mg-home-v3-rail--taste" items={homeData.tasteItems} renderItem={(item) => {
             const reason = item.__recReasons?.find((value) => /^(because|more like)/i.test(value));
-            return <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" badge={reason} saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />;
+            return <HomeRailCard key={`taste-${keyOf(item)}`} item={item} variant="taste" badge={reason} saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />;
           }} />
       </HomeShelf>}
       {homeData.bingeItems.length > 0 && <HomeShelf title="Binge-worthy Content" variant="compact">
-        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.bingeItems} renderItem={(item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.bingeItems} renderItem={(item) => <HomeRailCard key={`binge-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       {homeData.hiddenItems.length > 0 && <HomeShelf title="Hidden Gems" variant="compact">
-        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.hiddenItems} renderItem={(item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+        <HomeAppendableRail className="mg-home-v3-rail--compact" items={homeData.hiddenItems} renderItem={(item) => <HomeRailCard key={`hidden-${keyOf(item)}`} item={item} variant="compact" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       {homeData.animeItems.length > 0 && <HomeShelf title="Anime" variant="anime">
-        <HomeAppendableRail className="mg-home-v3-rail--anime" items={homeData.animeItems} renderItem={(item) => <HomeRailCard key={`anime-${keyOf(item)}`} item={item} variant="anime" saved={hasStoredItem(item, watchlist)} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+        <HomeAppendableRail className="mg-home-v3-rail--anime" items={homeData.animeItems} renderItem={(item) => <HomeRailCard key={`anime-${keyOf(item)}`} item={item} variant="anime" saved={hasStoredItem(item, watchlist)} showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent">
-        <HomeAppendableRail className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
+        <HomeAppendableRail className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
       <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} />
       <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} apiFetch={apiFetch} />
@@ -11246,7 +11427,7 @@ export default function Home() {
   function applyEpisodeWatched(show, episode, season, showDetails, watchedAt) {
     const normalized = { ...show, media_type: "tv" };
     const episodeRelease = episode?.air_date ? { ...normalized, first_air_date: episode.air_date, release_date: "" } : normalized;
-    if (!isReleased(episodeRelease)) return;
+    if (!isReleased(episodeRelease)) return false;
     const progressKey = episodeKey(normalized.id, episode.season_number, episode.episode_number);
     const nextEpisodes = {
       ...episodeProgress,
@@ -11260,14 +11441,15 @@ export default function Home() {
     };
     syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt);
     logActivity("episode_watched", normalized, { watchedAt, episodeKey: progressKey, seasonNumber: episode.season_number, episodeNumber: episode.episode_number });
+    return true;
   }
 
   function advanceHomeEpisode(show) {
     const episode = show?.__nextEpisode;
     const showDetails = show?.__homeDetails;
-    if (!episode || !showDetails?.id) return;
+    if (!episode || !showDetails?.id) return false;
     const season = normalSeasonsOf(showDetails).find((entry) => entry.season_number === episode.season_number) || { season_number: episode.season_number };
-    applyEpisodeWatched(show, episode, season, showDetails, new Date().toISOString());
+    return applyEpisodeWatched(show, episode, season, showDetails, new Date().toISOString());
   }
 
   function syncEpisodeProgress(normalized, showDetails, nextEpisodes, watchedAt) {
