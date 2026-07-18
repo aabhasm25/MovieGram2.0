@@ -3,7 +3,7 @@ import NotificationsScreen from "@/components/screens/NotificationsScreen";
 
 export default function NotificationsPage() {
   return (
-    <AppShell title="Notifications" activeTab="notifications">
+    <AppShell title="Notifications" activeTab="notifications" hideBottomNav>
       <NotificationsScreen />
     </AppShell>
   );

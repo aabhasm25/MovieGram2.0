@@ -3,7 +3,7 @@ import MessagesScreen from "@/components/screens/MessagesScreen";
 
 export default function MessagesPage() {
   return (
-    <AppShell title="Messages" activeTab="messages">
+    <AppShell title="Messages" activeTab="messages" hideBottomNav>
       <MessagesScreen />
     </AppShell>
   );

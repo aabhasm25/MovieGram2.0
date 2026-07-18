@@ -1,11 +1,27 @@
+"use client";
+
+import { useEffect } from "react";
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import Icon from "@/components/Icon";
+import { useSocialBadges } from "@/lib/socialClient";
 
-export default function AppShell({ title, activeTab, children }) {
+function badgeLabel(value) {
+  const count = Number(value || 0);
+  return count > 99 ? "99+" : String(count);
+}
+
+export default function AppShell({ title, activeTab, children, hideBottomNav = false }) {
+  const badges = useSocialBadges();
+  useEffect(() => {
+    const refresh = () => badges.refresh();
+    window.addEventListener("moviegram:social-counts-dirty", refresh);
+    return () => window.removeEventListener("moviegram:social-counts-dirty", refresh);
+  }, [badges.refresh]);
+
   return (
     <main className="app-page">
-      <section className="phone-shell">
+      <section className={`phone-shell${hideBottomNav ? " social-full" : ""}`}>
         <div className="status-bar">
           <span>9:41</span>
           <span>Wi-Fi</span>
@@ -20,7 +36,7 @@ export default function AppShell({ title, activeTab, children }) {
               aria-label="Messages"
             >
               <Icon name="messages" />
-              <span className="badge">3</span>
+              {badges.messages > 0 && <span className="badge">{badgeLabel(badges.messages)}</span>}
             </Link>
             <Link
               href="/notifications"
@@ -28,13 +44,13 @@ export default function AppShell({ title, activeTab, children }) {
               aria-label="Notifications"
             >
               <Icon name="bell" />
-              <span className="badge">8</span>
+              {badges.notifications > 0 && <span className="badge">{badgeLabel(badges.notifications)}</span>}
             </Link>
           </div>
         </header>
 
         <div className="screen-content">{children}</div>
-        <BottomNav activeTab={activeTab} />
+        {!hideBottomNav && <BottomNav activeTab={activeTab} />}
       </section>
     </main>
   );

@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   acceptFollowRequest,
   addToSupabaseWatchlist,
   addItemToList,
   backfillActivityEventPoster,
-  createNotification,
   createUserList,
   createActivityEvent,
   declineFollowRequest,
@@ -33,6 +33,8 @@ import {
   supabase,
   updateUserProfile
 } from "../lib/supabaseClient";
+import { openDirectConversation, relativeSocialTime, sendConversationMessage, useSocialBadges } from "../lib/socialClient";
+import { createStory, deleteOwnStory, loadVisibleStoryGroups, markStoryViewed, subscribeStories } from "../lib/storyClient";
 
 const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 const YOUTUBE_API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY;
@@ -2157,7 +2159,8 @@ function Icon({ name }) {
     send: "m3 11 18-8-8 18-2-8z",
     dots: "M5 12h.01M12 12h.01M19 12h.01",
     back: "M15 18 9 12l6-6",
-    sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"
+    sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z",
+    info: "M12 11v6M12 7h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"
   };
 
   return (
@@ -2180,6 +2183,7 @@ function PublicAvatar({ profile, size = "" }) {
 }
 
 function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, onOpenNotifications, socialActive, onCloseSocial }) {
+  const socialBadges = useSocialBadges();
   function activateTab(tabId) {
     if (socialActive) onCloseSocial();
     setActiveTab(tabId);
@@ -2196,11 +2200,11 @@ function PhoneShell({ activeTab, setActiveTab, title, children, onOpenMessages, 
           <div className="mg2-top-actions">
             <button type="button" aria-label="Messages" onClick={onOpenMessages}>
               <Icon name="chat" />
-              <em>3</em>
+              {socialBadges.messages > 0 && <em>{socialBadges.messages > 99 ? "99+" : socialBadges.messages}</em>}
             </button>
             <button type="button" aria-label="Notifications" onClick={onOpenNotifications}>
               <Icon name="bell" />
-              <em>7</em>
+              {socialBadges.notifications > 0 && <em>{socialBadges.notifications > 99 ? "99+" : socialBadges.notifications}</em>}
             </button>
           </div>
         </header>
@@ -2238,7 +2242,7 @@ function SkeletonRow() {
   );
 }
 
-function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = false, onQuickActions }) {
+function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = false, onQuickActions, cardScope = "" }) {
   const longPressTimer = useRef(null);
   const longPressFired = useRef(false);
   const upcomingLabel = !isReleased(item) && dateOf(item)
@@ -2270,7 +2274,7 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
 
   return (
     <button
-      className={`mg2-poster ${compact ? "compact" : ""}`}
+      className={`mg2-poster ${compact ? "compact" : ""}${cardScope === "explore" ? ` mg2-explore-poster mg2-explore-poster--${mediaType(item) === "tv" ? "show" : "movie"}` : ""}`}
       type="button"
       onClick={handleClick}
       onPointerDown={startLongPress}
@@ -2306,14 +2310,14 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
   );
 }
 
-function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings, favorites = {}, onQuickActions }) {
+function ContentRow({ title, items, loading, onOpen, watchlist, watched = {}, ratings, favorites = {}, onQuickActions, cardScope = "" }) {
   return (
     <section className="mg2-section">
       <div className="mg2-section-head"><h2>{title}</h2><span>See All</span></div>
       {loading ? <SkeletonRow /> : (
-        <div className="mg2-row">
+        <div className={`mg2-row${cardScope === "explore" ? " mg2-explore-media-row" : ""}`}>
           {items.map((item) => (
-            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} />
+            <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={ratingForItem(item, ratings)} favorite={hasStoredItem(item, favorites)} cardScope={cardScope} />
           ))}
         </div>
       )}
@@ -3960,7 +3964,7 @@ function FranchiseHubCard({ hub, onOpenFranchise }) {
   );
 }
 
-function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, sentinelRef, onQuickActions, apiFetch }) {
+function SearchPanel({ query, setQuery, loading, results, userResults = [], userLoading = false, page, totalPages, loadNext, loadPrevious, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, sentinelRef, onQuickActions, apiFetch, cardScope = "" }) {
   const [searchFilter, setSearchFilter] = useState("content");
   const [contentFilter, setContentFilter] = useState("all");
   const [hydratedFranchises, setHydratedFranchises] = useState({});
@@ -4078,11 +4082,11 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
                 </div>
               )}
               <div className="mg2-section-head"><h2>{searchFilter === "cast" ? "Cast & Crew" : "Content"}</h2><span>{searchFilter === "content" ? `${visibleResults.length} picks` : `Page ${page} / ${totalPages}`}</span></div>
-              <div className="mg2-grid">
+              <div className={`mg2-grid${cardScope === "explore" && searchFilter === "content" ? " mg2-explore-results-grid" : ""}`}>
                 {visibleResults.map((item) => {
                   if (item.media_type === "person") return <PersonCard key={`person:${item.id}`} person={item} onOpenPerson={onOpenPerson} />;
                   const userRating = ratingForItem(item, ratings);
-                  return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+                  return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} onQuickActions={onQuickActions} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact cardScope={cardScope} />;
                 })}
               </div>
               {searchFilter === "cast" && <div ref={sentinelRef} className="mg2-sentinel" />}
@@ -4101,14 +4105,18 @@ function SearchPanel({ query, setQuery, loading, results, userResults = [], user
   );
 }
 
-function HomeStorySheet({ story, onClose, apiFetch }) {
+function HomeStorySheet({ onClose, apiFetch, reels = [], onPosted }) {
   const [query, setQuery] = useState("");
-  const [mediaName, setMediaName] = useState("");
   const [results, setResults] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
-  const isMine = story === "mine";
+  const [selectedReel, setSelectedReel] = useState(null);
+  const [file, setFile] = useState(null);
+  const [note, setNote] = useState("");
+  const [mode, setMode] = useState("recommendation");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
-    if (!isMine || !apiFetch || query.trim().length < 2) {
+    if (mode !== "recommendation" || !apiFetch || query.trim().length < 2) {
       setResults([]);
       return undefined;
     }
@@ -4125,75 +4133,226 @@ function HomeStorySheet({ story, onClose, apiFetch }) {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [apiFetch, isMine, query]);
-  if (!story) return null;
-  const postStory = () => {
-    if (!selectedItem && !mediaName) return;
-    const existing = readHomeCache("moviegram.homeStories.v1", []);
-    const payload = {
-      id: `story:${Date.now()}`,
-      created_at: new Date().toISOString(),
-      media_name: mediaName,
-      recommendation: selectedItem ? {
-        item_key: homeCanonicalKey(selectedItem),
-        tmdb_id: selectedItem.id,
-        media_type: mediaType(selectedItem),
-        title: titleOf(selectedItem),
-        poster_path: selectedItem.poster_path || ""
-      } : null
-    };
-    persist("moviegram.homeStories.v1", [payload, ...existing].slice(0, 20));
-    onClose();
+  }, [apiFetch, mode, query]);
+  const postStory = async () => {
+    const kind = selectedItem ? "recommendation" : selectedReel ? "reel" : file?.type?.startsWith("video/") ? "video" : file ? "photo" : "";
+    if (!kind || posting) return;
+    setPosting(true);
+    setError("");
+    try {
+      await createStory({
+        kind,
+        file,
+        note,
+        media: selectedItem,
+        reel: selectedReel ? {
+          id: reelIdentity(selectedReel),
+          video_url: homeInlineVideoUrl(selectedReel),
+          source_url: selectedReel.sourceUrl || selectedReel.source_url || "",
+          thumbnail_url: selectedReel.thumbnailUrl || selectedReel.thumbnail_url || "",
+          title: titleOf(homeReelContent(selectedReel))
+        } : null
+      });
+      await onPosted?.();
+      onClose();
+    } catch (nextError) {
+      setError(nextError.message || "Story could not be posted.");
+    } finally {
+      setPosting(false);
+    }
   };
   return (
     <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
       <section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}>
         <span />
-        <h3>{isMine ? "Your Story" : `${story.name}'s story`}</h3>
-        {isMine ? (
+        <h3>Your Story</h3>
+        <p>Share a recommendation, photo, video, or an existing MovieGram reel.</p>
+        <div className="mg-home-v3-story-modes" role="tablist" aria-label="Story type">
+          <button className={mode === "recommendation" ? "active" : ""} type="button" onClick={() => { setMode("recommendation"); setSelectedReel(null); }}>Recommendation</button>
+          <button className={mode === "media" ? "active" : ""} type="button" onClick={() => { setMode("media"); setSelectedItem(null); setSelectedReel(null); }}>Photo or video</button>
+          <button className={mode === "reel" ? "active" : ""} type="button" onClick={() => { setMode("reel"); setSelectedItem(null); setFile(null); }}>Reel</button>
+        </div>
+        {mode === "recommendation" && (
           <>
-            <p>Post a recommendation or share something from MovieGram.</p>
             <label>
               Recommendation of the Day
               <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedItem(null); }} placeholder="Search any movie or show" />
             </label>
             {results.length > 0 && <div className="mg-home-v3-story-results">{results.map((item) => <button className={selectedItem && homeCanonicalKey(selectedItem) === homeCanonicalKey(item) ? "active" : ""} key={homeCanonicalKey(item)} type="button" onClick={() => setSelectedItem(item)}>{item.poster_path && <img src={posterUrl(item.poster_path, "w92")} alt="" />}<span><strong>{titleOf(item)}</strong><small>{mediaType(item) === "tv" ? "TV" : "Movie"} - {yearOf(item)}</small></span></button>)}</div>}
-            {selectedItem && <p>Recommendation attached: {titleOf(selectedItem)}</p>}
-            <label>
-              Optional photo or video
-              <input type="file" accept="image/*,video/*" onChange={(event) => setMediaName(event.target.files?.[0]?.name || "")} />
-            </label>
-            {mediaName && <p>{mediaName} ready to share.</p>}
-            <button type="button" disabled={!selectedItem && !mediaName} onClick={postStory}>{selectedItem ? `Post ${titleOf(selectedItem)}` : "Share media"}</button>
-            <button type="button" onClick={onClose}>Skip recommendation and share something else</button>
-          </>
-        ) : (
-          <>
-            <p>No active story from {story.name} right now.</p>
-            <button type="button" onClick={onClose}>Close</button>
+            {selectedItem && <div className="mg-home-v3-story-selection"><img src={posterUrl(selectedItem.poster_path, "w185")} alt="" /><span><strong>{titleOf(selectedItem)}</strong><small>{mediaType(selectedItem) === "tv" ? "TV" : "Movie"} - {yearOf(selectedItem)}</small></span></div>}
           </>
         )}
+        {mode === "media" && <label className="mg-home-v3-story-file">Choose media<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" onChange={(event) => setFile(event.target.files?.[0] || null)} />{file && <small>{file.name}</small>}</label>}
+        {mode === "reel" && <div className="mg-home-v3-story-reels">{reels.slice(0, 8).map((reel) => { const content = homeReelContent(reel); const id = reelIdentity(reel); return <button className={reelIdentity(selectedReel) === id ? "active" : ""} key={id} type="button" onClick={() => setSelectedReel(reel)}><img src={reel.thumbnailUrl || reel.thumbnail_url || backdropUrl(content.backdrop_path || content.poster_path, "w300")} alt="" /><span>{titleOf(content)}</span></button>; })}{!reels.length && <p>No playable MovieGram reels are available right now.</p>}</div>}
+        <label>Optional note<textarea value={note} maxLength={280} rows={2} onChange={(event) => setNote(event.target.value)} placeholder="Add a thought..." /></label>
+        {error && <p className="mg-home-v3-story-error" role="alert">{error}</p>}
+        <button className="mg-home-v3-story-submit" type="button" disabled={posting || (!selectedItem && !selectedReel && !file)} onClick={postStory}>{posting ? "Posting..." : "Share Story"}</button>
+        {mode === "recommendation" && <button type="button" onClick={() => setMode("media")}>Skip recommendation</button>}
       </section>
     </div>
   );
 }
 
-function HomeStories({ user, onOpenStory }) {
+function StoryAvatar({ profile, fallback = "M" }) {
+  const url = profile?.avatar_url || profile?.picture || "";
+  const initial = String(profile?.display_name || profile?.username || fallback).slice(0, 1).toUpperCase();
+  return <span className="mg-home-v3-story-avatar-core"><span className="mg-home-v3-story-fallback" aria-hidden="true">{initial}</span>{url && <img className="mg-home-v3-story-photo" src={url} alt="" onError={(event) => { event.currentTarget.remove(); }} />}</span>;
+}
+
+function HomeStories({ user, groups = [], loading, error, onCompose, onOpenGroup }) {
   const ownAvatar = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || "";
+  const ownProfile = { display_name: user?.user_metadata?.display_name || user?.user_metadata?.full_name || "You", username: user?.user_metadata?.username, avatar_url: ownAvatar };
+  const ownGroup = groups.find((group) => group.userId === user?.id);
+  const otherGroups = groups.filter((group) => group.userId !== user?.id);
   return (
     <div className="mg-home-v3-stories">
-      {friends.map((friend, index) => (
-        <button className="mg-home-v3-story" key={friend.id} type="button" onClick={() => onOpenStory(index === 0 ? "mine" : friend)}>
-          <span className="mg-home-v3-story-avatar">
-            {index === 0 && ownAvatar
-              ? <img className="mg-home-v3-story-photo" src={ownAvatar} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
-              : <Avatar friend={friend} />}
-          </span>
-          {index === 0 && <i>+</i>}
-          <span>{index === 0 ? "Your Story" : friend.name}</span>
-        </button>
-      ))}
+      <button className={`mg-home-v3-story${ownGroup ? " unseen" : " idle"}`} type="button" onClick={() => ownGroup ? onOpenGroup(ownGroup.userId) : onCompose()}>
+        <span className="mg-home-v3-story-avatar"><StoryAvatar profile={ownProfile} fallback="Y" /></span>
+        <i role="button" aria-label="Add to your Story" onClick={(event) => { event.stopPropagation(); onCompose(); }}>+</i>
+        <span>Your Story</span>
+      </button>
+      {otherGroups.map((group) => {
+        const seen = group.stories.every((story) => story.viewed);
+        const profile = group.profile || {};
+        return <button className={`mg-home-v3-story ${seen ? "seen" : "unseen"}`} key={group.userId} type="button" onClick={() => onOpenGroup(group.userId)}><span className="mg-home-v3-story-avatar"><StoryAvatar profile={profile} /></span><span>{profile.display_name || profile.username || "MovieGram"}</span></button>;
+      })}
+      {loading && <div className="mg-home-v3-story-status">Loading...</div>}
+      {!loading && error && <div className="mg-home-v3-story-status error" title={error}>Stories unavailable</div>}
     </div>
+  );
+}
+
+function HomeStoryViewer({ groups, initialUserId, initialStoryId, currentUser, onClose, onViewed, onDelete, onOpenMedia, onReply }) {
+  const viewerGroups = useMemo(() => {
+    const selected = groups.find((group) => group.userId === initialUserId);
+    const remaining = groups.filter((group) => group.userId !== initialUserId).sort((a, b) => {
+      const aUnseen = a.stories.some((entry) => !entry.viewed);
+      const bUnseen = b.stories.some((entry) => !entry.viewed);
+      if (aUnseen !== bUnseen) return aUnseen ? -1 : 1;
+      return new Date(b.stories.at(-1)?.created_at || 0) - new Date(a.stories.at(-1)?.created_at || 0);
+    });
+    return selected ? [selected, ...remaining] : remaining;
+  }, [groups, initialUserId]);
+  const [groupIndex, setGroupIndex] = useState(0);
+  const [storyIndex, setStoryIndex] = useState(() => {
+    const selected = groups.find((group) => group.userId === initialUserId);
+    return Math.max(0, selected?.stories?.findIndex((entry) => entry.id === initialStoryId) ?? 0);
+  });
+  const [progress, setProgress] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [reply, setReply] = useState("");
+  const [replying, setReplying] = useState(false);
+  const [message, setMessage] = useState("");
+  const [videoDuration, setVideoDuration] = useState(15000);
+  const videoRef = useRef(null);
+  const dragStartRef = useRef(null);
+  const pressStartedAtRef = useRef(0);
+  const pressStartXRef = useRef(0);
+  const group = viewerGroups[groupIndex];
+  const story = group?.stories?.[storyIndex];
+  const isVideo = story?.kind === "video" || (story?.kind === "reel" && Boolean(story?.reel_reference?.video_url));
+  const embeddedReelId = story?.kind === "reel" && !story?.reel_reference?.video_url ? getYouTubeVideoId(story.reel_reference || {}) : "";
+  const duration = isVideo || embeddedReelId ? videoDuration : 6000;
+
+  const closeOrAdvance = useCallback((direction = 1) => {
+    if (!group) return onClose();
+    if (direction < 0) {
+      if (storyIndex > 0) return setStoryIndex((value) => value - 1);
+      if (groupIndex > 0) {
+        const previousIndex = groupIndex - 1;
+        setGroupIndex(previousIndex);
+        setStoryIndex(Math.max(0, viewerGroups[previousIndex].stories.length - 1));
+      }
+      return;
+    }
+    if (storyIndex < group.stories.length - 1) return setStoryIndex((value) => value + 1);
+    if (groupIndex < viewerGroups.length - 1) {
+      setGroupIndex((value) => value + 1);
+      setStoryIndex(0);
+      return;
+    }
+    onClose();
+  }, [group, groupIndex, onClose, storyIndex, viewerGroups]);
+
+  useEffect(() => { setProgress(0); setMessage(""); setVideoDuration(15000); }, [story?.id]);
+  useEffect(() => {
+    if (!story || paused) return undefined;
+    const started = performance.now() - ((progress / 100) * duration);
+    let frame;
+    const tick = (now) => {
+      const next = Math.min(100, ((now - started) / duration) * 100);
+      setProgress(next);
+      if (next >= 100) closeOrAdvance(1);
+      else frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [closeOrAdvance, duration, paused, story?.id]);
+  useEffect(() => {
+    if (!story || story.viewed || story.user_id === currentUser?.id) return undefined;
+    const timer = window.setTimeout(() => onViewed(story), 650);
+    return () => window.clearTimeout(timer);
+  }, [currentUser?.id, onViewed, story]);
+  useEffect(() => {
+    if (paused) videoRef.current?.pause();
+    else videoRef.current?.play?.().catch(() => {});
+  }, [paused, story?.id]);
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+  useEffect(() => {
+    if (!viewerGroups.length) return onClose();
+    if (groupIndex >= viewerGroups.length) {
+      setGroupIndex(Math.max(0, viewerGroups.length - 1));
+      setStoryIndex(0);
+      return;
+    }
+    if (group && storyIndex >= group.stories.length) setStoryIndex(Math.max(0, group.stories.length - 1));
+  }, [group, groupIndex, onClose, storyIndex, viewerGroups]);
+  if (!story || !group) return null;
+
+  const mediaUrl = story.kind === "recommendation" && story.poster_path
+    ? posterUrl(story.poster_path, "original")
+    : story.asset_url || story.reel_reference?.video_url || story.reel_reference?.thumbnail_url || backdropUrl(story.backdrop_path || story.poster_path, "original");
+  const profile = group.profile || {};
+  const sendReply = async (event) => {
+    event.preventDefault();
+    const body = reply.trim();
+    if (!body || replying || story.user_id === currentUser?.id) return;
+    setReplying(true);
+    try {
+      await onReply(story, body);
+      setReply("");
+      setMessage("Reply sent");
+    } catch (error) {
+      setMessage(error.message || "Reply could not be sent.");
+    } finally {
+      setReplying(false);
+    }
+  };
+  return createPortal(
+    <section className={`mg-home-v3-story-viewer${story.kind === "recommendation" ? " is-recommendation" : ""}`} onPointerDown={(event) => { dragStartRef.current = event.clientY; }} onPointerUp={(event) => { if (dragStartRef.current !== null && event.clientY - dragStartRef.current > 90) onClose(); dragStartRef.current = null; }}>
+      <div className="mg-home-v3-story-progress">{group.stories.map((entry, index) => <span key={entry.id}><i style={{ width: `${index < storyIndex ? 100 : index > storyIndex ? 0 : progress}%` }} /></span>)}</div>
+      <header><StoryAvatar profile={profile} /><span><strong>{profile.display_name || profile.username || "MovieGram"}</strong><small>{relativeSocialTime(story.created_at)}</small></span>{story.user_id === currentUser?.id && <button type="button" onClick={() => onDelete(story)}>Delete</button>}<button type="button" aria-label="Close Story" onClick={onClose}>x</button></header>
+      <div className="mg-home-v3-story-stage" onPointerDown={(event) => { pressStartedAtRef.current = performance.now(); pressStartXRef.current = event.clientX; setPaused(true); }} onPointerUp={(event) => {
+        setPaused(false);
+        const heldFor = performance.now() - pressStartedAtRef.current;
+        const movedX = Math.abs(event.clientX - pressStartXRef.current);
+        const movedY = Math.abs((dragStartRef.current ?? event.clientY) - event.clientY);
+        if (heldFor >= 280 || movedX >= 20 || movedY >= 20) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        closeOrAdvance(event.clientX - rect.left < rect.width * .34 ? -1 : 1);
+      }} onPointerCancel={() => setPaused(false)}>
+        {isVideo ? <video ref={videoRef} src={mediaUrl} autoPlay playsInline muted={false} onLoadedMetadata={(event) => { if (Number.isFinite(event.currentTarget.duration)) setVideoDuration(Math.max(3000, event.currentTarget.duration * 1000)); }} onEnded={() => closeOrAdvance(1)} /> : embeddedReelId ? <iframe src={`https://www.youtube.com/embed/${embeddedReelId}?autoplay=1&playsinline=1&rel=0`} title={story.reel_reference?.title || "MovieGram reel Story"} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : <img src={mediaUrl || BACKDROP_FALLBACK} alt={story.title || "Story"} />}
+        <div className="mg-home-v3-story-shade" />
+        {(story.title || story.note) && <div className="mg-home-v3-story-caption">{story.title && <strong>{story.title}</strong>}{story.note && <p>{story.note}</p>}{story.kind === "recommendation" && <button type="button" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenMedia({ id: story.tmdb_id, tmdb_id: story.tmdb_id, media_type: story.media_type, title: story.media_type === "movie" ? story.title : undefined, name: story.media_type === "tv" ? story.title : undefined, poster_path: story.poster_path, backdrop_path: story.backdrop_path }, { userId: group.userId, storyId: story.id }); }}>View {story.media_type === "tv" ? "show" : "movie"}</button>}</div>}
+      </div>
+      {story.user_id !== currentUser?.id && <form className="mg-home-v3-story-reply" onSubmit={sendReply}><input value={reply} maxLength={2000} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)} onChange={(event) => setReply(event.target.value)} placeholder={`Reply to ${profile.display_name || profile.username || "Story"}...`} /><button type="submit" disabled={!reply.trim() || replying}><Icon name="send" /></button></form>}
+      {message && <div className="mg-home-v3-story-toast">{message}</div>}
+    </section>,
+    document.body
   );
 }
 
@@ -5084,6 +5243,35 @@ function homeInlineVideoUrl(item = {}) {
   return candidates.find((url) => /\.(mp4|webm|mov)(?:\?|#|$)/i.test(String(url))) || "";
 }
 
+function homeReelHasPlayableSource(reel = {}) {
+  return Boolean(homeInlineVideoUrl(reel) || getYouTubeVideoId(reel));
+}
+
+let homeYouTubeApiPromise = null;
+function loadHomeYouTubeIframeApi() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (homeYouTubeApiPromise) return homeYouTubeApiPromise;
+  homeYouTubeApiPromise = new Promise((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previousReady?.();
+      resolve(window.YT);
+    };
+    const existing = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
+    if (existing) {
+      existing.addEventListener("error", () => reject(new Error("YouTube player could not load.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.addEventListener("error", () => reject(new Error("YouTube player could not load.")), { once: true });
+    document.head.appendChild(script);
+  });
+  return homeYouTubeApiPromise;
+}
+
 function homeCanonicalKey(entry = {}) {
   const item = entry?.item || entry;
   const type = mediaType(item);
@@ -5343,21 +5531,11 @@ function homeReelContent(reel = {}) {
   };
 }
 
-function homeReelEmbedUrl(reel = {}, muted = true, playback = {}) {
-  const youtubeId = getYouTubeVideoId(reel);
-  if (youtubeId) {
-    const url = new URL(buildYouTubeEmbedUrl(youtubeId, muted));
-    url.searchParams.set("autoplay", playback.playing === false ? "0" : "1");
-    if (Number(playback.currentTime) > 0) url.searchParams.set("start", String(Math.max(0, Math.floor(playback.currentTime))));
-    return url.toString();
-  }
-  return reel.embedUrl || reel.embed_url || "";
-}
-
 let homeReelWarningShown = false;
 async function loadHomePlayableReels(seedItems = []) {
   const cached = readHomeCache(HOME_REELS_CACHE_KEY, null);
-  if (!supabase) return cached?.rows?.length ? cached.rows : [];
+  const cachedPlayableRows = (cached?.rows || []).filter(homeReelHasPlayableSource);
+  if (!supabase) return cachedPlayableRows;
   const modernSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,poster_path,backdrop_path,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,approved,active,quality_score,playable,created_at,updated_at";
   const compatibleSelect = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,approved,quality_score,playable,created_at,updated_at";
   let response = await supabase
@@ -5381,7 +5559,7 @@ async function loadHomePlayableReels(seedItems = []) {
       homeReelWarningShown = true;
       console.warn("MovieGram Home reels unavailable; keeping playable cache.", { code: response.error.code });
     }
-    return cached?.rows?.length ? cached.rows : [];
+    return cachedPlayableRows;
   }
   const seedMap = new Map(seedItems.map((item) => [keyOf(item), item]));
   const seen = new Set();
@@ -5389,6 +5567,7 @@ async function loadHomePlayableReels(seedItems = []) {
   const rows = (response.data || [])
     .filter((row) => row.active !== false && reelRowHasPlayableSource(row))
     .map((row) => reelCacheRowToVideo(row, seedMap.get(row.item_key) || homeReelContent(row), row.reason || "Discover on MovieGram"))
+    .filter(homeReelHasPlayableSource)
     .filter((reel) => {
       const identity = reel && reelIdentity(reel);
       if (!identity || seen.has(identity)) return false;
@@ -5416,7 +5595,7 @@ async function loadHomePlayableReels(seedItems = []) {
     const sharedSeen = new Set();
     const sharedItemCounts = new Map();
     const sharedRows = (sharedResult?.reels || [])
-      .filter((reel) => reelRowHasPlayableSource(reel))
+      .filter(homeReelHasPlayableSource)
       .filter((reel) => {
         const identity = reelIdentity(reel);
         if (!identity || sharedSeen.has(identity)) return false;
@@ -5434,11 +5613,11 @@ async function loadHomePlayableReels(seedItems = []) {
     }
   }
 
-  return cached?.rows || [];
+  return cachedPlayableRows;
 }
 
 function useHomePlayableReels(seedItems, apiFetch) {
-  const [reels, setReels] = useState(() => readHomeCache(HOME_REELS_CACHE_KEY, {})?.rows || []);
+  const [reels, setReels] = useState(() => (readHomeCache(HOME_REELS_CACHE_KEY, {})?.rows || []).filter(homeReelHasPlayableSource));
   const seedKey = useMemo(() => seedItems.map(keyOf).filter(Boolean).slice(0, 40).join("|"), [seedItems]);
   useEffect(() => {
     let alive = true;
@@ -5454,7 +5633,7 @@ function useHomePlayableReels(seedItems, apiFetch) {
           return reel;
         }
       }));
-      if (alive) setReels(hydrated.map((result, index) => result.status === "fulfilled" ? result.value : loaded[index]).filter(Boolean));
+      if (alive) setReels(hydrated.map((result, index) => result.status === "fulfilled" ? result.value : loaded[index]).filter(homeReelHasPlayableSource));
     });
     return () => { alive = false; };
   }, [apiFetch, seedKey]);
@@ -5488,29 +5667,53 @@ function saveHomeReelSoundPreference(enabled) {
   window.sessionStorage.setItem(HOME_REEL_SOUND_SESSION_KEY, enabled ? "on" : "off");
 }
 
-function HomeReelMedia({ reel, index = 0, surface = "inline", active, onOpen, priority = false, soundEnabled = false, onEnableSound, playbackRef, interactive = false }) {
+function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, priority = false, soundEnabled = false, onEnableSound, playbackRef }) {
   const videoRef = useRef(null);
-  const iframeRef = useRef(null);
+  const youtubeHostRef = useRef(null);
+  const youtubePlayerRef = useRef(null);
+  const youtubeReadyRef = useRef(false);
+  const youtubeGenerationRef = useRef(0);
   const restoredTransferRef = useRef("");
   const currentTimeRef = useRef(0);
   const playingRef = useRef(false);
-  const playStartedAtRef = useRef(0);
-  const playStartedMediaTimeRef = useRef(0);
-  const openingRef = useRef(false);
-  const openTimerRef = useRef(null);
+  const feedbackTimerRef = useRef(null);
+  const endedRef = useRef(onEnded);
   const [muted, setMuted] = useState(!soundEnabled);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showMutedHint, setShowMutedHint] = useState(false);
+  const [feedbackIcon, setFeedbackIcon] = useState("");
+  const [measuredPresentation, setMeasuredPresentation] = useState("");
   const content = homeReelContent(reel);
   const reelId = reelIdentity(reel);
   const directUrl = homeInlineVideoUrl(reel);
-  const transfer = playbackRef?.current?.reelId === reelId ? playbackRef.current : null;
-  const embedPlaybackRef = useRef({ key: "", value: {} });
-  const embedPlaybackKey = `${surface}:${reelId}:${transfer?.transferId || 0}`;
-  if (embedPlaybackRef.current.key !== embedPlaybackKey) embedPlaybackRef.current = { key: embedPlaybackKey, value: transfer || {} };
-  const embedUrl = homeReelEmbedUrl(reel, transfer?.muted ?? muted, embedPlaybackRef.current.value);
+  const youtubeVideoId = getYouTubeVideoId(reel);
+  const isYouTube = Boolean(youtubeVideoId);
   const thumbnail = reel.thumbnailUrl || reel.thumbnail_url || backdropUrl(content.backdrop_path || content.poster_path, "w780");
-  const presentation = homeReelPresentation(reel);
+  const presentation = measuredPresentation || homeReelPresentation(reel);
+  endedRef.current = onEnded;
+
+  const readPlayerSnapshot = () => {
+    const video = videoRef.current;
+    if (video) {
+      return {
+        currentTime: Number(video.currentTime || currentTimeRef.current || 0),
+        playing: !video.paused && !video.ended,
+        muted: Boolean(video.muted)
+      };
+    }
+    const player = youtubePlayerRef.current;
+    if (player && youtubeReadyRef.current) {
+      try {
+        return {
+          currentTime: Number(player.getCurrentTime?.() || currentTimeRef.current || 0),
+          playing: Number(player.getPlayerState?.()) === 1,
+          muted: Boolean(player.isMuted?.())
+        };
+      } catch {
+        // The iframe can disappear between a swipe and React cleanup.
+      }
+    }
+    return { currentTime: currentTimeRef.current, playing: playingRef.current, muted };
+  };
 
   const reportPlayback = (patch = {}) => {
     if (!playbackRef) return;
@@ -5528,33 +5731,26 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onOpen, pr
     };
   };
 
-  const sendEmbedCommand = (func, args = []) => {
-    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "*");
-  };
-
-  const captureEmbedClock = () => {
-    if (!playingRef.current || !playStartedAtRef.current) return currentTimeRef.current;
-    currentTimeRef.current = playStartedMediaTimeRef.current + ((Date.now() - playStartedAtRef.current) / 1000);
-    playStartedMediaTimeRef.current = currentTimeRef.current;
-    playStartedAtRef.current = Date.now();
-    return currentTimeRef.current;
-  };
-
-  const startEmbedClock = () => {
-    playStartedMediaTimeRef.current = currentTimeRef.current;
-    playStartedAtRef.current = Date.now();
-  };
-
   const pauseMedia = (report = true) => {
+    const snapshot = readPlayerSnapshot();
+    currentTimeRef.current = snapshot.currentTime;
     const video = videoRef.current;
     if (video) {
-      currentTimeRef.current = Number(video.currentTime || currentTimeRef.current || 0);
       video.pause();
-    } else captureEmbedClock();
-    sendEmbedCommand("pauseVideo");
+      video.muted = true;
+    }
+    const player = youtubePlayerRef.current;
+    if (player && youtubeReadyRef.current) {
+      try {
+        player.pauseVideo?.();
+        player.mute?.();
+      } catch {
+        // Cleanup remains best-effort when YouTube has already released the iframe.
+      }
+    }
     playingRef.current = false;
     setIsPlaying(false);
-    if (report) reportPlayback({ playing: false });
+    if (report) reportPlayback({ playing: false, currentTime: snapshot.currentTime, muted: snapshot.muted });
   };
 
   const controllerRef = useRef(null);
@@ -5562,8 +5758,7 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onOpen, pr
   controllerRef.current.pause = pauseMedia;
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!active) {
+    if (!active || (!directUrl && !youtubeVideoId)) {
       pauseMedia(false);
       releaseHomeDiscoveryMedia(controllerRef.current);
       return undefined;
@@ -5575,188 +5770,460 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onOpen, pr
     const shouldPlay = snapshot?.playing !== false;
     const preferredMuted = snapshot?.muted ?? !soundEnabled;
     currentTimeRef.current = Number(snapshot?.currentTime || currentTimeRef.current || 0);
-    playingRef.current = shouldPlay;
-    if (shouldPlay && !video) startEmbedClock();
-    setIsPlaying(shouldPlay);
     setMuted(preferredMuted);
+    let disposed = false;
+    const generation = ++youtubeGenerationRef.current;
+    const youtubeHost = youtubeHostRef.current;
+    let effectPlayer = null;
+    let playerDisposed = false;
 
-    if (video) {
-      video.muted = preferredMuted;
-      const restoreTime = () => {
-        if (!transferKey || restoredTransferRef.current === transferKey || !Number.isFinite(video.duration)) return;
-        video.currentTime = Math.min(currentTimeRef.current, Math.max(0, video.duration - .05));
-        restoredTransferRef.current = transferKey;
-      };
-      restoreTime();
-      video.addEventListener("loadedmetadata", restoreTime, { once: true });
-      if (shouldPlay) {
-        const attempt = video.play();
-        if (attempt?.catch) attempt.catch(() => {
-          video.muted = true;
-          setMuted(true);
-          reportPlayback({ muted: true });
-          video.play().catch(() => {});
+    const disposeYouTubePlayer = () => {
+      if (playerDisposed) return;
+      playerDisposed = true;
+      if (effectPlayer) {
+        try { effectPlayer.pauseVideo?.(); } catch {}
+        try { effectPlayer.mute?.(); } catch {}
+        try { effectPlayer.destroy?.(); } catch {}
+      }
+      if (youtubePlayerRef.current === effectPlayer) youtubePlayerRef.current = null;
+      youtubeReadyRef.current = false;
+      if (youtubeHost) {
+        try { youtubeHost.replaceChildren(); } catch {}
+      }
+    };
+
+    if (isYouTube) {
+      loadHomeYouTubeIframeApi().then((YT) => {
+        if (disposed || generation !== youtubeGenerationRef.current || !YT?.Player || !youtubeHost || youtubeHostRef.current !== youtubeHost || !youtubeHost.isConnected) return;
+        youtubeHost.replaceChildren();
+        const mountNode = document.createElement("div");
+        mountNode.dataset.homeYoutubeGeneration = String(generation);
+        youtubeHost.append(mountNode);
+        effectPlayer = new YT.Player(mountNode, {
+          videoId: youtubeVideoId,
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            iv_load_policy: 3,
+            playsinline: 1,
+            enablejsapi: 1,
+            rel: 0,
+            fs: 0,
+            disablekb: 1,
+            mute: preferredMuted ? 1 : 0,
+            origin: window.location.origin
+          },
+          events: {
+            onReady: (event) => {
+              if (disposed || generation !== youtubeGenerationRef.current) return;
+              youtubeReadyRef.current = true;
+              if (currentTimeRef.current > 0 && restoredTransferRef.current !== transferKey) {
+                event.target.seekTo(currentTimeRef.current, true);
+                restoredTransferRef.current = transferKey;
+              }
+              if (preferredMuted) event.target.mute();
+              else event.target.unMute();
+              if (shouldPlay) event.target.playVideo();
+              else event.target.pauseVideo();
+              reportPlayback({ playing: shouldPlay, muted: preferredMuted, currentTime: currentTimeRef.current });
+            },
+            onStateChange: (event) => {
+              if (disposed || generation !== youtubeGenerationRef.current) return;
+              const state = Number(event.data);
+              const nextPlaying = state === YT.PlayerState.PLAYING;
+              currentTimeRef.current = Number(event.target.getCurrentTime?.() || currentTimeRef.current || 0);
+              playingRef.current = nextPlaying;
+              setIsPlaying(nextPlaying);
+              reportPlayback({ currentTime: currentTimeRef.current, playing: nextPlaying, muted: Boolean(event.target.isMuted?.()) });
+              if (state === YT.PlayerState.ENDED) endedRef.current?.();
+            },
+            onError: () => {
+              if (!disposed && generation === youtubeGenerationRef.current) pauseMedia(true);
+            }
+          }
         });
-      } else video.pause();
-    } else if (iframeRef.current) {
-      if (currentTimeRef.current > 0) sendEmbedCommand("seekTo", [currentTimeRef.current, true]);
-      sendEmbedCommand(preferredMuted ? "mute" : "unMute");
-      sendEmbedCommand(shouldPlay ? "playVideo" : "pauseVideo");
+        if (disposed || generation !== youtubeGenerationRef.current) {
+          disposeYouTubePlayer();
+          return;
+        }
+        youtubePlayerRef.current = effectPlayer;
+      }).catch(() => {
+        if (!disposed && generation === youtubeGenerationRef.current) pauseMedia(true);
+      });
+    } else {
+      const video = videoRef.current;
+      if (video) {
+        video.muted = preferredMuted;
+        const restoreTime = () => {
+          if (!transferKey || restoredTransferRef.current === transferKey || !Number.isFinite(video.duration)) return;
+          video.currentTime = Math.min(currentTimeRef.current, Math.max(0, video.duration - .05));
+          restoredTransferRef.current = transferKey;
+        };
+        restoreTime();
+        video.addEventListener("loadedmetadata", restoreTime, { once: true });
+        if (shouldPlay) {
+          video.play().catch(() => {
+            video.muted = true;
+            setMuted(true);
+            reportPlayback({ muted: true });
+            video.play().catch(() => pauseMedia(true));
+          });
+        } else video.pause();
+        reportPlayback({ playing: shouldPlay, muted: preferredMuted });
+      }
     }
-    reportPlayback({ playing: shouldPlay, muted: preferredMuted });
 
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") pauseMedia(true);
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
+      disposed = true;
+      if (youtubeGenerationRef.current === generation) youtubeGenerationRef.current += 1;
       document.removeEventListener("visibilitychange", handleVisibility);
-      pauseMedia(false);
+      const video = videoRef.current;
+      if (video) {
+        try { video.pause(); } catch {}
+        video.muted = true;
+      }
+      playingRef.current = false;
+      disposeYouTubePlayer();
       releaseHomeDiscoveryMedia(controllerRef.current);
     };
-  }, [active, reelId, soundEnabled, surface]);
+  }, [active, directUrl, isYouTube, reelId, soundEnabled, surface, youtubeVideoId]);
 
-  useEffect(() => {
-    const frame = iframeRef.current;
-    if (!frame) return undefined;
-    const handleMessage = (event) => {
-      if (event.source !== frame.contentWindow) return;
-      let payload = event.data;
-      if (typeof payload === "string") {
-        try { payload = JSON.parse(payload); } catch { return; }
-      }
-      if (payload?.event === "infoDelivery") {
-        if (Number.isFinite(Number(payload.info?.currentTime))) {
-          currentTimeRef.current = Number(payload.info.currentTime);
-          if (playingRef.current) startEmbedClock();
-          reportPlayback({ currentTime: currentTimeRef.current });
-        }
-        if (Number.isFinite(Number(payload.info?.playerState))) {
-          const playing = Number(payload.info.playerState) === 1;
-          if (playingRef.current && !playing) captureEmbedClock();
-          playingRef.current = playing;
-          if (playing) startEmbedClock();
-          setIsPlaying(playing);
-          reportPlayback({ playing });
-        }
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [reelId, surface]);
-
-  useEffect(() => {
-    if (!active || !muted || !directUrl) {
-      setShowMutedHint(false);
-      return undefined;
-    }
-    setShowMutedHint(true);
-    const timer = window.setTimeout(() => setShowMutedHint(false), 1800);
-    return () => window.clearTimeout(timer);
-  }, [active, directUrl, muted]);
   useEffect(() => () => {
-    if (openTimerRef.current) window.clearTimeout(openTimerRef.current);
+    if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
   }, []);
-  const handleOpen = () => {
+
+  const togglePlayback = (event) => {
+    event?.stopPropagation?.();
+    if (!active) return;
     const video = videoRef.current;
-    if (onOpen) {
-      if (openingRef.current) return;
-      const wasPlaying = video ? !video.paused : playingRef.current;
-      const transferredMuted = video ? video.muted : muted;
-      const finishOpen = () => {
-        if (!openingRef.current) return;
-        openingRef.current = false;
-        if (openTimerRef.current) window.clearTimeout(openTimerRef.current);
-        openTimerRef.current = null;
-        const snapshot = {
-          reelId,
-          index,
-          owner: surface,
-          currentTime: video ? Number(video.currentTime || 0) : currentTimeRef.current,
-          playing: wasPlaying,
-          muted: transferredMuted,
-          soundEnabled
-        };
-        pauseMedia(false);
-        if (playbackRef) playbackRef.current = snapshot;
-        onOpen(snapshot);
-      };
-      openingRef.current = true;
-      if (!video && iframeRef.current) {
-        // Ask once for the embed clock before transferring playback ownership.
-        captureEmbedClock();
-        sendEmbedCommand("getCurrentTime");
-        sendEmbedCommand("pauseVideo");
-        playingRef.current = false;
-        setIsPlaying(false);
-        openTimerRef.current = window.setTimeout(finishOpen, 140);
-      } else finishOpen();
-      return;
-    }
-    if (active && video && video.muted) {
-      video.muted = false;
-      setMuted(false);
-      onEnableSound?.();
-      reportPlayback({ muted: false, soundEnabled: true });
-      video.play().catch(() => {
-        video.muted = true;
-        setMuted(true);
-      });
-      return;
-    }
-    if (!interactive) return;
-    if (playingRef.current) pauseMedia(true);
-    else {
+    const player = youtubePlayerRef.current;
+    if (isYouTube && player && youtubeReadyRef.current) {
       claimHomeDiscoveryMedia(controllerRef.current);
-      playingRef.current = true;
-      if (!video) startEmbedClock();
-      setIsPlaying(true);
-      if (video) video.play().catch(() => pauseMedia(true));
-      else sendEmbedCommand("playVideo");
-      reportPlayback({ playing: true });
+      const wasPlaying = Number(player.getPlayerState?.()) === 1;
+      if (wasPlaying) pauseMedia(true);
+      else {
+        if (muted && soundEnabled) {
+          player.unMute?.();
+          setMuted(false);
+          onEnableSound?.();
+        }
+        player.playVideo?.();
+      }
+      return;
     }
+    if (!video) return;
+    if (video.paused) {
+      claimHomeDiscoveryMedia(controllerRef.current);
+      video.play().catch(() => pauseMedia(true));
+      setFeedbackIcon("pause");
+    } else {
+      pauseMedia(true);
+      setFeedbackIcon("play");
+    }
+    if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => setFeedbackIcon(""), 650);
   };
+
+  if (!directUrl && !youtubeVideoId) return null;
   return (
     <div className={`mg-home-v3-reel-media is-${presentation}`}>
-      <img className="mg-home-v3-reel-backdrop" src={thumbnail || BACKDROP_FALLBACK} alt="" aria-hidden="true" loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
-      {directUrl ? (
-        <video className="mg-home-v3-reel-content" ref={videoRef} src={directUrl} muted={muted} playsInline loop preload={priority ? "metadata" : "none"} poster={thumbnail} onTimeUpdate={(event) => { currentTimeRef.current = event.currentTarget.currentTime; reportPlayback({ currentTime: currentTimeRef.current }); }} onPlay={() => { playingRef.current = true; setIsPlaying(true); reportPlayback({ playing: true }); }} onPause={() => { playingRef.current = false; setIsPlaying(false); }} />
-      ) : active && embedUrl ? (
-        <iframe className="mg-home-v3-reel-content" ref={iframeRef} src={embedUrl} title={reel.videoTitle || titleOf(content)} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading={priority ? "eager" : "lazy"} onLoad={() => { iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: `home-${surface}-${index}` }), "*"); sendEmbedCommand("addEventListener", ["onStateChange"]); if (currentTimeRef.current > 0) sendEmbedCommand("seekTo", [currentTimeRef.current, true]); sendEmbedCommand((playbackRef?.current?.playing === false) ? "pauseVideo" : "playVideo"); }} />
+      {active ? (
+        isYouTube
+          ? <div className="mg-home-v3-reel-content mg-home-v3-youtube-player" ref={youtubeHostRef} aria-label={`${titleOf(content)} video`} />
+          : <video className="mg-home-v3-reel-content" ref={videoRef} src={directUrl} controls={false} muted={muted} playsInline preload={priority ? "metadata" : "none"} poster={thumbnail} onLoadedMetadata={(event) => { const ratio = Number(event.currentTarget.videoWidth || 0) / Number(event.currentTarget.videoHeight || 1); setMeasuredPresentation(ratio >= 1.18 ? "landscape" : ratio <= .82 ? "portrait" : "unknown"); }} onTimeUpdate={(event) => { currentTimeRef.current = event.currentTarget.currentTime; reportPlayback({ currentTime: currentTimeRef.current }); }} onPlay={() => { playingRef.current = true; setIsPlaying(true); reportPlayback({ playing: true }); }} onPause={(event) => { currentTimeRef.current = Number(event.currentTarget.currentTime || currentTimeRef.current || 0); playingRef.current = false; setIsPlaying(false); }} onEnded={() => endedRef.current?.()} onVolumeChange={(event) => { setMuted(event.currentTarget.muted); reportPlayback({ muted: event.currentTarget.muted }); }} />
       ) : (
         <img className="mg-home-v3-reel-content" src={thumbnail || BACKDROP_FALLBACK} alt={titleOf(content)} loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
       )}
-      {(onOpen || directUrl || interactive) && <button className="mg-home-v3-reel-open" type="button" onClick={handleOpen} aria-label={onOpen ? `Open ${titleOf(content)} in Home discovery player` : isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{(!active || (interactive && !isPlaying)) && <Icon name="play" />}</button>}
-      {showMutedHint && <small className="mg-home-v3-reel-muted-hint">Tap for sound</small>}
+      <button className="mg-home-v3-reel-open" type="button" onClick={togglePlayback} aria-label={isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{!isYouTube && feedbackIcon && <Icon name={feedbackIcon} />}</button>
     </div>
   );
 }
 
-function shareHomeReel(reel) {
-  const item = homeReelContent(reel);
-  const url = reel.watchUrl || reel.sourceUrl || (typeof window !== "undefined" ? window.location.href : "");
-  if (typeof navigator !== "undefined" && navigator.share) {
-    navigator.share({ title: titleOf(item), url }).catch(() => {});
-    return;
-  }
-  navigator?.clipboard?.writeText(url).catch(() => {});
+function HomeReelIdentity({ reel }) {
+  const name = reel.channelTitle || reel.creatorName || reel.author || sourceWatermarkLabel(reel.source) || "MovieGram";
+  const avatar = reel.channelAvatar || reel.channel_avatar || reel.creatorAvatar || reel.creator_avatar || reel.authorAvatar || reel.author_avatar || "";
+  return avatar
+    ? <img className="mg-home-v3-reel-avatar" src={avatar} alt="" loading="lazy" />
+    : <span className="mg-home-v3-reel-avatar fallback" aria-hidden="true">{String(name).slice(0, 1).toUpperCase()}</span>;
 }
 
-function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpenDetails, onWatchlist, onWatchAsap, playbackOwner, playbackRef }) {
+function homeReelCreatorName(reel = {}) {
+  return reel.creator_username || reel.creatorUsername || reel.channelTitle || reel.creatorName || reel.author || "MovieGram";
+}
+
+function HomeReelCreatorRow({ reel }) {
+  return (
+    <div className="mg-home-v3-reel-creator">
+      <HomeReelIdentity reel={reel} />
+      <strong>{homeReelCreatorName(reel)}</strong>
+    </div>
+  );
+}
+
+function HomeReelCaption({ reel, item, showIdentity = true }) {
+  const [expanded, setExpanded] = useState(false);
+  const creator = homeReelCreatorName(reel);
+  const attachedTitle = titleOf(item);
+  const caption = reel.caption || reel.videoTitle || reel.video_title || reel.reason || "";
+  const attachedMeta = [attachedTitle, mediaType(item) === "tv" ? "TV" : "Movie", yearOf(item)].filter(Boolean).join(" · ");
+  const canExpand = caption.length > 90;
+  return (
+    <div className={`mg-home-v3-reel-caption ${showIdentity ? "has-identity" : ""} ${expanded ? "is-expanded" : ""}`}>
+      {showIdentity && <HomeReelIdentity reel={reel} />}
+      <div>
+        {showIdentity && <strong>{creator}</strong>}
+        {caption && caption !== attachedTitle && <span>{caption}</span>}
+        {canExpand && <button type="button" onClick={(event) => { event.stopPropagation(); setExpanded((current) => !current); }}>{expanded ? "Less" : "More"}</button>}
+        {attachedMeta && <small>{attachedMeta}</small>}
+      </div>
+    </div>
+  );
+}
+
+function HomeDiscoveryActions({ liked, saved, asap, onLike, onComment, onDetails, onList, onAsap, onShare }) {
+  const [state, setState] = useState({ liked: Boolean(liked), saved: Boolean(saved), asap: Boolean(asap) });
+  const [busy, setBusy] = useState("");
+  const [failed, setFailed] = useState("");
+  useEffect(() => setState({ liked: Boolean(liked), saved: Boolean(saved), asap: Boolean(asap) }), [asap, liked, saved]);
+  const runToggle = async (event, key, handler) => {
+    event.stopPropagation();
+    if (busy) return;
+    const previous = state[key];
+    setFailed("");
+    setBusy(key);
+    setState((current) => ({ ...current, [key]: !previous }));
+    try {
+      await Promise.resolve(handler?.());
+    } catch {
+      setState((current) => ({ ...current, [key]: previous }));
+      setFailed(key);
+      window.setTimeout(() => setFailed(""), 1800);
+    } finally {
+      setBusy("");
+    }
+  };
+  const runAction = (event, handler) => {
+    event.stopPropagation();
+    handler?.();
+  };
+  return (
+    <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
+      <button className={`${state.liked ? "active" : ""} ${busy === "liked" ? "loading" : ""} ${failed === "liked" ? "error" : ""}`} type="button" aria-pressed={state.liked} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "liked", onLike)}><Icon name="heart" /><span>Like</span></button>
+      <button type="button" onClick={(event) => runAction(event, onComment)}><Icon name="chat" /><span>Comment</span></button>
+      <button type="button" onClick={(event) => runAction(event, onDetails)}><Icon name="info" /><span>Details</span></button>
+      <button className={`${state.saved ? "active" : ""} ${busy === "saved" ? "loading" : ""} ${failed === "saved" ? "error" : ""}`} type="button" aria-pressed={state.saved} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "saved", onList)}><Icon name="bookmark" /><span>List</span></button>
+      <button className={`${state.asap ? "active" : ""} ${busy === "asap" ? "loading" : ""} ${failed === "asap" ? "error" : ""}`} type="button" aria-pressed={state.asap} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "asap", onAsap)}><Icon name="clock" /><span>ASAP</span></button>
+      <button type="button" onClick={(event) => runAction(event, onShare)}><Icon name="send" /><span>Share</span></button>
+    </div>
+  );
+}
+
+function HomeReelCommentsSheet({ selection, onClose }) {
+  const { reel, item } = selection || {};
+  const [comments, setComments] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState("");
+  const [currentUserId, setCurrentUserId] = useState("");
+  const identity = reel ? reelIdentity(reel) : "";
+  const videoId = reel ? getYouTubeVideoId(reel) : "";
+
+  useEffect(() => {
+    if (!reel) return undefined;
+    let alive = true;
+    const load = async () => {
+      setLoading(true);
+      const collected = [];
+      try {
+        const userResult = await supabase?.auth?.getUser?.();
+        const userId = userResult?.data?.user?.id || "";
+        if (alive) setCurrentUserId(userId);
+        const tasks = [];
+        if (videoId) {
+          tasks.push(fetch(`/api/reel-comments?videoId=${encodeURIComponent(videoId)}`)
+            .then((response) => response.ok ? response.json() : { comments: [] })
+            .then((payload) => collected.push(...(payload.comments || []).map((comment) => ({ ...comment, source: "youtube" })))));
+        }
+        if (supabase && userId) {
+          tasks.push(supabase.from("reel_comments")
+            .select("id,user_id,comment_text,body,created_at")
+            .eq("reel_key", identity)
+            .order("created_at", { ascending: true })
+            .limit(50)
+            .then(({ data, error: loadError }) => {
+              if (loadError) throw loadError;
+              collected.push(...(data || []).map((comment) => ({
+                id: comment.id,
+                text: comment.comment_text || comment.body || "",
+                author: comment.user_id === userId ? "You" : "MovieGram user",
+                createdAt: comment.created_at,
+                source: "moviegram"
+              })));
+            }));
+        }
+        await Promise.allSettled(tasks);
+        if (alive) {
+          const unique = new Map(collected.filter((comment) => comment.text).map((comment) => [comment.id || `${comment.source}:${comment.createdAt}:${comment.text}`, comment]));
+          setComments([...unique.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)));
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+    load();
+    return () => { alive = false; };
+  }, [identity, reel, videoId]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || posting || !supabase || !currentUserId) return;
+    setPosting(true);
+    setError("");
+    const createdAt = new Date().toISOString();
+    try {
+      const payload = {
+        user_id: currentUserId,
+        reel_key: identity,
+        item_key: keyOf(item),
+        media_type: mediaType(item),
+        tmdb_id: item?.id || null,
+        title: titleOf(item),
+        source: reel.source || "youtube",
+        source_video_id: videoId || null,
+        source_url: reel.sourceUrl || reel.source_url || reel.watchUrl || reel.watch_url || "",
+        comment_text: text,
+        body: text,
+        created_at: createdAt
+      };
+      const { data, error: saveError } = await supabase.from("reel_comments").insert(payload).select("id,created_at").single();
+      if (saveError) throw saveError;
+      setComments((current) => [...current, { id: data.id, text, author: "You", createdAt: data.created_at || createdAt, source: "moviegram" }]);
+      setDraft("");
+    } catch (nextError) {
+      setError(nextError.message || "Comment could not be posted.");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  if (!selection) return null;
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg-home-v3-comments" role="dialog" aria-modal="true" aria-label={`Comments for ${titleOf(item)}`} onMouseDown={(event) => event.stopPropagation()}>
+        <header><span><strong>Comments</strong><small>{titleOf(item)}</small></span><button type="button" aria-label="Close comments" onClick={onClose}>x</button></header>
+        <div className="mg-home-v3-comments-list">
+          {loading && <p>Loading comments...</p>}
+          {!loading && !comments.length && <p>No comments yet. Start the conversation.</p>}
+          {comments.map((comment) => <article className={comment.source === "moviegram" ? "is-moviegram" : "is-youtube"} key={comment.id}><span className="mg-home-v3-comment-avatar">{String(comment.author || "M").slice(0, 1).toUpperCase()}</span><div><strong>{comment.author || "MovieGram user"}</strong><p>{comment.text}</p><small>{relativeSocialTime(comment.createdAt)}</small></div></article>)}
+        </div>
+        {error && <p className="mg-home-v3-story-error" role="alert">{error}</p>}
+        {currentUserId ? <form onSubmit={submit}><input value={draft} maxLength={1000} onChange={(event) => setDraft(event.target.value)} placeholder="Add a comment..." /><button type="submit" disabled={!draft.trim() || posting}><Icon name="send" /></button></form> : <p className="mg-home-v3-comments-signin">Sign in to comment.</p>}
+      </section>
+    </div>
+  );
+}
+
+function HomeReelShareSheet({ selection, onClose }) {
+  const { reel, item } = selection || {};
+  const [query, setQuery] = useState("");
+  const [profiles, setProfiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sendingId, setSendingId] = useState("");
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!selection || !supabase) return undefined;
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const userResult = await supabase.auth.getUser();
+        const userId = userResult?.data?.user?.id || "";
+        if (!userId) {
+          if (alive) {
+            setProfiles([]);
+            setMessage("Sign in to share this reel.");
+          }
+          return;
+        }
+        const term = query.trim().replace(/[^a-z0-9_. -]/gi, "").slice(0, 40);
+        let request = supabase.from("profiles").select("id,username,display_name,avatar_url").neq("id", userId).limit(12);
+        if (term) request = request.or(`username.ilike.%${term}%,display_name.ilike.%${term}%`);
+        const { data, error } = await request;
+        if (error) throw error;
+        if (alive) setProfiles(data || []);
+      } catch (error) {
+        if (alive) setMessage(error.message || "MovieGram users could not be loaded.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }, query ? 220 : 0);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [query, selection]);
+  if (!selection) return null;
+  const sendToProfile = async (profile) => {
+    if (!profile?.id || sendingId) return;
+    setSendingId(profile.id);
+    setMessage("");
+    try {
+      const userResult = await supabase.auth.getUser();
+      const senderId = userResult?.data?.user?.id;
+      if (!senderId) throw new Error("Sign in to share this reel.");
+      const conversationId = await openDirectConversation(profile.id);
+      const sourceUrl = reel.watchUrl || reel.watch_url || reel.sourceUrl || reel.source_url || "";
+      await sendConversationMessage({
+        conversationId,
+        senderId,
+        body: `Shared a MovieGram reel: ${titleOf(item)}`,
+        clientId: crypto.randomUUID(),
+        contentReference: {
+          type: "reel",
+          title: titleOf(item),
+          reel_id: reelIdentity(reel),
+          media_type: mediaType(item),
+          tmdb_id: item?.id || null,
+          artwork_url: reel.thumbnailUrl || reel.thumbnail_url || backdropUrl(item?.backdrop_path || item?.poster_path, "w780"),
+          source_url: sourceUrl
+        }
+      });
+      window.dispatchEvent(new CustomEvent("moviegram:social-counts-dirty"));
+      setMessage(`Sent to ${profile.display_name || profile.username || "MovieGram user"}.`);
+    } catch (error) {
+      setMessage(error.message || "Reel could not be shared.");
+    } finally {
+      setSendingId("");
+    }
+  };
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg-home-v3-share" role="dialog" aria-modal="true" aria-label={`Share ${titleOf(item)}`} onMouseDown={(event) => event.stopPropagation()}>
+        <header><strong>Share in Messages</strong><button type="button" aria-label="Close share" onClick={onClose}>x</button></header>
+        <label><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search MovieGram users" /></label>
+        <div>{loading && <p>Loading people...</p>}{!loading && !profiles.length && !message && <p>No matching people.</p>}{profiles.map((profile) => <button type="button" key={profile.id} disabled={Boolean(sendingId)} onClick={() => sendToProfile(profile)}><StoryAvatar profile={profile} /><span><strong>{profile.display_name || profile.username || "MovieGram user"}</strong><small>@{profile.username || "moviegram"}</small></span><Icon name="send" /></button>)}</div>
+        {message && <small>{message}</small>}
+      </section>
+    </div>
+  );
+}
+
+function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWatchlist, onWatchAsap, watchlist, detailsOpen, playbackRef }) {
   const [commentItem, setCommentItem] = useState(null);
+  const [shareItem, setShareItem] = useState(null);
   const [activeVideoIndex, setActiveVideoIndex] = useState(-1);
   const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
-  const [visibleCount, setVisibleCount] = useState(() => Math.min(4, items.length));
   const postRefs = useRef([]);
   const ratiosRef = useRef(new Map());
-  const loadMoreRef = useRef(null);
+  const overlaySnapshotRef = useRef(null);
+  const detailsWasOpenRef = useRef(false);
   const enableSound = () => {
     saveHomeReelSoundPreference(true);
     setSoundEnabled(true);
   };
-  useEffect(() => {
-    setVisibleCount(Math.min(4, items.length));
-  }, [items]);
   useEffect(() => {
     const enableAfterInteraction = () => enableSound();
     window.addEventListener("pointerdown", enableAfterInteraction, { once: true, passive: true });
@@ -5766,17 +6233,6 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpen
       window.removeEventListener("keydown", enableAfterInteraction);
     };
   }, []);
-  useEffect(() => {
-    const sentinel = loadMoreRef.current;
-    if (!sentinel || visibleCount >= items.length || typeof IntersectionObserver === "undefined") return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        setVisibleCount((current) => Math.min(items.length, current + 4));
-      }
-    }, { rootMargin: "500px 0px" });
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [items.length, visibleCount]);
   useEffect(() => {
     const posts = postRefs.current.filter(Boolean);
     if (!posts.length || typeof IntersectionObserver === "undefined") return undefined;
@@ -5805,119 +6261,91 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenReels, onOpen
       ratiosRef.current.clear();
       document.removeEventListener("visibilitychange", chooseActiveReel);
     };
-  }, [items, visibleCount]);
+  }, [items]);
+  const pauseForOverlay = useCallback((index, owner) => {
+    const wasPlaying = playbackRef?.current?.playing !== false;
+    pauseActiveHomeDiscoveryMedia(true);
+    const paused = { ...(playbackRef?.current || {}), index };
+    overlaySnapshotRef.current = { ...paused, playing: wasPlaying };
+    if (playbackRef) playbackRef.current = { ...paused, owner, playing: false, transferId: Number(paused.transferId || 0) + 1 };
+  }, [playbackRef]);
+  const openComments = useCallback((reel, item, index) => {
+    pauseForOverlay(index, "comments");
+    setCommentItem({ reel, item, index });
+  }, [pauseForOverlay]);
+  const closeComments = useCallback(() => {
+    const snapshot = overlaySnapshotRef.current;
+    overlaySnapshotRef.current = null;
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+    setCommentItem(null);
+  }, [playbackRef]);
+  const openDetails = useCallback((item, index) => {
+    pauseForOverlay(index, "details");
+    onOpenDetails(item);
+  }, [onOpenDetails, pauseForOverlay]);
+  useEffect(() => {
+    if (detailsOpen) {
+      detailsWasOpenRef.current = true;
+      return;
+    }
+    if (!detailsWasOpenRef.current) return;
+    detailsWasOpenRef.current = false;
+    const snapshot = overlaySnapshotRef.current;
+    overlaySnapshotRef.current = null;
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+  }, [detailsOpen, playbackRef]);
+  const openShare = useCallback((reel, item, index) => {
+    pauseForOverlay(index, "share");
+    setShareItem({ reel, item, index });
+  }, [pauseForOverlay]);
+  const closeShare = useCallback(() => {
+    const snapshot = overlaySnapshotRef.current;
+    overlaySnapshotRef.current = null;
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+    setShareItem(null);
+  }, [playbackRef]);
+  const stopEndedReel = useCallback((index) => {
+    ratiosRef.current.set(index, 0);
+    setActiveVideoIndex((current) => current === index ? -1 : current);
+  }, []);
   if (!items.length) return null;
   return (
     <section className="mg-home-v3-section mg-home-v3-discover">
       <div className="mg-home-v3-section-head"><h2>More to Discover</h2></div>
       <div className="mg-home-v3-reel-feed">
-        {items.slice(0, visibleCount).map((reel, index) => {
+        {items.slice(0, 16).map((reel, index) => {
           const item = homeReelContent(reel);
           const id = `home-reel:${reelIdentity(reel)}`;
+          const storedItem = Object.values(watchlist || {}).find((entry) => itemMatches(entry, item));
           return (
             <article ref={(node) => { postRefs.current[index] = node; }} data-home-reel-index={index} key={id} className="mg-home-v3-reel-post">
-              <header>
-                <Avatar friend={friends[index % friends.length]} size="sm" />
-                <span><strong>{reel.channelTitle || "MovieGram"}</strong><small>{reel.reason || "Suggested for you"}</small></span>
-                <small>{reelTypeLabel(reel) || "Reel"}</small>
-              </header>
-              <HomeReelMedia reel={reel} index={index} surface="inline" active={playbackOwner === "inline" && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onOpen={(snapshot) => onOpenReels(index, snapshot)} />
-              <footer>
-                <strong>{titleOf(item)}</strong>
-                <div>
-                  <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /> Like</button>
-                  <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /> Comment</button>
-                  <button type="button" onClick={() => onOpenDetails(item)}><Icon name="info" /> Details</button>
-                  <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /> List</button>
-                  <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /> ASAP</button>
-                  <button type="button" onClick={() => shareHomeReel(reel)}><Icon name="send" /> Share</button>
-                </div>
-              </footer>
-            </article>
-          );
-        })}
-        {visibleCount < items.length && <div ref={loadMoreRef} className="mg-home-v3-reel-sentinel" aria-hidden="true" />}
-      </div>
-      {commentItem && (
-        <div className="mg2-sheet-backdrop" onMouseDown={() => setCommentItem(null)}>
-          <section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}>
-            <span />
-            <h3>Comments</h3>
-            <p>Comments for {titleOf(commentItem)} will appear here when the reel thread is available.</p>
-            <button type="button" onClick={() => setCommentItem(null)}>Close</button>
-          </section>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function HomeDiscoveryPlayer({ items, initialIndex, likedFeed, toggleFeedLike, onClose, onOpen, onWatchlist, onWatchAsap, playbackRef }) {
-  const [activeIndex, setActiveIndex] = useState(initialIndex || 0);
-  const [commentItem, setCommentItem] = useState(null);
-  const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
-  const slideRefs = useRef([]);
-  const enableSound = () => {
-    saveHomeReelSoundPreference(true);
-    setSoundEnabled(true);
-  };
-  const closePlayer = (afterClose) => {
-    const wasPlaying = playbackRef?.current?.playing !== false;
-    pauseActiveHomeDiscoveryMedia(true);
-    const snapshot = { ...(playbackRef?.current || {}), playing: wasPlaying };
-    onClose(snapshot);
-    afterClose?.();
-  };
-  useEffect(() => {
-    slideRefs.current[initialIndex]?.scrollIntoView({ block: "start" });
-  }, [initialIndex]);
-  useEffect(() => {
-    const slides = slideRefs.current.filter(Boolean);
-    if (!slides.length || typeof IntersectionObserver === "undefined") return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      const active = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (active) setActiveIndex(Number(active.target.dataset.discoveryIndex || 0));
-    }, { root: document.querySelector(".mg-home-v3-discovery-player-list"), threshold: [0.55, 0.8] });
-    slides.forEach((slide) => observer.observe(slide));
-    return () => observer.disconnect();
-  }, [items]);
-  return (
-    <section className="mg-home-v3-discovery-player" aria-label="Home discovery player">
-      <button className="mg-home-v3-discovery-back" type="button" onClick={() => closePlayer()}><Icon name="back" /> Home</button>
-      <div className="mg-home-v3-discovery-player-list">
-        {items.map((reel, index) => {
-          const item = homeReelContent(reel);
-          const id = `home-reel:${reelIdentity(reel)}`;
-          return (
-            <article ref={(node) => { slideRefs.current[index] = node; }} data-discovery-index={index} key={id}>
-              <HomeReelMedia reel={reel} index={index} surface="fullscreen" active={activeIndex === index} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} interactive />
-              <div className="mg-home-v3-discovery-context"><strong>{titleOf(item)}</strong><small>{reel.reason || reelTypeLabel(reel) || "MovieGram discovery"}</small></div>
-              <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
-                <button className={likedFeed[id] ? "active" : ""} type="button" onClick={() => toggleFeedLike(id)}><Icon name="heart" /><span>Like</span></button>
-                <button type="button" onClick={() => setCommentItem(item)}><Icon name="chat" /><span>Comment</span></button>
-                <button type="button" onClick={() => closePlayer(() => onOpen(item))}><Icon name="info" /><span>Details</span></button>
-                <button type="button" onClick={() => onWatchlist(item)}><Icon name="bookmark" /><span>List</span></button>
-                <button type="button" onClick={() => onWatchAsap(item)}><Icon name="clock" /><span>ASAP</span></button>
-                <button type="button" onClick={() => shareHomeReel(reel)}><Icon name="send" /><span>Share</span></button>
-              </div>
+              <HomeReelCreatorRow reel={reel} />
+              <HomeReelMedia reel={reel} index={index} surface="inline" active={!commentItem && !shareItem && !detailsOpen && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onEnded={() => stopEndedReel(index)} />
+              <HomeDiscoveryActions liked={Boolean(likedFeed[id])} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => toggleFeedLike(id)} onComment={() => openComments(reel, item, index)} onDetails={() => openDetails(item, index)} onList={() => onWatchlist(item)} onAsap={() => onWatchAsap(item)} onShare={() => openShare(reel, item, index)} />
+              <HomeReelCaption reel={reel} item={item} showIdentity={false} />
             </article>
           );
         })}
       </div>
-      {commentItem && <div className="mg2-sheet-backdrop" onMouseDown={() => setCommentItem(null)}><section className="mg-home-v3-story-sheet" onMouseDown={(event) => event.stopPropagation()}><span /><h3>Comments</h3><p>Comments for {titleOf(commentItem)} will appear here when the reel thread is available.</p><button type="button" onClick={() => setCommentItem(null)}>Close</button></section></div>}
+      {commentItem && <HomeReelCommentsSheet selection={commentItem} onClose={closeComments} />}
+      {shareItem && <HomeReelShareSheet selection={shareItem} onClose={closeShare} />}
     </section>
   );
 }
 
-function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onToggleEpisode, apiFetch }) {
-  const [storySheet, setStorySheet] = useState(null);
-  const [discoveryIndex, setDiscoveryIndex] = useState(null);
-  const [discoveryPlaybackOwner, setDiscoveryPlaybackOwner] = useState("inline");
+function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicProfile, watchlist, watched = {}, episodeProgress = {}, ratings, favorites = {}, continueWatching, recommended, intelligenceRows, hiddenRecs, feedItems, socialActivity = [], profileActivity = {}, toggleFeedLike, toggleFeedSave, likedFeed, savedFeed, onWatchlist, onWatchAsap, onWatched, onToggleEpisode, apiFetch, detailsOpen = false }) {
+  const [storySheet, setStorySheet] = useState(false);
+  const [storyGroups, setStoryGroups] = useState([]);
+  const [storyViewerUserId, setStoryViewerUserId] = useState(null);
+  const [storyViewerStoryId, setStoryViewerStoryId] = useState(null);
+  const [storyLoading, setStoryLoading] = useState(Boolean(user?.id));
+  const [storyError, setStoryError] = useState("");
   const [homeView, setHomeView] = useState(null);
   const homeRootRef = useRef(null);
   const homeScrollRef = useRef(0);
   const shelfScrollRef = useRef(0);
   const restoreHomeScrollRef = useRef(false);
+  const storyResumeCheckedRef = useRef(false);
   const discoveryPlaybackRef = useRef({ owner: "inline", reelId: "", index: -1, currentTime: 0, playing: false, muted: true, soundEnabled: false, transferId: 0 });
   const watchedKeys = useMemo(() => new Set(Object.values(watched || {}).map(keyOf)), [watched]);
   const watchlistItems = useMemo(() => Object.values(watchlist || {}).filter((item) => !watchedKeys.has(keyOf(item))), [watchedKeys, watchlist]);
@@ -5933,6 +6361,84 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
   ]), [continueWatching, feedItems, recommended, rows, socialActivity, watched, watchlistItems]);
   const reliableContinue = useHomeSeriesProgress({ episodeProgress, candidates: homeSourceItems, apiFetch });
   const playableHomeReels = useHomePlayableReels(homeSourceItems, apiFetch);
+  const refreshStories = useCallback(async () => {
+    if (!user?.id) {
+      setStoryGroups([]);
+      setStoryLoading(false);
+      return;
+    }
+    try {
+      const groups = await loadVisibleStoryGroups(user.id);
+      setStoryGroups(groups);
+      setStoryError("");
+    } catch (error) {
+      setStoryError(error.message || "Stories are temporarily unavailable.");
+    } finally {
+      setStoryLoading(false);
+    }
+  }, [user?.id]);
+  useEffect(() => {
+    setStoryLoading(Boolean(user?.id));
+    refreshStories();
+    const unsubscribe = subscribeStories(() => refreshStories());
+    return unsubscribe;
+  }, [refreshStories, user?.id]);
+  useEffect(() => {
+    if (storyResumeCheckedRef.current || !storyGroups.length) return;
+    storyResumeCheckedRef.current = true;
+    try {
+      const cursor = JSON.parse(window.sessionStorage.getItem("moviegram.home.story.cursor.v1") || "null");
+      window.sessionStorage.removeItem("moviegram.home.story.cursor.v1");
+      if (!cursor?.userId || !storyGroups.some((group) => group.userId === cursor.userId && group.stories.some((story) => story.id === cursor.storyId))) return;
+      setStoryViewerUserId(cursor.userId);
+      setStoryViewerStoryId(cursor.storyId || null);
+      if (Number.isFinite(Number(cursor.homeScroll))) {
+        const restore = () => {
+          const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
+          if (scrollContainer) scrollContainer.scrollTop = Number(cursor.homeScroll);
+        };
+        window.requestAnimationFrame(restore);
+        window.setTimeout(restore, 160);
+      }
+    } catch {
+      window.sessionStorage.removeItem("moviegram.home.story.cursor.v1");
+    }
+  }, [storyGroups]);
+  const handleStoryViewed = useCallback(async (story) => {
+    if (!user?.id || !story?.id) return;
+    setStoryGroups((current) => current.map((group) => ({ ...group, stories: group.stories.map((entry) => entry.id === story.id ? { ...entry, viewed: true } : entry) })));
+    try { await markStoryViewed(story.id, user.id); } catch (error) { if (process.env.NODE_ENV !== "production") console.warn("MovieGram Story view state skipped", error?.message); }
+  }, [user?.id]);
+  const handleStoryDelete = useCallback(async (story) => {
+    try {
+      await deleteOwnStory(story);
+      setStoryGroups((current) => current
+        .map((group) => ({ ...group, stories: group.stories.filter((entry) => entry.id !== story.id) }))
+        .filter((group) => group.stories.length));
+      await refreshStories();
+    } catch (error) {
+      setStoryError(error.message || "Story could not be deleted.");
+    }
+  }, [refreshStories]);
+  const handleStoryReply = useCallback(async (story, body) => {
+    if (!user?.id || !story?.user_id) throw new Error("Sign in to reply to this Story.");
+    const conversationId = await openDirectConversation(story.user_id);
+    await sendConversationMessage({
+      conversationId,
+      senderId: user.id,
+      body,
+      clientId: crypto.randomUUID(),
+      contentReference: {
+        type: "story",
+        story_id: story.id,
+        title: story.title || "MovieGram Story",
+        media_type: story.media_type,
+        tmdb_id: story.tmdb_id,
+        artwork_url: story.asset_url || (story.backdrop_path ? backdropUrl(story.backdrop_path, "w780") : posterUrl(story.poster_path, "w342"))
+      }
+    });
+    window.dispatchEvent(new CustomEvent("moviegram:social-counts-dirty"));
+  }, [user?.id]);
   const homeData = useMemo(() => {
     const used = new Set();
     const validArt = (item) => Boolean(item?.poster_path || item?.backdrop_path);
@@ -6132,44 +6638,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
     return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [homeView]);
 
-  const openDiscovery = (index, snapshot = {}) => {
-    const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
-    homeScrollRef.current = scrollContainer?.scrollTop || 0;
-    discoveryPlaybackRef.current = {
-      ...discoveryPlaybackRef.current,
-      ...snapshot,
-      index,
-      owner: "fullscreen",
-      transferId: Number(discoveryPlaybackRef.current.transferId || 0) + 1
-    };
-    setDiscoveryPlaybackOwner("fullscreen");
-    setDiscoveryIndex(index);
-  };
-  const closeDiscovery = (snapshot = {}) => {
-    discoveryPlaybackRef.current = {
-      ...discoveryPlaybackRef.current,
-      ...snapshot,
-      owner: "inline",
-      transferId: Number(discoveryPlaybackRef.current.transferId || 0) + 1
-    };
-    setDiscoveryPlaybackOwner("inline");
-    restoreHomeScrollRef.current = true;
-    setDiscoveryIndex(null);
-  };
-  useEffect(() => {
-    if (discoveryIndex !== null || !restoreHomeScrollRef.current) return undefined;
-    restoreHomeScrollRef.current = false;
-    const restore = () => {
-      const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
-      if (scrollContainer) scrollContainer.scrollTop = homeScrollRef.current;
-    };
-    const firstFrame = window.requestAnimationFrame(restore);
-    const settledTimer = window.setTimeout(restore, 180);
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.clearTimeout(settledTimer);
-    };
-  }, [discoveryIndex]);
+  useEffect(() => () => pauseActiveHomeDiscoveryMedia(false), []);
 
   if (homeView?.type === "shelf") {
     return <div ref={homeRootRef} className="mg-home-v3 mg-home-v3-subview"><HomeShelfPage shelf={homeView} watchlist={watchlist} watched={watched} ratings={ratings} onBack={closeHomeView} onOpen={onOpen} onOpenEpisode={openEpisode} /></div>;
@@ -6186,7 +6655,7 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
 
   return (
     <div ref={homeRootRef} className="mg-home-v3">
-      <HomeStories user={user} onOpenStory={setStorySheet} />
+      <HomeStories user={user} groups={storyGroups} loading={storyLoading} error={storyError} onCompose={() => setStorySheet(true)} onOpenGroup={(userId) => { setStoryViewerStoryId(null); setStoryViewerUserId(userId); }} />
       <HomeHero items={homeData.heroItems} watchlist={watchlist} onOpen={onOpen} onWatchlist={onWatchlist} />
       <ContinueWatchingRow items={homeData.continueItems} episodeProgress={episodeProgress} onOpenEpisode={openEpisode} onToggleEpisode={onToggleEpisode} onSeeAll={() => openShelf("continue", "Continue Watching", homeData.continueItems)} />
       {homeData.startWatching.length > 0 && <HomeShelf title="Start Watching" variant="start" onSeeAll={() => openShelf("start", "Start Watching", homeData.startWatching)}>
@@ -6211,9 +6680,15 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
       {homeData.recentlyOpened.length > 0 && <HomeShelf title="Recently Opened" variant="recent" onSeeAll={() => openShelf("recent", "Recently Opened", homeData.recentlyOpened)}>
         <HomeAppendableRail shelfKey="recent" className="mg-home-v3-rail--recent" items={homeData.recentlyOpened} renderItem={(item) => <HomeRailCard key={`recent-${keyOf(item)}`} item={item} variant="recent" showArtwork={homeShowArtwork[homeCanonicalKey(item)]} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} onWatched={onWatched} />} />
       </HomeShelf>}
-      <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenReels={openDiscovery} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} playbackOwner={discoveryPlaybackOwner} playbackRef={discoveryPlaybackRef} />
-      <HomeStorySheet story={storySheet} onClose={() => setStorySheet(null)} apiFetch={apiFetch} />
-      {discoveryIndex !== null && <HomeDiscoveryPlayer items={playableHomeReels} initialIndex={discoveryIndex} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onClose={closeDiscovery} onOpen={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} playbackRef={discoveryPlaybackRef} />}
+      <HomeInlineReels items={playableHomeReels} likedFeed={likedFeed} toggleFeedLike={toggleFeedLike} onOpenDetails={onOpen} onWatchlist={onWatchlist} onWatchAsap={onWatchAsap} watchlist={watchlist} detailsOpen={detailsOpen} playbackRef={discoveryPlaybackRef} />
+      {storySheet && <HomeStorySheet onClose={() => setStorySheet(false)} apiFetch={apiFetch} reels={playableHomeReels} onPosted={refreshStories} />}
+      {storyViewerUserId && <HomeStoryViewer groups={storyGroups} initialUserId={storyViewerUserId} initialStoryId={storyViewerStoryId} currentUser={user} onClose={() => { setStoryViewerUserId(null); setStoryViewerStoryId(null); }} onViewed={handleStoryViewed} onDelete={handleStoryDelete} onOpenMedia={(item, cursor) => {
+        const scrollContainer = homeRootRef.current?.closest?.(".mg2-screen");
+        window.sessionStorage.setItem("moviegram.home.story.cursor.v1", JSON.stringify({ ...cursor, homeScroll: scrollContainer?.scrollTop || 0 }));
+        setStoryViewerUserId(null);
+        setStoryViewerStoryId(null);
+        onOpen(item);
+      }} onReply={handleStoryReply} />}
     </div>
   );
 }
@@ -6244,7 +6719,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
 
   return (
     <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} />
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} cardScope="explore" />
       <section className="mg2-explore-hero">
         <span>Discovery Hub</span>
         <h2>Find your next obsession.</h2>
@@ -6255,7 +6730,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           <button key={tab.id} className={activeExplore === tab.id ? "active" : ""} type="button" onClick={() => setActiveExplore(tab.id)}>{tab.label}</button>
         ))}
       </div>
-      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} />
+      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} cardScope="explore" />
       {tabLoading && tabResults.length > 0 && <div className="mg2-empty compact">Loading more...</div>}
       {chartRows.map((row) => (
         <ContentRow
@@ -6269,6 +6744,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           watched={watched}
           ratings={ratings}
           favorites={favorites}
+          cardScope="explore"
         />
       ))}
       {exploreHubSections.map((section) => (
@@ -6283,6 +6759,7 @@ function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults
           watched={watched}
           ratings={ratings}
           favorites={favorites}
+          cardScope="explore"
         />
       ))}
       <GenreRow genres={genreSeeds} />
@@ -11878,17 +12355,7 @@ export default function Home() {
       } else {
         const result = await followUser(supabaseUser.id, profile);
         if (!result) throw new Error("Follow table is unavailable.");
-        const actorName = profileIdentity?.username || profileIdentity?.display_name || "Someone";
         const isRequest = result.status === "pending";
-        await createNotification({
-          userId: profile.id,
-          actorId: supabaseUser.id,
-          type: isRequest ? "follow_request" : "follow",
-          entityType: isRequest ? "follow" : "profile",
-          entityId: isRequest ? result.id : supabaseUser.id,
-          message: isRequest ? `${actorName} requested to follow you` : `${actorName} started following you`,
-          metadata: { action_state: isRequest ? "pending" : "sent", follower_id: supabaseUser.id }
-        });
         if (!isRequest) {
           createActivityEvent(supabaseUser.id, "follow", null, { entityId: profile.id, title: publicProfileName(profile), username: profile.username }).catch(() => {});
         }
@@ -11924,15 +12391,6 @@ export default function Home() {
       if (status === "accepted") {
         const result = await acceptFollowRequest(supabaseUser.id, requesterId);
         if (!result) throw new Error("Follow request table is unavailable.");
-        await createNotification({
-          userId: requesterId,
-          actorId: supabaseUser.id,
-          type: "follow_accept",
-          entityType: "follow",
-          entityId: result.id,
-          message: `${profileIdentity?.username || profileIdentity?.display_name || "Someone"} accepted your follow request`,
-          metadata: { action_state: "accepted", following_id: supabaseUser.id }
-        });
       } else {
         await declineFollowRequest(supabaseUser.id, requesterId);
       }
@@ -12788,7 +13246,7 @@ export default function Home() {
   } else if (activeSocial === "settings") {
     screen = <SettingsScreen user={supabaseUser} profile={profileIdentity} syncStatus={syncStatus} onBack={() => setActiveSocial(null)} onLogout={handleLogout} onSaveProfile={handleProfileSave} onSafetyAction={openSafetyAction} />;
   } else if (activeTab === "home") {
-    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPerson={openPerson} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onToggleEpisode={toggleHomeEpisodeWatched} apiFetch={apiFetch} />;
+    screen = <HomeScreen rows={rows} loading={loadingRows} user={supabaseUser} onOpen={openItem} onOpenPerson={openPerson} onOpenPublicProfile={openPublicProfile} watchlist={libraryState.watchlist} watched={libraryState.watched} episodeProgress={episodeProgress} ratings={libraryState.ratings} favorites={favorites} continueWatching={continueWatching} recommended={recommended} intelligenceRows={intelligenceRows} hiddenRecs={hiddenRecs} feedItems={feedItems} socialActivity={socialActivity} profileActivity={profileActivity} toggleFeedLike={toggleFeedLike} toggleFeedSave={toggleFeedSave} likedFeed={likedFeed} savedFeed={savedFeed} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onToggleEpisode={toggleHomeEpisodeWatched} apiFetch={apiFetch} detailsOpen={Boolean(selected)} />;
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
@@ -12853,8 +13311,8 @@ export default function Home() {
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       title={title}
-      onOpenMessages={() => setActiveSocial("messages")}
-      onOpenNotifications={() => setActiveSocial("notifications")}
+      onOpenMessages={() => window.location.assign("/messages")}
+      onOpenNotifications={() => window.location.assign("/notifications")}
       socialActive={Boolean(activeSocial)}
       onCloseSocial={() => { setActiveSocial(null); setSelectedPublicProfile(null); setPublicProfileBundle(null); }}
     >
