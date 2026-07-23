@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   acceptFollowRequest,
@@ -25,6 +25,7 @@ import {
   markNotificationRead,
   markSupabaseWatched,
   removeFromSupabaseWatchlist,
+  removeItemFromList,
   removeReleaseReminder,
   removeSupabaseWatched,
   saveMovieGramRemoteState,
@@ -83,6 +84,7 @@ const exploreHubSections = [
   { id: "popularTv", title: "Popular TV Shows", endpoint: "/tv/popular" },
   { id: "topRated", title: "Top Rated", endpoint: "/movie/top_rated" },
   { id: "upcoming", title: "Coming Soon", endpoint: "/movie/upcoming" },
+  { id: "upcomingTv", title: "Upcoming TV", endpoint: "/discover/tv", params: { "first_air_date.gte": new Date().toISOString().slice(0, 10), sort_by: "popularity.desc" } },
   { id: "nowPlaying", title: "New This Week", endpoint: "/movie/now_playing" },
   { id: "airingToday", title: "TV Drops Today", endpoint: "/tv/airing_today" },
   { id: "onAir", title: "Upcoming TV", endpoint: "/tv/on_the_air" },
@@ -96,7 +98,17 @@ const exploreHubSections = [
   { id: "weekendPicks", title: "Weekend Watch Picks", endpoint: "/discover/movie", params: { with_genres: "28,12,53", sort_by: "popularity.desc" } },
   { id: "indianCinema", title: "Indian Cinema", endpoint: "/discover/movie", params: { with_original_language: "hi", region: "IN", sort_by: "popularity.desc" } },
   { id: "kDrama", title: "K-drama", endpoint: "/discover/tv", params: { with_original_language: "ko", sort_by: "popularity.desc" } },
-  { id: "sitcoms", title: "Sitcoms", endpoint: "/discover/tv", params: { with_genres: "35", sort_by: "popularity.desc" } }
+  { id: "sitcoms", title: "Sitcoms", endpoint: "/discover/tv", params: { with_genres: "35", sort_by: "popularity.desc" } },
+  { id: "netflixMovies", title: "Netflix Movies", endpoint: "/discover/movie", params: { watch_region: "IN", with_watch_providers: "8", sort_by: "popularity.desc" } },
+  { id: "netflixShows", title: "Netflix Shows", endpoint: "/discover/tv", params: { watch_region: "IN", with_watch_providers: "8", sort_by: "popularity.desc" } },
+  { id: "primeMovies", title: "Prime Video Movies", endpoint: "/discover/movie", params: { watch_region: "IN", with_watch_providers: "119", sort_by: "popularity.desc" } },
+  { id: "primeShows", title: "Prime Video Shows", endpoint: "/discover/tv", params: { watch_region: "IN", with_watch_providers: "119", sort_by: "popularity.desc" } },
+  { id: "hotstarMovies", title: "JioHotstar Movies", endpoint: "/discover/movie", params: { watch_region: "IN", with_watch_providers: "122", sort_by: "popularity.desc" } },
+  { id: "hotstarShows", title: "JioHotstar Shows", endpoint: "/discover/tv", params: { watch_region: "IN", with_watch_providers: "122", sort_by: "popularity.desc" } },
+  { id: "appleMovies", title: "Apple TV+ Movies", endpoint: "/discover/movie", params: { watch_region: "IN", with_watch_providers: "350", sort_by: "popularity.desc" } },
+  { id: "appleShows", title: "Apple TV+ Shows", endpoint: "/discover/tv", params: { watch_region: "IN", with_watch_providers: "350", sort_by: "popularity.desc" } },
+  { id: "crunchyMovies", title: "Crunchyroll Movies", endpoint: "/discover/movie", params: { watch_region: "IN", with_watch_providers: "283", with_genres: "16", sort_by: "popularity.desc" } },
+  { id: "crunchyShows", title: "Crunchyroll Shows", endpoint: "/discover/tv", params: { watch_region: "IN", with_watch_providers: "283", with_genres: "16", sort_by: "popularity.desc" } }
 ];
 
 let franchiseHubs = [
@@ -694,12 +706,26 @@ const fallbackRows = {
 
 const genreSeeds = [
   { id: 28, name: "Action", tone: "violet" },
-  { id: 878, name: "Sci-Fi", tone: "blue" },
-  { id: 18, name: "Drama", tone: "rose" },
-  { id: 53, name: "Thriller", tone: "amber" },
-  { id: 16, name: "Anime", tone: "green" },
+  { id: 12, name: "Adventure", tone: "blue" },
+  { id: 16, name: "Animation", tone: "green" },
   { id: 35, name: "Comedy", tone: "purple" },
-  { id: 80, name: "Crime", tone: "red" }
+  { id: 80, name: "Crime", tone: "red" },
+  { id: 99, name: "Documentary", tone: "blue" },
+  { id: 18, name: "Drama", tone: "rose" },
+  { id: 10751, name: "Family", tone: "green" },
+  { id: 14, name: "Fantasy", tone: "violet" },
+  { id: 36, name: "History", tone: "amber" },
+  { id: 27, name: "Horror", tone: "red" },
+  { id: 10402, name: "Music", tone: "purple" },
+  { id: 9648, name: "Mystery", tone: "blue" },
+  { id: 10749, name: "Romance", tone: "rose" },
+  { id: 878, name: "Science Fiction", tone: "blue" },
+  { id: 53, name: "Thriller", tone: "amber" },
+  { id: 10752, name: "War", tone: "red" },
+  { id: 37, name: "Western", tone: "amber" },
+  { id: 10759, name: "Action & Adventure", tone: "violet", mediaType: "tv" },
+  { id: 10765, name: "Sci-Fi & Fantasy", tone: "blue", mediaType: "tv" },
+  { id: 10768, name: "War & Politics", tone: "red", mediaType: "tv" }
 ];
 
 const collectionSeeds = [
@@ -1639,14 +1665,55 @@ function dedupe(items = []) {
   });
 }
 
+function normalizeSearchText(value = "") {
+  return String(value)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u2018\u2019\u201b\u2032`]/g, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function searchTitlesOf(item = {}) {
+  return Array.from(new Set([
+    item.title,
+    item.name,
+    item.original_title,
+    item.original_name
+  ].map(normalizeSearchText).filter(Boolean)));
+}
+
 function sortResults(items = [], query = "") {
-  const q = query.trim().toLowerCase();
+  const queryYear = query.match(/\b(19|20)\d{2}\b/)?.[0] || "";
+  const titleQuery = normalizeSearchText(query.replace(/\b(19|20)\d{2}\b/g, ""));
+  const queryTokens = titleQuery.split(" ").filter(Boolean);
+  const score = (item) => {
+    const titles = searchTitlesOf(item);
+    const bestTitleScore = titles.reduce((best, title) => {
+      if (!titleQuery) return best;
+      const titleTokens = new Set(title.split(" "));
+      const matchedTokens = queryTokens.filter((token) => titleTokens.has(token)).length;
+      const tokenCoverage = queryTokens.length ? matchedTokens / queryTokens.length : 0;
+      const candidateScore =
+        (title === titleQuery ? 1000000 : 0) +
+        (title.startsWith(titleQuery) ? 250000 : 0) +
+        (title.includes(titleQuery) ? 100000 : 0) +
+        Math.round(tokenCoverage * 30000) -
+        Math.min(Math.abs(title.length - titleQuery.length), 80) * 10;
+      return Math.max(best, candidateScore);
+    }, 0);
+    const yearScore = queryYear && String(yearOf(item)) === queryYear ? 50000 : 0;
+    const popularityScore = Math.min(Number(item.popularity) || 0, 5000) * 4;
+    const voteScore = Math.min(Number(item.vote_count) || 0, 100000) * 0.02;
+    const total = bestTitleScore + yearScore + popularityScore + voteScore;
+    return Number.isFinite(total) ? total : 0;
+  };
   return [...items].sort((a, b) => {
-    const at = titleOf(a).toLowerCase();
-    const bt = titleOf(b).toLowerCase();
-    const as = (at === q ? 100000 : 0) + (at.startsWith(q) ? 40000 : 0) + (at.includes(q) ? 12000 : 0) + (a.popularity || 0) * 12 + (a.vote_count || 0);
-    const bs = (bt === q ? 100000 : 0) + (bt.startsWith(q) ? 40000 : 0) + (bt.includes(q) ? 12000 : 0) + (b.popularity || 0) * 12 + (b.vote_count || 0);
-    return bs - as;
+    const delta = score(b) - score(a);
+    if (delta) return delta;
+    return titleOf(a).localeCompare(titleOf(b));
   });
 }
 
@@ -2254,6 +2321,7 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
     rating && { key: "rated", text: rating, label: `Rated ${rating}` },
     favorite && { key: "favorite", icon: <Icon name="heart" />, label: "Favorite" }
   ].filter(Boolean);
+  const exploreMetadata = `${mediaType(item) === "tv" ? "TV" : "Movie"} · ${yearOf(item)}${item.vote_average ? ` · ${Number(item.vote_average).toFixed(1)}` : ""}`;
   const startLongPress = () => {
     if (!onQuickActions) return;
     longPressFired.current = false;
@@ -2305,7 +2373,7 @@ function PosterCard({ item, onOpen, saved, watched, rating, favorite, compact = 
         </span>
       )}
       <strong>{titleOf(item)}</strong>
-      <small>{upcomingLabel ? `${upcomingLabel} / ${mediaType(item) === "tv" ? "TV" : "Movie"}` : `${item.vote_average ? item.vote_average.toFixed(1) : "NR"} / ${yearOf(item)}`}</small>
+      <small>{cardScope === "explore" ? exploreMetadata : upcomingLabel ? `${upcomingLabel} / ${mediaType(item) === "tv" ? "TV" : "Movie"}` : `${item.vote_average ? item.vote_average.toFixed(1) : "NR"} / ${yearOf(item)}`}</small>
     </button>
   );
 }
@@ -2845,7 +2913,7 @@ function ReviewSheet({ item, initialReview = "", initialRating = "", initialSpoi
   );
 }
 
-function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) {
+function LegacyCustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState("public");
@@ -2881,6 +2949,52 @@ function CustomListSheet({ item, lists = {}, onCreate, onToggleItem, onClose }) 
           })}
           {listEntries.length === 0 && <em>No custom lists yet. Create one above.</em>}
         </div>
+        <button type="button" onClick={onClose}>Done</button>
+      </section>
+    </div>
+  );
+}
+
+function CustomListSheet({ item, lists = {}, watchlisted, watchAsap, favorite, onCreate, onToggleItem, onWatchlist, onWatchAsap, onFavorite, onClose }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [visibility, setVisibility] = useState("private");
+  const [creating, setCreating] = useState(false);
+  if (!item) return null;
+  const listEntries = Object.values(lists || {});
+  const option = ({ id, icon, title, detail, active, disabled, onClick, status }) => (
+    <button className={active ? "active" : ""} key={id} type="button" disabled={disabled} onClick={onClick}>
+      <Icon name={icon} /><span><strong>{title}</strong><small>{detail}</small></span><b>{status || (active ? "Checked" : "")}</b>
+    </button>
+  );
+  return (
+    <div className="mg2-sheet-backdrop" onMouseDown={onClose}>
+      <section className="mg2-watch-sheet mg2-list-sheet mg2-list-picker" onMouseDown={(event) => event.stopPropagation()}>
+        <span />
+        <h3>Save to lists</h3>
+        <p>{titleOf(item)}</p>
+        <div className="mg2-system-list-options">
+          {option({ id: "watchlist", icon: "bookmark", title: "Watchlist", detail: "Default saved titles", active: watchlisted, onClick: () => onWatchlist?.(item) })}
+          {option({ id: "asap", icon: "clock", title: "ASAP", detail: "Watch next", active: watchAsap, onClick: () => onWatchAsap?.(item) })}
+          {option({ id: "favorites", icon: "heart", title: "Favourites", detail: "Your favourites", active: favorite, onClick: () => onFavorite?.(item) })}
+        </div>
+        {listEntries.length > 0 && <div className="mg2-custom-list-options">{listEntries.map((list) => {
+          const contains = (list.items || []).some((entry) => itemMatches(entry, item));
+          return option({ id: list.id, icon: "list", title: list.title, detail: `${(list.items || []).length} titles`, active: contains, onClick: () => onToggleItem?.(list.id, item) });
+        })}</div>}
+        <button className="mg2-list-create-toggle" type="button" onClick={() => setCreating((current) => !current)}>+ Create New List</button>
+        {creating && <div className="mg2-list-create">
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New list name" maxLength={80} />
+          <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" maxLength={240} />
+          <select value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="private">Private</option><option value="friends">Friends / shared</option><option value="public">Public</option></select>
+          <button type="button" onClick={async () => {
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            const created = await Promise.resolve(onCreate?.(trimmed, item, { description: description.trim(), visibility }));
+            if (created === false) return;
+            setName(""); setDescription(""); setCreating(false);
+          }}>Create</button>
+        </div>}
         <button type="button" onClick={onClose}>Done</button>
       </section>
     </div>
@@ -3609,7 +3723,7 @@ function RecommendationCard({ item, badge, reason, onOpen, onWatchlist, onNotInt
         <em>{recReason}</em>
       </div>
       <div className="mg2-rec-actions">
-        <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(item)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name={saved ? "check" : "bookmark"} /></button>
+        <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(item)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /></button>
         <button className="subtle" type="button" onClick={() => onNotInterested(item)} aria-label="Not interested">Hide</button>
       </div>
     </article>
@@ -4470,7 +4584,7 @@ function HomeHero({ items, watchlist, onOpen, onWatchlist }) {
         {hero.overview && <p>{hero.overview}</p>}
         <div>
           <button type="button" onClick={() => onOpen(hero)}><Icon name="play" /> Watch Trailer</button>
-          <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(hero)} aria-label={saved ? "Remove from Watchlist" : "Add to Watchlist"}>{saved ? <Icon name="check" /> : "+"}</button>
+          <button className={saved ? "active watchlisted" : ""} type="button" onClick={() => onWatchlist(hero)} aria-label={saved ? "Remove from Watchlist" : "Add to Watchlist"}><Icon name="bookmark" /></button>
         </div>
       </div>
       <div className="mg-home-v3-hero-dots">
@@ -4506,8 +4620,8 @@ function HomeRailCard({ item, badge, action = "open", variant = "standard", save
         <button type="button" onClick={() => onOpen(item)}>
           <img className="mg-home-v3-art-primary" src={artworkUrl} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = useBackdrop ? BACKDROP_FALLBACK : POSTER_FALLBACK; }} />
         </button>
-        {showAction && <button type="button" className={`mg-home-v3-card-action${saved || watchAsap ? " active" : ""}`} onClick={handleMainAction} aria-label={action === "watch" ? `Mark watched ${titleOf(item)}` : `Save ${titleOf(item)}`}>
-          {action === "watch" ? <Icon name="check" /> : action === "asap" ? <Icon name="clock" /> : saved ? <Icon name="check" /> : "+"}
+        {showAction && <button type="button" className={`mg-home-v3-card-action${saved || watchAsap ? " active" : ""}${action !== "watch" && action !== "asap" && saved ? " watchlisted" : ""}`} onClick={handleMainAction} aria-label={action === "watch" ? `Mark watched ${titleOf(item)}` : `Save ${titleOf(item)}`}>
+          {action === "watch" ? <Icon name="check" /> : action === "asap" ? <Icon name="clock" /> : <Icon name="bookmark" />}
         </button>}
       </div>
       <button className="mg-home-v3-card-copy" type="button" onClick={() => onOpen(item)}>
@@ -5300,6 +5414,7 @@ function isHomeAnimeItem(item = {}) {
 }
 
 const HOME_SERIES_CACHE_KEY = "moviegram.homeSeriesDetails.v1";
+const LOG_ANALYTICS_CACHE_KEY = "moviegram.logAnalytics.v2";
 const HOME_SHOW_ART_CACHE_KEY = "moviegram.homeShowArtwork.v2";
 const HOME_REELS_CACHE_KEY = "moviegram.homePlayableReels.v1";
 
@@ -5350,7 +5465,7 @@ function deriveHomeSeriesProgress(details, episodeProgress = {}, exactNextEpisod
   };
 }
 
-function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
+function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch, maxShows = 12 }) {
   const [items, setItems] = useState([]);
   const watchedShowIds = useMemo(() => [...new Set(Object.keys(episodeProgress || {})
     .map(parseEpisodeProgressKey)
@@ -5373,7 +5488,8 @@ function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
     }
     const cache = readHomeCache(HOME_SERIES_CACHE_KEY, {});
     async function hydrate() {
-      const settled = await Promise.allSettled(watchedShowIds.slice(0, 12).map(async (showId) => {
+      const showIdsToHydrate = Number.isFinite(maxShows) ? watchedShowIds.slice(0, Math.max(0, maxShows)) : watchedShowIds;
+      const settled = await Promise.allSettled(showIdsToHydrate.map(async (showId) => {
         const cached = cache[showId];
         const fresh = cached?.timestamp && Date.now() - cached.timestamp < HOME_CACHE_TTL_MS && cached.details?.id;
         if (fresh) return cached.details;
@@ -5429,7 +5545,7 @@ function useHomeSeriesProgress({ episodeProgress, candidates, apiFetch }) {
     }
     hydrate();
     return () => { alive = false; };
-  }, [apiFetch, candidateMap, episodeProgress, requestKey]);
+  }, [apiFetch, candidateMap, episodeProgress, maxShows, requestKey]);
 
   return items;
 }
@@ -5656,6 +5772,10 @@ function pauseActiveHomeDiscoveryMedia(report = true) {
   activeHomeDiscoveryMedia?.pause?.(report);
 }
 
+function readActiveHomeDiscoverySnapshot() {
+  return activeHomeDiscoveryMedia?.snapshot?.() || null;
+}
+
 function readHomeReelSoundPreference() {
   if (typeof window === "undefined") return true;
   const stored = window.sessionStorage.getItem(HOME_REEL_SOUND_SESSION_KEY);
@@ -5667,7 +5787,7 @@ function saveHomeReelSoundPreference(enabled) {
   window.sessionStorage.setItem(HOME_REEL_SOUND_SESSION_KEY, enabled ? "on" : "off");
 }
 
-function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, priority = false, soundEnabled = false, onEnableSound, playbackRef }) {
+function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, onOpenFullscreen, priority = false, soundEnabled = false, onEnableSound, playbackRef }) {
   const videoRef = useRef(null);
   const youtubeHostRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -5731,19 +5851,19 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
     };
   };
 
-  const pauseMedia = (report = true) => {
+  const pauseMedia = (report = true, silence = true) => {
     const snapshot = readPlayerSnapshot();
     currentTimeRef.current = snapshot.currentTime;
     const video = videoRef.current;
     if (video) {
       video.pause();
-      video.muted = true;
+      if (silence) video.muted = true;
     }
     const player = youtubePlayerRef.current;
     if (player && youtubeReadyRef.current) {
       try {
         player.pauseVideo?.();
-        player.mute?.();
+        if (silence) player.mute?.();
       } catch {
         // Cleanup remains best-effort when YouTube has already released the iframe.
       }
@@ -5754,8 +5874,9 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
   };
 
   const controllerRef = useRef(null);
-  if (!controllerRef.current) controllerRef.current = { pause: pauseMedia };
+  if (!controllerRef.current) controllerRef.current = { pause: pauseMedia, snapshot: readPlayerSnapshot };
   controllerRef.current.pause = pauseMedia;
+  controllerRef.current.snapshot = readPlayerSnapshot;
 
   useEffect(() => {
     if (!active || (!directUrl && !youtubeVideoId)) {
@@ -5776,6 +5897,7 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
     const youtubeHost = youtubeHostRef.current;
     let effectPlayer = null;
     let playerDisposed = false;
+    const ownsFullscreenTransfer = () => surface !== "fullscreen" || playbackRef?.current?.reelId === reelId;
 
     const disposeYouTubePlayer = () => {
       if (playerDisposed) return;
@@ -5815,7 +5937,11 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
           },
           events: {
             onReady: (event) => {
-              if (disposed || generation !== youtubeGenerationRef.current) return;
+              if (disposed || generation !== youtubeGenerationRef.current || !ownsFullscreenTransfer()) {
+                try { event.target.pauseVideo?.(); } catch {}
+                try { event.target.mute?.(); } catch {}
+                return;
+              }
               youtubeReadyRef.current = true;
               if (currentTimeRef.current > 0 && restoredTransferRef.current !== transferKey) {
                 event.target.seekTo(currentTimeRef.current, true);
@@ -5823,12 +5949,23 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
               }
               if (preferredMuted) event.target.mute();
               else event.target.unMute();
-              if (shouldPlay) event.target.playVideo();
-              else event.target.pauseVideo();
+              if (shouldPlay) {
+                event.target.playVideo();
+                playingRef.current = true;
+                setIsPlaying(true);
+              } else {
+                event.target.pauseVideo();
+                playingRef.current = false;
+                setIsPlaying(false);
+              }
               reportPlayback({ playing: shouldPlay, muted: preferredMuted, currentTime: currentTimeRef.current });
             },
             onStateChange: (event) => {
-              if (disposed || generation !== youtubeGenerationRef.current) return;
+              if (disposed || generation !== youtubeGenerationRef.current || !ownsFullscreenTransfer()) {
+                try { event.target.pauseVideo?.(); } catch {}
+                try { event.target.mute?.(); } catch {}
+                return;
+              }
               const state = Number(event.data);
               const nextPlaying = state === YT.PlayerState.PLAYING;
               currentTimeRef.current = Number(event.target.getCurrentTime?.() || currentTimeRef.current || 0);
@@ -5903,34 +6040,44 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
     const player = youtubePlayerRef.current;
     if (isYouTube && player && youtubeReadyRef.current) {
       claimHomeDiscoveryMedia(controllerRef.current);
-      const wasPlaying = Number(player.getPlayerState?.()) === 1;
-      if (wasPlaying) pauseMedia(true);
+      const snapshot = readPlayerSnapshot();
+      if (snapshot.playing) pauseMedia(true, false);
       else {
-        if (muted && soundEnabled) {
-          player.unMute?.();
-          setMuted(false);
-          onEnableSound?.();
-        }
+        if (snapshot.muted) player.mute?.();
+        else player.unMute?.();
         player.playVideo?.();
+        playingRef.current = true;
+        setIsPlaying(true);
+        reportPlayback({ playing: true, muted: snapshot.muted, currentTime: snapshot.currentTime });
       }
       return;
     }
     if (!video) return;
     if (video.paused) {
       claimHomeDiscoveryMedia(controllerRef.current);
+      const snapshot = readPlayerSnapshot();
+      video.muted = snapshot.muted;
       video.play().catch(() => pauseMedia(true));
       setFeedbackIcon("pause");
     } else {
-      pauseMedia(true);
+      pauseMedia(true, false);
       setFeedbackIcon("play");
     }
     if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
     feedbackTimerRef.current = window.setTimeout(() => setFeedbackIcon(""), 650);
   };
 
+  const openFullscreen = (event) => {
+    event?.stopPropagation?.();
+    if (surface !== "inline" || !active || !onOpenFullscreen) return;
+    const snapshot = readPlayerSnapshot();
+    pauseMedia(false, true);
+    onOpenFullscreen({ ...snapshot, reelId, index, owner: "inline" });
+  };
+
   if (!directUrl && !youtubeVideoId) return null;
   return (
-    <div className={`mg-home-v3-reel-media is-${presentation}`}>
+    <div className={`mg-home-v3-reel-media is-${presentation} is-${surface}`}>
       {active ? (
         isYouTube
           ? <div className="mg-home-v3-reel-content mg-home-v3-youtube-player" ref={youtubeHostRef} aria-label={`${titleOf(content)} video`} />
@@ -5938,7 +6085,9 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
       ) : (
         <img className="mg-home-v3-reel-content" src={thumbnail || BACKDROP_FALLBACK} alt={titleOf(content)} loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
       )}
-      <button className="mg-home-v3-reel-open" type="button" onClick={togglePlayback} aria-label={isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{!isYouTube && feedbackIcon && <Icon name={feedbackIcon} />}</button>
+      {surface === "inline"
+        ? <button className="mg-home-v3-reel-open is-fullscreen-trigger" type="button" onClick={openFullscreen} aria-label={`Open ${titleOf(content)} fullscreen`} />
+        : <button className="mg-home-v3-reel-open is-playback-toggle" type="button" onClick={togglePlayback} aria-label={isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{feedbackIcon && <Icon name={feedbackIcon} />}</button>}
     </div>
   );
 }
@@ -5984,7 +6133,19 @@ function HomeReelCaption({ reel, item, showIdentity = true }) {
   );
 }
 
-function HomeDiscoveryActions({ liked, saved, asap, onLike, onComment, onDetails, onList, onAsap, onShare }) {
+function formatHomeReelCount(value) {
+  const count = Number(value || 0);
+  if (!Number.isFinite(count) || count <= 0) return "";
+  if (count >= 1000000) return `${(count / 1000000).toFixed(count >= 10000000 ? 0 : 1).replace(/\.0$/, "")}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1).replace(/\.0$/, "")}K`;
+  return String(Math.round(count));
+}
+
+function homeReelLikeCount(reel = {}) {
+  return Number(reel.like_count ?? reel.likes_count ?? reel.likeCount ?? reel.likes ?? 0) || 0;
+}
+
+function HomeDiscoveryActions({ liked, likeCount = 0, saved, asap, layout = "row", onLike, onComment, onDetails, onList, onAsap, onShare }) {
   const [state, setState] = useState({ liked: Boolean(liked), saved: Boolean(saved), asap: Boolean(asap) });
   const [busy, setBusy] = useState("");
   const [failed, setFailed] = useState("");
@@ -6011,8 +6172,8 @@ function HomeDiscoveryActions({ liked, saved, asap, onLike, onComment, onDetails
     handler?.();
   };
   return (
-    <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
-      <button className={`${state.liked ? "active" : ""} ${busy === "liked" ? "loading" : ""} ${failed === "liked" ? "error" : ""}`} type="button" aria-pressed={state.liked} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "liked", onLike)}><Icon name="heart" /><span>Like</span></button>
+    <div className={`mg-home-v3-discovery-actions is-${layout}`} aria-label="Reel actions">
+      <button className={`${state.liked ? "active" : ""} ${busy === "liked" ? "loading" : ""} ${failed === "liked" ? "error" : ""}`} type="button" aria-pressed={state.liked} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "liked", onLike)}><Icon name="heart" /><span>{formatHomeReelCount(likeCount) || "Like"}</span></button>
       <button type="button" onClick={(event) => runAction(event, onComment)}><Icon name="chat" /><span>Comment</span></button>
       <button type="button" onClick={(event) => runAction(event, onDetails)}><Icon name="info" /><span>Details</span></button>
       <button className={`${state.saved ? "active" : ""} ${busy === "saved" ? "loading" : ""} ${failed === "saved" ? "error" : ""}`} type="button" aria-pressed={state.saved} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "saved", onList)}><Icon name="bookmark" /><span>List</span></button>
@@ -6038,38 +6199,46 @@ function HomeReelCommentsSheet({ selection, onClose }) {
     let alive = true;
     const load = async () => {
       setLoading(true);
-      const collected = [];
       try {
         const userResult = await supabase?.auth?.getUser?.();
         const userId = userResult?.data?.user?.id || "";
         if (alive) setCurrentUserId(userId);
-        const tasks = [];
-        if (videoId) {
-          tasks.push(fetch(`/api/reel-comments?videoId=${encodeURIComponent(videoId)}`)
-            .then((response) => response.ok ? response.json() : { comments: [] })
-            .then((payload) => collected.push(...(payload.comments || []).map((comment) => ({ ...comment, source: "youtube" })))));
-        }
+        let moviegramComments = [];
         if (supabase && userId) {
-          tasks.push(supabase.from("reel_comments")
+          const { data, error: loadError } = await supabase.from("reel_comments")
             .select("id,user_id,comment_text,body,created_at")
             .eq("reel_key", identity)
-            .order("created_at", { ascending: true })
-            .limit(50)
-            .then(({ data, error: loadError }) => {
-              if (loadError) throw loadError;
-              collected.push(...(data || []).map((comment) => ({
-                id: comment.id,
-                text: comment.comment_text || comment.body || "",
-                author: comment.user_id === userId ? "You" : "MovieGram user",
-                createdAt: comment.created_at,
-                source: "moviegram"
-              })));
-            }));
+            .order("created_at", { ascending: false })
+            .limit(50);
+          if (loadError) throw loadError;
+          moviegramComments = (data || []).map((comment) => ({
+            id: comment.id,
+            text: comment.comment_text || comment.body || "",
+            author: comment.user_id === userId ? "You" : "MovieGram user",
+            createdAt: comment.created_at,
+            source: "moviegram"
+          })).filter((comment) => comment.text);
         }
-        await Promise.allSettled(tasks);
         if (alive) {
-          const unique = new Map(collected.filter((comment) => comment.text).map((comment) => [comment.id || `${comment.source}:${comment.createdAt}:${comment.text}`, comment]));
-          setComments([...unique.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)));
+          setComments(moviegramComments);
+          setLoading(false);
+        }
+        if (videoId) {
+          fetch(`/api/reel-comments?videoId=${encodeURIComponent(videoId)}`)
+            .then((response) => response.ok ? response.json() : { comments: [] })
+            .then((payload) => {
+              if (!alive) return;
+              const youtubeComments = (payload.comments || []).map((comment) => ({ ...comment, source: "youtube" })).filter((comment) => comment.text);
+              setComments((current) => {
+                const moviegram = current.filter((comment) => comment.source === "moviegram");
+                const uniqueYouTube = new Map(youtubeComments.map((comment) => [comment.id || `youtube:${comment.createdAt}:${comment.text}`, comment]));
+                return [...moviegram, ...uniqueYouTube.values()].sort((a, b) => {
+                  if (a.source !== b.source) return a.source === "moviegram" ? -1 : 1;
+                  return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+                });
+              });
+            })
+            .catch(() => {});
         }
       } finally {
         if (alive) setLoading(false);
@@ -6103,7 +6272,7 @@ function HomeReelCommentsSheet({ selection, onClose }) {
       };
       const { data, error: saveError } = await supabase.from("reel_comments").insert(payload).select("id,created_at").single();
       if (saveError) throw saveError;
-      setComments((current) => [...current, { id: data.id, text, author: "You", createdAt: data.created_at || createdAt, source: "moviegram" }]);
+      setComments((current) => [{ id: data.id, text, author: "You", createdAt: data.created_at || createdAt, source: "moviegram" }, ...current]);
       setDraft("");
     } catch (nextError) {
       setError(nextError.message || "Comment could not be posted.");
@@ -6211,15 +6380,127 @@ function HomeReelShareSheet({ selection, onClose }) {
   );
 }
 
+function HomeDiscoveryFullscreen({ items, activeReelId, active, suspended = false, likedFeed, likeCounts, watchlist, soundEnabled, playbackRef, onEnableSound, onClose, onActiveReelChange, onLike, onComment, onDetails, onList, onAsap, onShare }) {
+  const feedRef = useRef(null);
+  const activeReelIdRef = useRef(activeReelId);
+  const positioningRef = useRef(true);
+  const scrollFrameRef = useRef(null);
+  const reelSnapshotsRef = useRef(new Map());
+  const activeIndex = useMemo(() => items.findIndex((reel) => reelIdentity(reel) === activeReelId), [activeReelId, items]);
+
+  useEffect(() => {
+    activeReelIdRef.current = activeReelId;
+  }, [activeReelId]);
+
+  useLayoutEffect(() => {
+    if (!feedRef.current) return undefined;
+    positioningRef.current = true;
+    const feed = feedRef.current;
+    const targetTop = Math.max(0, activeIndex) * feed.clientHeight;
+    feed.scrollTop = targetTop;
+    const frame = window.requestAnimationFrame(() => {
+      if (feedRef.current === feed) feed.scrollTop = targetTop;
+      positioningRef.current = false;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      positioningRef.current = false;
+    };
+  }, [activeIndex]);
+
+  const activateReel = useCallback((nextIndex) => {
+    const boundedIndex = Math.max(0, Math.min(items.length - 1, nextIndex));
+    const previousReelId = activeReelIdRef.current;
+    const previousIndex = items.findIndex((reel) => reelIdentity(reel) === previousReelId);
+    const previousReel = items[previousIndex];
+    const nextReel = items[boundedIndex];
+    if (!nextReel) return;
+    const nextReelId = reelIdentity(nextReel);
+    if (nextReelId === previousReelId) return;
+
+    const liveCandidate = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
+    const live = liveCandidate.reelId === previousReelId ? liveCandidate : playbackRef?.current?.reelId === previousReelId ? playbackRef.current : {};
+    if (previousReel && live.reelId === previousReelId) reelSnapshotsRef.current.set(previousReelId, { ...live });
+    pauseActiveHomeDiscoveryMedia(false);
+
+    const saved = reelSnapshotsRef.current.get(nextReelId);
+    const transferId = Number(live.transferId || playbackRef?.current?.transferId || 0) + 1;
+    if (playbackRef) playbackRef.current = {
+      ...live,
+      ...saved,
+      reelId: nextReelId,
+      index: boundedIndex,
+      owner: "fullscreen",
+      currentTime: Number(saved?.currentTime || 0),
+      playing: Boolean(active),
+      muted: saved?.muted ?? live.muted ?? !soundEnabled,
+      soundEnabled,
+      transferId
+    };
+    activeReelIdRef.current = nextReelId;
+    onActiveReelChange(nextReelId);
+  }, [active, items, onActiveReelChange, playbackRef, soundEnabled]);
+
+  const handleScroll = useCallback(() => {
+    if (positioningRef.current || scrollFrameRef.current) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const feed = feedRef.current;
+      if (!feed?.clientHeight) return;
+      activateReel(Math.round(feed.scrollTop / feed.clientHeight));
+    });
+  }, [activateReel]);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current);
+  }, []);
+
+  const advanceFromEnded = useCallback((index) => {
+    if (index >= items.length - 1) return;
+    const nextIndex = index + 1;
+    activateReel(nextIndex);
+    feedRef.current?.scrollTo({ top: nextIndex * feedRef.current.clientHeight, behavior: "smooth" });
+  }, [activateReel, items.length]);
+
+  return (
+    <section className="mg-home-v3-fullscreen" role="dialog" aria-modal="true" aria-label="Home discovery fullscreen reels" hidden={suspended}>
+      <div ref={feedRef} className="mg-home-v3-fullscreen-feed" onScroll={handleScroll}>
+        {items.map((reel, index) => {
+          const item = homeReelContent(reel);
+          const id = reelIdentity(reel);
+          const storedItem = Object.values(watchlist || {}).find((entry) => itemMatches(entry, item));
+          const isActive = active && activeReelId === id;
+          return (
+            <article className={`mg-home-v3-fullscreen-page ${isActive ? "is-active" : ""}`} key={id} data-fullscreen-reel-index={index} data-fullscreen-reel-id={id}>
+              <div className="mg-home-v3-fullscreen-media">
+                <HomeReelMedia reel={reel} index={index} surface="fullscreen" active={isActive} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={onEnableSound} playbackRef={playbackRef} onEnded={() => advanceFromEnded(index)} />
+              </div>
+              <button type="button" className="mg-home-v3-fullscreen-close" onClick={(event) => { event.stopPropagation(); onClose(); }} aria-label="Close fullscreen reels">x</button>
+              <HomeDiscoveryActions layout="rail" liked={Boolean(likedFeed[id])} likeCount={likeCounts[id] ?? homeReelLikeCount(reel)} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => onLike(reel, id)} onComment={() => onComment(reel, item, index)} onDetails={() => onDetails(item, index)} onList={() => onList(item)} onAsap={() => onAsap(item)} onShare={() => onShare(reel, item, index)} />
+              <div className="mg-home-v3-fullscreen-caption"><HomeReelCaption reel={reel} item={item} /></div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWatchlist, onWatchAsap, watchlist, detailsOpen, playbackRef }) {
   const [commentItem, setCommentItem] = useState(null);
   const [shareItem, setShareItem] = useState(null);
+  const [fullscreenReelId, setFullscreenReelId] = useState("");
   const [activeVideoIndex, setActiveVideoIndex] = useState(-1);
   const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
+  const [likeCounts, setLikeCounts] = useState({});
+  const sectionRef = useRef(null);
   const postRefs = useRef([]);
   const ratiosRef = useRef(new Map());
   const overlaySnapshotRef = useRef(null);
   const detailsWasOpenRef = useRef(false);
+  const fullscreenScrollRef = useRef(0);
+  const discoveryItems = useMemo(() => items.slice(0, 16), [items]);
+  const fullscreenIndex = useMemo(() => fullscreenReelId ? discoveryItems.findIndex((reel) => reelIdentity(reel) === fullscreenReelId) : -1, [discoveryItems, fullscreenReelId]);
   const enableSound = () => {
     saveHomeReelSoundPreference(true);
     setSoundEnabled(true);
@@ -6263,12 +6544,13 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
     };
   }, [items]);
   const pauseForOverlay = useCallback((index, owner) => {
-    const wasPlaying = playbackRef?.current?.playing !== false;
-    pauseActiveHomeDiscoveryMedia(true);
-    const paused = { ...(playbackRef?.current || {}), index };
-    overlaySnapshotRef.current = { ...paused, playing: wasPlaying };
+    const live = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
+    const resumeOwner = fullscreenIndex < 0 ? "inline" : "fullscreen";
+    pauseActiveHomeDiscoveryMedia(false);
+    const paused = { ...live, index, owner: resumeOwner };
+    overlaySnapshotRef.current = paused;
     if (playbackRef) playbackRef.current = { ...paused, owner, playing: false, transferId: Number(paused.transferId || 0) + 1 };
-  }, [playbackRef]);
+  }, [fullscreenIndex, playbackRef]);
   const openComments = useCallback((reel, item, index) => {
     pauseForOverlay(index, "comments");
     setCommentItem({ reel, item, index });
@@ -6276,7 +6558,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
   const closeComments = useCallback(() => {
     const snapshot = overlaySnapshotRef.current;
     overlaySnapshotRef.current = null;
-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
     setCommentItem(null);
   }, [playbackRef]);
   const openDetails = useCallback((item, index) => {
@@ -6292,7 +6574,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
     detailsWasOpenRef.current = false;
     const snapshot = overlaySnapshotRef.current;
     overlaySnapshotRef.current = null;
-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
   }, [detailsOpen, playbackRef]);
   const openShare = useCallback((reel, item, index) => {
     pauseForOverlay(index, "share");
@@ -6301,32 +6583,83 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
   const closeShare = useCallback(() => {
     const snapshot = overlaySnapshotRef.current;
     overlaySnapshotRef.current = null;
-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
+    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
     setShareItem(null);
   }, [playbackRef]);
+
+  const openFullscreen = useCallback((reelId, snapshot) => {
+    const index = discoveryItems.findIndex((reel) => reelIdentity(reel) === reelId);
+    if (index < 0) return;
+    const scrollNode = sectionRef.current?.closest?.(".mg2-screen");
+    fullscreenScrollRef.current = Number(scrollNode?.scrollTop || 0);
+    const matchingSnapshot = snapshot?.reelId === reelId ? snapshot : playbackRef?.current?.reelId === reelId ? playbackRef.current : { reelId, currentTime: 0, playing: true, muted: !soundEnabled };
+    pauseActiveHomeDiscoveryMedia(false);
+    const transfer = { ...matchingSnapshot, reelId, index, owner: "fullscreen", transferId: Number(playbackRef?.current?.transferId || 0) + 1 };
+    if (playbackRef) playbackRef.current = transfer;
+    setActiveVideoIndex(-1);
+    setFullscreenReelId(reelId);
+  }, [discoveryItems, playbackRef, soundEnabled]);
+
+  const closeFullscreen = useCallback(() => {
+    if (fullscreenIndex < 0 || !fullscreenReelId) return;
+    const liveCandidate = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
+    const live = liveCandidate.reelId === fullscreenReelId ? liveCandidate : playbackRef?.current?.reelId === fullscreenReelId ? playbackRef.current : { reelId: fullscreenReelId, currentTime: 0, playing: false, muted: true };
+    pauseActiveHomeDiscoveryMedia(false);
+    const visibleEnough = (ratiosRef.current.get(fullscreenIndex) || 0) >= 0.48;
+    if (playbackRef) playbackRef.current = {
+      ...live,
+      reelId: fullscreenReelId,
+      index: fullscreenIndex,
+      owner: "inline",
+      playing: Boolean(live.playing && visibleEnough),
+      transferId: Number(live.transferId || playbackRef.current?.transferId || 0) + 1
+    };
+    setFullscreenReelId("");
+    setActiveVideoIndex(visibleEnough ? fullscreenIndex : -1);
+    const restore = () => {
+      const scrollNode = sectionRef.current?.closest?.(".mg2-screen");
+      if (scrollNode) scrollNode.scrollTop = fullscreenScrollRef.current;
+    };
+    window.requestAnimationFrame(restore);
+    window.setTimeout(restore, 80);
+  }, [fullscreenIndex, fullscreenReelId, playbackRef]);
+
+  const toggleSharedLike = useCallback(async (reel, id) => {
+    const wasLiked = Boolean(likedFeed[id]);
+    const baseCount = likeCounts[id] ?? homeReelLikeCount(reel);
+    const nextCount = Math.max(0, baseCount + (wasLiked ? -1 : 1));
+    setLikeCounts((current) => ({ ...current, [id]: nextCount }));
+    try {
+      await Promise.resolve(toggleFeedLike(id));
+    } catch (error) {
+      setLikeCounts((current) => ({ ...current, [id]: baseCount }));
+      throw error;
+    }
+  }, [likeCounts, likedFeed, toggleFeedLike]);
   const stopEndedReel = useCallback((index) => {
     ratiosRef.current.set(index, 0);
     setActiveVideoIndex((current) => current === index ? -1 : current);
   }, []);
   if (!items.length) return null;
   return (
-    <section className="mg-home-v3-section mg-home-v3-discover">
+    <section ref={sectionRef} className="mg-home-v3-section mg-home-v3-discover">
       <div className="mg-home-v3-section-head"><h2>More to Discover</h2></div>
       <div className="mg-home-v3-reel-feed">
-        {items.slice(0, 16).map((reel, index) => {
+        {discoveryItems.map((reel, index) => {
           const item = homeReelContent(reel);
-          const id = `home-reel:${reelIdentity(reel)}`;
+          const id = reelIdentity(reel);
           const storedItem = Object.values(watchlist || {}).find((entry) => itemMatches(entry, item));
           return (
             <article ref={(node) => { postRefs.current[index] = node; }} data-home-reel-index={index} key={id} className="mg-home-v3-reel-post">
               <HomeReelCreatorRow reel={reel} />
-              <HomeReelMedia reel={reel} index={index} surface="inline" active={!commentItem && !shareItem && !detailsOpen && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onEnded={() => stopEndedReel(index)} />
-              <HomeDiscoveryActions liked={Boolean(likedFeed[id])} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => toggleFeedLike(id)} onComment={() => openComments(reel, item, index)} onDetails={() => openDetails(item, index)} onList={() => onWatchlist(item)} onAsap={() => onWatchAsap(item)} onShare={() => openShare(reel, item, index)} />
+              <HomeReelMedia reel={reel} index={index} surface="inline" active={fullscreenIndex < 0 && !commentItem && !shareItem && !detailsOpen && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onOpenFullscreen={(snapshot) => openFullscreen(id, snapshot)} onEnded={() => stopEndedReel(index)} />
+              <HomeDiscoveryActions liked={Boolean(likedFeed[id])} likeCount={likeCounts[id] ?? homeReelLikeCount(reel)} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => toggleSharedLike(reel, id)} onComment={() => openComments(reel, item, index)} onDetails={() => openDetails(item, index)} onList={() => onWatchlist(item)} onAsap={() => onWatchAsap(item)} onShare={() => openShare(reel, item, index)} />
               <HomeReelCaption reel={reel} item={item} showIdentity={false} />
             </article>
           );
         })}
       </div>
+      {fullscreenIndex >= 0 && discoveryItems[fullscreenIndex] && <HomeDiscoveryFullscreen items={discoveryItems} activeReelId={fullscreenReelId} active={!commentItem && !shareItem && !detailsOpen} suspended={detailsOpen} likedFeed={likedFeed} likeCounts={likeCounts} watchlist={watchlist} soundEnabled={soundEnabled} playbackRef={playbackRef} onEnableSound={enableSound} onClose={closeFullscreen} onActiveReelChange={setFullscreenReelId} onLike={toggleSharedLike} onComment={openComments} onDetails={openDetails} onList={onWatchlist} onAsap={onWatchAsap} onShare={openShare} />}
       {commentItem && <HomeReelCommentsSheet selection={commentItem} onClose={closeComments} />}
       {shareItem && <HomeReelShareSheet selection={shareItem} onClose={closeShare} />}
     </section>
@@ -6693,79 +7026,909 @@ function HomeScreen({ rows, loading, user, onOpen, onOpenPerson, onOpenPublicPro
   );
 }
 
-function ExploreScreen({ activeExplore, setActiveExplore, queryProps, tabResults, tabLoading, hasMoreExplore, onLoadMoreExplore, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, onQuickActions }) {
-  const activeFilter = exploreTabs.find((tab) => tab.id === activeExplore);
-  const chartRows = [
-    { id: "mostWatched", title: communityCharts.mostWatched?.length ? "Most Watched This Week" : "Popular Right Now", items: communityCharts.mostWatched?.length ? communityCharts.mostWatched : (exploreRows.week || []) },
-    { id: "mostReviewed", title: communityCharts.mostReviewed?.length ? "Most Reviewed This Week" : "Trending Globally", items: communityCharts.mostReviewed?.length ? communityCharts.mostReviewed : (exploreRows.today || []) },
-    { id: "highestRated", title: communityCharts.highestRated?.length ? "Highest Rated by MovieGram Users" : "Popular on MovieGram Soon", items: communityCharts.highestRated?.length ? communityCharts.highestRated : (exploreRows.topRated || []) },
-    { id: "mostWatchlisted", title: communityCharts.mostWatchlisted?.length ? "Saved by MovieGram Users" : "Top 10 This Month", items: communityCharts.mostWatchlisted?.length ? communityCharts.mostWatchlisted : (exploreRows.topMovies || []) }
-  ].filter((row) => row.items?.length);
+const EXPLORE_HERO_CACHE_KEY = "moviegram.exploreHeroPool.v1";
+const EXPLORE_REELS_CACHE_KEY = "moviegram.exploreReelPool.v1";
+const EXPLORE_PEOPLE_CACHE_KEY = "moviegram.explorePeoplePool.v1";
+const EXPLORE_COLLECTION_CACHE_KEY = "moviegram.exploreCollectionPool.v1";
+const EXPLORE_HUB_CACHE_KEY = "moviegram.exploreHubPools.v1";
+const EXPLORE_HERO_TTL_MS = 2 * 60 * 60 * 1000;
+const EXPLORE_REELS_TTL_MS = 60 * 60 * 1000;
+const exploreDestinationMemoryCache = new Map();
+
+const EXPLORE_GENRE_NAMES = {
+  12: "Adventure", 14: "Fantasy", 16: "Animation", 18: "Drama", 27: "Horror",
+  28: "Action", 35: "Comedy", 36: "History", 37: "Western", 53: "Thriller",
+  80: "Crime", 99: "Documentary", 878: "Science Fiction", 9648: "Mystery",
+  10402: "Music", 10749: "Romance", 10751: "Family", 10752: "War",
+  10759: "Action & Adventure", 10762: "Kids", 10765: "Sci-Fi & Fantasy",
+  10766: "Soap", 10768: "War & Politics"
+};
+
+function exploreSafeItem(item = {}) {
+  const type = mediaType(item);
+  return Boolean(item?.id && ["movie", "tv"].includes(type) && item.adult !== true && titleOf(item) !== "Untitled");
+}
+
+function normalizeExploreResults(items = [], forcedType = "") {
+  return (items || [])
+    .map((item) => ({ ...item, media_type: forcedType || item.media_type || mediaType(item) }))
+    .filter(exploreSafeItem);
+}
+
+function exploreQualityScore(item = {}) {
+  const votes = Number(item.vote_count || 0);
+  const rating = Number(item.vote_average || 0);
+  const popularity = Number(item.popularity || 0);
+  const artwork = Number(Boolean(item.poster_path)) * 26 + Number(Boolean(item.backdrop_path)) * 18;
+  const voteSupport = Math.min(34, Math.log10(Math.max(1, votes)) * 11);
+  const freshness = dateOf(item) && Date.now() - new Date(`${dateOf(item).slice(0, 10)}T00:00:00`).getTime() < 63072000000 ? 5 : 0;
+  return artwork + voteSupport + rating * 4 + Math.min(28, popularity / 4) + freshness;
+}
+
+function sortExploreQuality(items = []) {
+  return [...items].sort((a, b) => exploreQualityScore(b) - exploreQualityScore(a));
+}
+
+function exploreCatalogue(items = [], { requireArtwork = false, predicate } = {}) {
+  return dedupe(items)
+    .filter(exploreSafeItem)
+    .filter((item) => !requireArtwork || item.poster_path || item.backdrop_path)
+    .filter((item) => !predicate || predicate(item));
+}
+
+function exploreSource(endpoint, params = {}, type = "") {
+  return { endpoint, params: { include_adult: "false", ...params }, type };
+}
+
+async function fetchExploreSourcePages(apiFetch, sources = [], startPage = 1, pages = 2) {
+  if (!apiFetch || !sources.length) return [];
+  const requests = sources.flatMap((source) => Array.from({ length: pages }, (_, offset) => (
+    apiFetch(source.endpoint, { page: startPage + offset, ...(source.params || {}), include_adult: "false" })
+      .then((data) => normalizeExploreResults(data?.results || [], source.type))
+  )));
+  const settled = await Promise.allSettled(requests);
+  return dedupe(settled
+    .filter((result) => result.status === "fulfilled")
+    .flatMap((result) => result.value));
+}
+
+async function fetchExploreInitialFloor(apiFetch, sources = [], predicate, seedItems = [], minimum = 30) {
+  const first = await fetchExploreSourcePages(apiFetch, sources, 1, 2);
+  let loaded = first;
+  let batches = 1;
+  const validCount = exploreCatalogue([...seedItems, ...loaded], { predicate }).length;
+  if (validCount < minimum) {
+    const second = await fetchExploreSourcePages(apiFetch, sources, 3, 2);
+    loaded = dedupe([...loaded, ...second]);
+    batches = 2;
+  }
+  return { loaded, batches };
+}
+
+function exploreDestinationSources(view = {}) {
+  const providerSources = {
+    netflix: ["8"], prime: ["119"], hotstar: ["122"], apple: ["350"], crunchy: ["283"]
+  };
+  if (providerSources[view.id]) {
+    const provider = providerSources[view.id][0];
+    const extra = view.id === "crunchy" ? { with_genres: "16" } : {};
+    return [
+      exploreSource("/discover/movie", { watch_region: "IN", with_watch_providers: provider, sort_by: "popularity.desc", ...extra }, "movie"),
+      exploreSource("/discover/tv", { watch_region: "IN", with_watch_providers: provider, sort_by: "popularity.desc", ...extra }, "tv")
+    ];
+  }
+  if (view.id === "movies") return [
+    exploreSource("/trending/movie/week", {}, "movie"),
+    exploreSource("/movie/popular", {}, "movie"),
+    exploreSource("/movie/top_rated", {}, "movie"),
+    exploreSource("/movie/now_playing", { region: "IN" }, "movie")
+  ];
+  if (view.id === "shows") return [
+    exploreSource("/trending/tv/week", {}, "tv"),
+    exploreSource("/tv/popular", {}, "tv"),
+    exploreSource("/tv/top_rated", {}, "tv"),
+    exploreSource("/tv/on_the_air", {}, "tv")
+  ];
+  if (view.id === "trending") return [
+    exploreSource("/trending/all/day"),
+    exploreSource("/trending/all/week")
+  ];
+  if (view.id === "anticipated") {
+    const today = new Date().toISOString().slice(0, 10);
+    return [
+      exploreSource("/movie/upcoming", { region: "IN" }, "movie"),
+      exploreSource("/discover/tv", { "first_air_date.gte": today, sort_by: "popularity.desc" }, "tv")
+    ];
+  }
+  if (view.id === "binge") return [
+    exploreSource("/discover/tv", { "vote_average.gte": "7.2", "vote_count.gte": "250", without_genres: "99,10763,10764,10767", sort_by: "popularity.desc" }, "tv"),
+    exploreSource("/tv/top_rated", {}, "tv")
+  ];
+  if (view.id === "hidden") return [
+    exploreSource("/discover/movie", { "vote_average.gte": "7.1", "vote_count.gte": "180", "vote_count.lte": "6000", "popularity.lte": "80", sort_by: "vote_average.desc" }, "movie"),
+    exploreSource("/discover/tv", { "vote_average.gte": "7.3", "vote_count.gte": "180", "vote_count.lte": "6000", "popularity.lte": "80", without_genres: "10763,10764,10767", sort_by: "vote_average.desc" }, "tv")
+  ];
+  if (view.id === "popular") return [
+    exploreSource("/movie/popular", {}, "movie"),
+    exploreSource("/tv/popular", {}, "tv")
+  ];
+  if (view.id === "indian") return [
+    exploreSource("/discover/movie", { with_origin_country: "IN", sort_by: "popularity.desc" }, "movie"),
+    exploreSource("/discover/tv", { with_origin_country: "IN", sort_by: "popularity.desc", without_genres: "10763,10764,10767" }, "tv")
+  ];
+  if (view.id === "anime") return [
+    exploreSource("/discover/tv", { with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, "tv"),
+    exploreSource("/discover/movie", { with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, "movie")
+  ];
+  if (view.id === "sitcoms") return [
+    exploreSource("/discover/tv", { with_genres: "35", without_genres: "99,10763,10764,10767", "vote_count.gte": "80", sort_by: "popularity.desc" }, "tv"),
+    exploreSource("/discover/tv", { with_genres: "35,10751", without_genres: "99,10763,10764,10767", sort_by: "vote_average.desc" }, "tv")
+  ];
+  if (view.id === "genre") {
+    const types = view.mediaType === "tv" ? ["tv"] : view.mediaType === "movie" ? ["movie"] : ["movie", "tv"];
+    return types.map((type) => exploreSource(`/discover/${type}`, { with_genres: String(view.genreId), "vote_count.gte": "40", sort_by: "popularity.desc" }, type));
+  }
+  if (view.id === "for-you") return [
+    exploreSource("/trending/all/week"),
+    exploreSource("/movie/popular", {}, "movie"),
+    exploreSource("/tv/popular", {}, "tv")
+  ];
+  return [];
+}
+
+function exploreDestinationPredicate(view = {}) {
+  if (view.id === "anticipated") return (item) => Boolean(dateOf(item) && new Date(`${dateOf(item).slice(0, 10)}T00:00:00`).getTime() > Date.now());
+  if (view.id === "binge") return (item) => mediaType(item) === "tv" && !(item.genre_ids || []).some((id) => [99, 10763, 10764, 10767].includes(id));
+  if (view.id === "anime") return (item) => (item.genre_ids || []).includes(16) && (item.original_language === "ja" || (item.origin_country || []).includes("JP"));
+  if (view.id === "sitcoms") return (item) => {
+    const genres = item.genre_ids || [];
+    const text = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
+    return mediaType(item) === "tv"
+      && genres.includes(35)
+      && !genres.some((id) => [99, 10763, 10764, 10767].includes(id))
+      && (/sitcom|workplace|family|friends|roommate|mockumentary|comedy series/.test(text) || genres.includes(10751) || Number(item.vote_count || 0) >= 400);
+  };
+  return null;
+}
+
+function mixExploreMedia(items = [], limit = 16) {
+  const source = exploreCatalogue(items, { requireArtwork: true }).filter((item) => item?.poster_path);
+  const movies = source.filter((item) => mediaType(item) === "movie");
+  const shows = source.filter((item) => mediaType(item) === "tv");
+  if (!movies.length || !shows.length) return source.slice(0, limit);
+  const output = [];
+  let movieIndex = 0;
+  let showIndex = 0;
+  let nextType = mediaType(source[0]);
+  while (output.length < limit && (movieIndex < movies.length || showIndex < shows.length)) {
+    if (nextType === "movie" && movieIndex < movies.length) output.push(movies[movieIndex++]);
+    else if (nextType === "tv" && showIndex < shows.length) output.push(shows[showIndex++]);
+    else if (movieIndex < movies.length) output.push(movies[movieIndex++]);
+    else if (showIndex < shows.length) output.push(shows[showIndex++]);
+    nextType = nextType === "movie" ? "tv" : "movie";
+  }
+  return output;
+}
+
+function ExploreOverviewHeading({ title, brand = "", onSeeAll }) {
+  return (
+    <div className="mg-explore-v3-heading">
+      <h2><span>{title}</span>{brand ? <i>{brand}</i> : null}</h2>
+      {onSeeAll && <button type="button" onClick={onSeeAll}>See All <span aria-hidden="true">›</span></button>}
+    </div>
+  );
+}
+
+function ExploreOverviewRail({ title, brand, items, loading, onSeeAll, onOpen, onQuickActions, watchlist, watched, ratings, favorites }) {
+  if (!loading && !items.length) return null;
+  return (
+    <section className="mg-explore-v3-section">
+      <ExploreOverviewHeading title={title} brand={brand} onSeeAll={items.length ? onSeeAll : null} />
+      {loading && !items.length ? <SkeletonRow /> : (
+        <div className="mg-explore-v3-media-rail">
+          {items.map((item) => (
+            <div className={`mg-explore-v3-media-shell is-${mediaType(item) === "tv" ? "show" : "movie"}`} key={`${title}-${keyOf(item)}`}>
+              <PosterCard
+                item={item}
+                onOpen={onOpen}
+                onQuickActions={onQuickActions}
+                saved={hasStoredItem(item, watchlist)}
+                watched={hasStoredItem(item, watched)}
+                rating={ratingForItem(item, ratings)}
+                favorite={hasStoredItem(item, favorites)}
+                cardScope="explore"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+async function loadExploreReelCatalogue(seedItems = []) {
+  const cached = readHomeCache(EXPLORE_REELS_CACHE_KEY, null);
+  const cachedRows = (cached?.rows || []).filter(homeReelHasPlayableSource);
+  if (cached?.timestamp && Date.now() - cached.timestamp < EXPLORE_REELS_TTL_MS && cachedRows.length >= 12) return cachedRows;
+  if (!supabase) return cachedRows;
+  const select = "id,source,source_video_id,source_url,media_type,tmdb_id,item_key,title,video_title,channel_title,creator_username,thumbnail_url,embed_html,embed_url,watch_url,label,reason,source_context,approved,quality_score,playable,created_at,updated_at";
+  const { data, error } = await supabase
+    .from("reel_cache")
+    .select(select)
+    .or("source_video_id.not.is.null,source_url.not.is.null,watch_url.not.is.null,embed_url.not.is.null")
+    .order("quality_score", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(300);
+  if (error) return cachedRows;
+  const seedMap = new Map(seedItems.map((item) => [keyOf(item), item]));
+  const seen = new Set();
+  const clusters = new Map();
+  (data || []).filter(reelRowHasPlayableSource).forEach((row) => {
+    const reel = reelCacheRowToVideo(row, seedMap.get(row.item_key) || homeReelContent(row), row.reason || "Explore on MovieGram");
+    const identity = reel && reelIdentity(reel);
+    if (!reel || !identity || seen.has(identity)) return;
+    seen.add(identity);
+    const item = homeReelContent(reel);
+    const cluster = homeCanonicalKey(item) || titleOf(item).toLowerCase().split(/\s+/).slice(0, 2).join("-");
+    if (!clusters.has(cluster)) clusters.set(cluster, []);
+    clusters.get(cluster).push(reel);
+  });
+  const buckets = [...clusters.values()];
+  const rows = [];
+  let index = 0;
+  while (buckets.some((bucket) => index < bucket.length)) {
+    buckets.forEach((bucket) => {
+      if (bucket[index]) rows.push(bucket[index]);
+    });
+    index += 1;
+  }
+  const playable = rows.filter(homeReelHasPlayableSource);
+  if (playable.length) persist(EXPLORE_REELS_CACHE_KEY, { timestamp: Date.now(), rows: playable });
+  return playable.length ? playable : cachedRows;
+}
+
+function useExploreReelPool(seedItems = []) {
+  const [reels, setReels] = useState(() => (readHomeCache(EXPLORE_REELS_CACHE_KEY, {})?.rows || []).filter(homeReelHasPlayableSource));
+  const seedKey = useMemo(() => seedItems.map(keyOf).filter(Boolean).slice(0, 80).join("|"), [seedItems]);
   useEffect(() => {
-    if (!hasMoreExplore) return;
-    let ticking = false;
-    const onScroll = () => {
-      if (ticking || tabLoading) return;
-      ticking = true;
-      window.requestAnimationFrame(() => {
-        ticking = false;
-        const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 700;
-        if (nearBottom) onLoadMoreExplore?.();
-      });
+    let alive = true;
+    loadExploreReelCatalogue(seedItems).then((rows) => {
+      if (alive && rows.length) setReels(rows);
+    });
+    return () => { alive = false; };
+  }, [seedKey]);
+  return reels;
+}
+
+function ExploreReelRail({ reels, onOpenView, onOpenReel, title = "Explore Through Reels" }) {
+  if (!reels.length) return null;
+  return (
+    <section className="mg-explore-v3-section">
+      <ExploreOverviewHeading title={title} onSeeAll={() => onOpenView({ id: "reels", title, kind: "reels", reels })} />
+      <div className="mg-explore-v3-reel-rail">
+        {reels.slice(0, 14).map((reel) => {
+          const item = homeReelContent(reel);
+          const thumbnail = reel.thumbnail_url || reel.thumbnailUrl || reel.poster || posterUrl(item.poster_path, "w500");
+          return (
+            <button type="button" key={reelIdentity(reel)} onClick={() => onOpenReel(reel)}>
+              <img src={thumbnail} alt={reel.video_title || titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = item.poster_path ? posterUrl(item.poster_path, "w500") : POSTER_FALLBACK; }} />
+              <span><Icon name="play" />{reel.view_count ? Number(reel.view_count).toLocaleString("en-IN") : reel.kind || "Watch"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ExploreAnticipatedRail({ items, onOpen, onQuickActions, onSeeAll }) {
+  if (!items.length) return null;
+  return (
+    <section className="mg-explore-v3-section">
+      <ExploreOverviewHeading title="Anticipated" onSeeAll={onSeeAll} />
+      <div className="mg-explore-v3-anticipated-rail">
+        {items.map((item) => {
+          const release = new Date(`${dateOf(item).slice(0, 10)}T00:00:00`);
+          const days = Math.max(1, Math.ceil((release.getTime() - Date.now()) / 86400000));
+          return (
+            <button
+              type="button"
+              key={`anticipated-${keyOf(item)}`}
+              onClick={() => onOpen(item)}
+              onContextMenu={(event) => { event.preventDefault(); onQuickActions?.(item); }}
+            >
+              <img src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+              <span>{release.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+              <strong>{titleOf(item)}</strong>
+              <small>In {days} days</small>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function useExploreHeroPool(items = [], apiFetch) {
+  const [pool, setPool] = useState(() => readHomeCache(EXPLORE_HERO_CACHE_KEY, {})?.rows || []);
+  const [offset, setOffset] = useState(0);
+  const [bucket, setBucket] = useState(() => Math.floor(Date.now() / EXPLORE_HERO_TTL_MS));
+  const itemKey = useMemo(() => items.map(keyOf).filter(Boolean).slice(0, 60).join("|"), [items]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nextBucket = Math.floor(Date.now() / EXPLORE_HERO_TTL_MS);
+      setBucket((current) => current === nextBucket ? current : nextBucket);
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const cached = readHomeCache(EXPLORE_HERO_CACHE_KEY, null);
+    if (cached?.timestamp && Date.now() - cached.timestamp < EXPLORE_HERO_TTL_MS && cached.rows?.length >= 6) {
+      setPool(cached.rows);
+      return () => { active = false; };
+    }
+    const candidates = sortExploreQuality(exploreCatalogue(items, { requireArtwork: true }))
+      .filter((item) => item.poster_path)
+      .slice(0, 24);
+    const commit = (rows) => {
+      if (!active || !rows.length) return;
+      const previousKeys = new Set((cached?.rows || []).slice(0, 6).map(keyOf));
+      const changed = [...rows.filter((item) => !previousKeys.has(keyOf(item))), ...rows.filter((item) => previousKeys.has(keyOf(item)))].slice(0, 18);
+      persist(EXPLORE_HERO_CACHE_KEY, { timestamp: Date.now(), rows: changed });
+      setPool(changed);
     };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [hasMoreExplore, onLoadMoreExplore, tabLoading]);
+    if (candidates.length) commit(candidates);
+    if (apiFetch) {
+      Promise.allSettled([
+        apiFetch("/trending/all/week", { page: 1, include_adult: "false" }, { refresh: true }),
+        apiFetch("/movie/popular", { page: 1, include_adult: "false" }, { refresh: true }),
+        apiFetch("/tv/popular", { page: 1, include_adult: "false" }, { refresh: true })
+      ]).then((results) => {
+        const refreshed = sortExploreQuality(exploreCatalogue(results
+          .filter((result) => result.status === "fulfilled")
+          .flatMap((result) => normalizeExploreResults(result.value?.results || [])), { requireArtwork: true }))
+          .filter((item) => item.poster_path);
+        if (refreshed.length) commit(refreshed);
+      });
+    }
+    return () => { active = false; };
+  }, [apiFetch, bucket, itemKey, items]);
+  useEffect(() => {
+    if (pool.length <= 6) return undefined;
+    const timer = window.setInterval(() => setOffset((value) => (value + 3) % pool.length), 10000);
+    return () => window.clearInterval(timer);
+  }, [pool.length]);
+  const source = pool.length ? pool : exploreCatalogue(items, { requireArtwork: true }).filter((item) => item.poster_path).slice(0, 6);
+  return Array.from({ length: Math.min(6, source.length) }, (_, index) => source[(offset + index) % source.length]).filter(Boolean);
+}
+
+function ExploreDiscoveryHero({ items, apiFetch, onOpenView }) {
+  const art = useExploreHeroPool(items, apiFetch);
+  return (
+    <section className="mg-explore-v3-portal">
+      <div className="mg-explore-v3-portal-copy">
+        <span>Discovery Portal</span>
+        <h2>What will you discover today?</h2>
+        <p>Dive into movies, shows, reels, collections and more.</p>
+        <div>
+          {[
+            ["movies", "Movies", "reels"],
+            ["shows", "Shows", "feed"],
+            ["reels", "Reels", "play"],
+            ["collections", "Collections", "log"]
+          ].map(([id, label, icon]) => (
+            <button key={id} type="button" onClick={() => onOpenView({ id, title: label })}><Icon name={icon} /><span>{label}</span></button>
+          ))}
+        </div>
+      </div>
+      <div className="mg-explore-v3-portal-mosaic mg-explore-v3-portal-mosaic--rotating" key={art.map(keyOf).join("|")} aria-hidden="true">
+        {art.map((item, index) => <img key={keyOf(item)} className={`art-${index + 1}`} src={posterUrl(item.poster_path, "w342")} alt="" loading={index < 3 ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+      </div>
+    </section>
+  );
+}
+
+function ExploreDestinationSkeleton() {
+  return (
+    <div className="mg-explore-v3-list" aria-label="Loading Explore results">
+      {Array.from({ length: 5 }, (_, index) => <div className="mg-explore-v3-list-skeleton" key={index}><i /><span /></div>)}
+    </div>
+  );
+}
+
+function ExploreBackdropList({ view, apiFetch, onOpen, onQuickActions, watchlist, ratings }) {
+  const cacheKey = `${view.id}:${view.genreId || ""}:${view.mediaType || "all"}`;
+  const cached = exploreDestinationMemoryCache.get(cacheKey);
+  const initialVisibleCount = ["indian", "anime", "sitcoms"].includes(view.id) ? 50 : 30;
+  const [items, setItems] = useState(() => cached?.items || exploreCatalogue(view.items || [], { requireArtwork: false }));
+  const [visibleCount, setVisibleCount] = useState(initialVisibleCount);
+  const [batch, setBatch] = useState(() => cached?.batch || 0);
+  const [hasMore, setHasMore] = useState(() => cached?.hasMore ?? true);
+  const [loading, setLoading] = useState(!cached && !(view.items || []).length);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const sources = useMemo(() => exploreDestinationSources(view), [view.genreId, view.id, view.mediaType]);
+  const predicate = useMemo(() => exploreDestinationPredicate(view), [view.id]);
+
+  const loadBatch = useCallback(async (nextBatch, replace = false) => {
+    if (!sources.length || !apiFetch) return;
+    setLoading(true);
+    setError("");
+    try {
+      const initial = replace
+        ? await fetchExploreInitialFloor(apiFetch, sources, predicate, [], initialVisibleCount)
+        : null;
+      const loaded = initial?.loaded || await fetchExploreSourcePages(apiFetch, sources, nextBatch * 2 + 1, 2);
+      const valid = exploreCatalogue(loaded, { predicate });
+      const ranked = view.id === "trending" ? valid : sortExploreQuality(valid);
+      const next = dedupe(replace ? ranked : [...items, ...ranked]);
+      setItems(next);
+      const completedBatch = initial ? Math.max(0, initial.batches - 1) : nextBatch;
+      setBatch(completedBatch);
+      setHasMore(loaded.length >= Math.max(12, sources.length * 8));
+      setVisibleCount((current) => replace ? initialVisibleCount : current + 30);
+      exploreDestinationMemoryCache.set(cacheKey, { items: next, batch: completedBatch, hasMore: loaded.length >= Math.max(12, sources.length * 8) });
+    } catch (loadError) {
+      setError(loadError?.message || "Explore results could not be refreshed.");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, cacheKey, items, predicate, sources, view.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (cached?.items?.length >= 30 || !sources.length) return () => { active = false; };
+    setLoading(true);
+    fetchExploreInitialFloor(apiFetch, sources, predicate, view.items || [], initialVisibleCount)
+      .then(({ loaded, batches }) => {
+        if (!active) return;
+        const valid = exploreCatalogue(loaded, { predicate });
+        const ranked = view.id === "trending" ? valid : sortExploreQuality(valid);
+        const next = dedupe([...(view.items || []), ...ranked]);
+        setItems(next);
+        const completedBatch = Math.max(0, batches - 1);
+        setBatch(completedBatch);
+        setHasMore(loaded.length >= Math.max(12, sources.length * 8));
+        exploreDestinationMemoryCache.set(cacheKey, { items: next, batch: completedBatch, hasMore: loaded.length >= Math.max(12, sources.length * 8) });
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError?.message || "Explore results could not be loaded.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [apiFetch, cacheKey, cached, predicate, sources, view.id, view.items]);
+
+  const hasMovies = items.some((item) => mediaType(item) === "movie");
+  const hasShows = items.some((item) => mediaType(item) === "tv");
+  const filtered = items.filter((item) => filter === "all" || mediaType(item) === filter);
+  const visible = filtered.slice(0, visibleCount);
+  const loadMore = () => {
+    if (visibleCount < filtered.length) {
+      setVisibleCount((current) => current + 30);
+      return;
+    }
+    if (!loading && hasMore) loadBatch(batch + 1);
+  };
 
   return (
-    <>
-      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} cardScope="explore" />
-      <section className="mg2-explore-hero">
-        <span>Discovery Hub</span>
-        <h2>Find your next obsession.</h2>
-        <p>Find binge-worthy movies, shows, and hidden gems made for your next watch.</p>
+    <div className="mg-explore-v3-destination">
+      {hasMovies && hasShows ? (
+        <div className="mg-explore-v3-filters" role="tablist" aria-label={`${view.title} filters`}>
+          {[["all", "All"], ["movie", "Movies"], ["tv", "Shows"]].map(([id, label]) => (
+            <button className={filter === id ? "active" : ""} type="button" role="tab" aria-selected={filter === id} key={id} onClick={() => { setFilter(id); setVisibleCount(initialVisibleCount); }}>{label}</button>
+          ))}
+        </div>
+      ) : null}
+      {loading && !visible.length ? <ExploreDestinationSkeleton /> : null}
+      {error && !visible.length ? <div className="mg-explore-v3-state"><p>{error}</p><button type="button" onClick={() => loadBatch(0, true)}>Retry</button></div> : null}
+      {visible.length ? (
+        <div className="mg-explore-v3-list">
+          {visible.map((item) => {
+            const genres = (item.genre_ids || []).map((id) => EXPLORE_GENRE_NAMES[id]).filter(Boolean).slice(0, 2).join(", ");
+            const rating = Number(item.vote_average || 0);
+            return (
+              <article className="mg-explore-v3-list-card" key={`${cacheKey}-${keyOf(item)}`}>
+                <button className="mg-explore-v3-list-open" type="button" onClick={() => onOpen(item)}>
+                  <img className="mg-explore-v3-list-backdrop" src={backdropUrl(item.backdrop_path || item.poster_path, "w780")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+                  <span className="mg-explore-v3-list-shade" />
+                  <img className="mg-explore-v3-list-poster" src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                  <span className="mg-explore-v3-list-copy">
+                    <strong>{titleOf(item)}</strong>
+                    <small>{genres || (mediaType(item) === "tv" ? "Series" : "Film")}</small>
+                    <em>{yearOf(item) || "Release TBA"} · {mediaType(item) === "tv" ? "TV" : "Movie"}</em>
+                    {rating > 0 ? <b>TMDB {rating.toFixed(1)}</b> : null}
+                  </span>
+                </button>
+                {onQuickActions ? <button className={`mg-explore-v3-list-save${hasStoredItem(item, watchlist) ? " active" : ""}`} type="button" aria-pressed={hasStoredItem(item, watchlist)} aria-label={`Lists for ${titleOf(item)}`} onClick={() => onQuickActions(item)}><Icon name="bookmark" /></button> : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : !loading && !error ? <div className="mg2-empty">No reliable titles are available in this view yet.</div> : null}
+      {visible.length && (visibleCount < filtered.length || hasMore) ? <button className="mg-explore-v3-load-more" type="button" disabled={loading} onClick={loadMore}>{loading ? "Loading..." : "Load More"}</button> : null}
+      {visible.length && !hasMore && visibleCount >= filtered.length ? <p className="mg-explore-v3-end">You have reached the end.</p> : null}
+    </div>
+  );
+}
+
+function ExploreReelViewer({ reel, onClose }) {
+  if (!reel) return null;
+  const item = homeReelContent(reel);
+  const youtubeId = getYouTubeVideoId(reel);
+  const src = youtubeId
+    ? `https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0&controls=1`
+    : reel.embedUrl || reel.embed_url || reel.watchUrl;
+  return (
+    <div className="mg-explore-v3-reel-viewer" role="dialog" aria-modal="true" aria-label={reel.video_title || titleOf(item)}>
+      <button type="button" onClick={onClose} aria-label="Close Explore reel"><Icon name="back" /></button>
+      <div>{src ? <iframe src={src} title={reel.video_title || titleOf(item)} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : <img src={reel.thumbnailUrl || posterUrl(item.poster_path, "w500")} alt={titleOf(item)} />}</div>
+      <section><strong>{reel.video_title || titleOf(item)}</strong><span>{reel.channelTitle || "MovieGram reels"}</span></section>
+    </div>
+  );
+}
+
+function ExploreReelGrid({ reels, selectedReel, onOpenReel }) {
+  const [visibleCount, setVisibleCount] = useState(36);
+  const sentinelRef = useRef(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setVisibleCount((current) => Math.min(reels.length, current + 30));
+    }, { rootMargin: "320px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [reels.length]);
+  useEffect(() => {
+    if (!selectedReel) return;
+    const index = reels.findIndex((reel) => reelIdentity(reel) === selectedReel);
+    if (index >= 0) setVisibleCount((current) => Math.max(current, index + 1));
+  }, [reels, selectedReel]);
+  return (
+    <div className="mg-explore-v3-reel-grid">
+      {reels.slice(0, visibleCount).map((reel) => {
+        const item = homeReelContent(reel);
+        const thumbnail = reel.thumbnail_url || reel.thumbnailUrl || posterUrl(item.poster_path, "w500");
+        return (
+          <button type="button" key={reelIdentity(reel)} onClick={() => onOpenReel(reel)}>
+            <img src={thumbnail} alt={reel.video_title || titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = posterUrl(item.poster_path, "w500"); }} />
+            <span><Icon name="play" />{reel.view_count ? Number(reel.view_count).toLocaleString("en-IN") : ""}</span>
+          </button>
+        );
+      })}
+      <i ref={sentinelRef} aria-hidden="true" />
+      {!reels.length ? <div className="mg2-empty">MovieGram reels are unavailable right now.</div> : null}
+    </div>
+  );
+}
+
+function ExploreGenreBrowser({ onOpenView }) {
+  return (
+    <div className="mg-explore-v3-genre-grid">
+      {genreSeeds.map((genre) => (
+        <button type="button" key={`${genre.mediaType || "all"}-${genre.id}`} onClick={() => onOpenView({ id: "genre", title: genre.name, genreId: genre.id, mediaType: genre.mediaType || "" })}>
+          <Icon name="sparkle" /><strong>{genre.name}</strong><span>Movies & shows</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ExplorePeopleBrowser({ apiFetch, initialPeople, onOpenPerson }) {
+  const cached = useMemo(() => readHomeCache(EXPLORE_PEOPLE_CACHE_KEY, null), []);
+  const [people, setPeople] = useState(() => cached?.rows || initialPeople || []);
+  const [visibleCount, setVisibleCount] = useState(51);
+  const [loading, setLoading] = useState(!people.length);
+  useEffect(() => {
+    let active = true;
+    if (cached?.timestamp && Date.now() - cached.timestamp < 6 * 60 * 60 * 1000 && cached.rows?.length >= 50) return () => { active = false; };
+    Promise.allSettled([1, 2, 3, 4].map((page) => apiFetch("/person/popular", { page, include_adult: "false" }))).then((results) => {
+      if (!active) return;
+      const rows = dedupe(results.filter((result) => result.status === "fulfilled").flatMap((result) => result.value?.results || []))
+        .filter((person) => person?.id && person.profile_path && person.adult !== true && !(person.known_for || []).some((item) => item.adult === true))
+        .sort((a, b) => Number(b.popularity || 0) - Number(a.popularity || 0));
+      if (rows.length) {
+        persist(EXPLORE_PEOPLE_CACHE_KEY, { timestamp: Date.now(), rows });
+        setPeople(rows);
+      }
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [apiFetch, cached]);
+  return (
+    <div className="mg-explore-v3-people">
+      {people.slice(0, visibleCount).map((person) => <button type="button" key={person.id} onClick={() => onOpenPerson(person)}><img src={posterUrl(person.profile_path, "w342")} alt={person.name} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} /><strong>{person.name}</strong><span>{person.known_for_department || "Creating"}</span></button>)}
+      {loading ? <p>Loading people...</p> : null}
+      {!loading && visibleCount < people.length ? <button className="mg-explore-v3-load-more" type="button" onClick={() => setVisibleCount((current) => current + 51)}>Load More</button> : null}
+    </div>
+  );
+}
+
+const EXPLORE_COLLECTION_QUERIES = ["Marvel", "Batman", "Superman", "Star Wars", "Harry Potter", "James Bond", "Mission Impossible", "Jurassic", "Disney", "Pixar", "Spider-Man", "Fast Furious", "Horror", "Action"];
+
+function ExploreCollectionCard({ collection, apiFetch, seedItems = [], onOpen }) {
+  const cardRef = useRef(null);
+  const [nearViewport, setNearViewport] = useState(Boolean(collection.backdrop_path || collection.poster_path));
+  const [directFailed, setDirectFailed] = useState(false);
+  const directPath = !directFailed && (collection.backdrop_path || collection.poster_path);
+  const seedArtwork = useMemo(() => {
+    const children = collection.hub?.items || collection.parts || [];
+    const childKeys = new Set(children.map((item) => keyOf(item)));
+    const childTitles = new Set(children.map((item) => titleOf(item).trim().toLowerCase()));
+    return dedupe([
+      ...children,
+      ...seedItems.filter((item) => childKeys.has(keyOf(item)) || childTitles.has(titleOf(item).trim().toLowerCase()))
+    ]).filter((item) => item.poster_path).slice(0, 4);
+  }, [collection, seedItems]);
+  const [childArtwork, setChildArtwork] = useState(seedArtwork);
+  const [resolved, setResolved] = useState(Boolean(directPath || seedArtwork.length));
+
+  useEffect(() => {
+    const node = cardRef.current;
+    if (!node || nearViewport || typeof IntersectionObserver === "undefined") {
+      if (typeof IntersectionObserver === "undefined") setNearViewport(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setNearViewport(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "320px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [nearViewport]);
+
+  useEffect(() => {
+    if (!nearViewport || directPath || childArtwork.length || !apiFetch) return undefined;
+    let active = true;
+    async function hydrateArtwork() {
+      let children = collection.hub?.items || collection.parts || [];
+      if (!children.length && collection.id && !collection.hub) {
+        try {
+          const details = await apiFetch(`/collection/${collection.id}`);
+          children = (details?.parts || []).map((item) => ({ ...item, media_type: "movie" }));
+        } catch {
+          children = [];
+        }
+      }
+      const candidates = children.slice(0, 4);
+      const settled = await Promise.allSettled(candidates.map(async (item) => {
+        if (item.poster_path) return item;
+        if (!item.id) return null;
+        const details = await apiFetch(`/${mediaType(item)}/${item.id}`);
+        return { ...item, ...details, media_type: mediaType(item) };
+      }));
+      if (!active) return;
+      setChildArtwork(dedupe(settled
+        .filter((result) => result.status === "fulfilled" && result.value?.poster_path)
+        .map((result) => result.value)).slice(0, 4));
+      setResolved(true);
+    }
+    hydrateArtwork();
+    return () => { active = false; };
+  }, [apiFetch, childArtwork.length, collection, directPath, nearViewport]);
+
+  if (resolved && !directPath && !childArtwork.length) return null;
+
+  return (
+    <button ref={cardRef} type="button" onClick={onOpen}>
+      {directPath ? (
+        <img
+          className="mg-explore-v3-collection-art"
+          src={backdropUrl(directPath, "w780")}
+          alt=""
+          loading="lazy"
+          onError={() => setDirectFailed(true)}
+        />
+      ) : childArtwork.length ? (
+        <i className={`mg-explore-v3-collection-collage count-${Math.min(4, childArtwork.length)}`} aria-hidden="true">
+          {childArtwork.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w342")} alt="" loading="lazy" />)}
+        </i>
+      ) : <i className="mg-explore-v3-collection-skeleton" aria-label="Loading collection artwork" />}
+      <span className="mg-explore-v3-collection-copy"><strong>{collection.name}</strong><small>{collection.hub?.items?.length || collection.parts?.length || ""}{collection.hub?.items?.length || collection.parts?.length ? " titles" : "Collection"}</small></span>
+    </button>
+  );
+}
+
+function ExploreCollectionBrowser({ apiFetch, onOpenFranchise, seedItems = [] }) {
+  const cached = useMemo(() => readHomeCache(EXPLORE_COLLECTION_CACHE_KEY, null), []);
+  const localCollections = useMemo(() => franchiseHubs.map((hub) => ({
+    id: hub.hub_key, name: hub.name, overview: hub.description, hub, poster_path: hub.items?.find((item) => item.poster_path)?.poster_path || "", backdrop_path: hub.items?.find((item) => item.backdrop_path)?.backdrop_path || ""
+  })), []);
+  const [collections, setCollections] = useState(() => cached?.rows || localCollections);
+  const [visibleCount, setVisibleCount] = useState(50);
+  useEffect(() => {
+    let active = true;
+    if (cached?.timestamp && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 && cached.rows?.length >= 40) return () => { active = false; };
+    Promise.allSettled(EXPLORE_COLLECTION_QUERIES.map((query) => apiFetch("/search/collection", { query, page: 1, include_adult: "false" }))).then((results) => {
+      if (!active) return;
+      const remote = results.filter((result) => result.status === "fulfilled").flatMap((result) => result.value?.results || []);
+      const seen = new Set();
+      const rows = [...localCollections, ...remote].filter((collection) => {
+        const identity = String(collection.id || collection.name || "").toLowerCase();
+        if (!identity || seen.has(identity) || (!collection.poster_path && !collection.backdrop_path && !collection.hub)) return false;
+        seen.add(identity);
+        return true;
+      });
+      persist(EXPLORE_COLLECTION_CACHE_KEY, { timestamp: Date.now(), rows });
+      setCollections(rows);
+    });
+    return () => { active = false; };
+  }, [apiFetch, cached, localCollections]);
+  const openCollection = async (collection) => {
+    if (collection.hub) {
+      onOpenFranchise(collection.hub);
+      return;
+    }
+    try {
+      const details = await apiFetch(`/collection/${collection.id}`);
+      onOpenFranchise({
+        hub_key: `tmdb-collection-${collection.id}`,
+        name: details.name || collection.name,
+        shortName: details.name || collection.name,
+        description: details.overview || "",
+        items: normalizeExploreResults((details.parts || []).map((item) => ({ ...item, media_type: "movie" })), "movie")
+      });
+    } catch {
+      // Keep the browser in place if a collection cannot be hydrated.
+    }
+  };
+  return (
+    <div className="mg-explore-v3-collections">
+      {collections.slice(0, visibleCount).map((collection) => <ExploreCollectionCard key={collection.id} collection={collection} apiFetch={apiFetch} seedItems={seedItems} onOpen={() => openCollection(collection)} />)}
+      {visibleCount < collections.length ? <button className="mg-explore-v3-load-more" type="button" onClick={() => setVisibleCount((current) => current + 30)}>Load More</button> : null}
+    </div>
+  );
+}
+
+function ExploreScreen({ queryProps, tabResults, tabLoading, exploreRows, exploreLoading, communityCharts = {}, actors, actorsLoading, onOpen, onOpenPerson, onOpenPublicProfile, onOpenFranchise, watchlist, watched = {}, ratings, favorites = {}, customLists = {}, onQuickActions, recommended = [] }) {
+  const [viewStack, setViewStack] = useState([]);
+  const [activeExploreReel, setActiveExploreReel] = useState(null);
+  const exploreRootRef = useRef(null);
+  const landingScrollRef = useRef(0);
+  const viewScrollRef = useRef([]);
+  const reelSeeds = useMemo(() => dedupe([
+    ...recommended,
+    ...tabResults,
+    ...(exploreRows.today || []),
+    ...(exploreRows.week || []),
+    ...(exploreRows.popularMovies || []),
+    ...(exploreRows.popularTv || [])
+  ]).slice(0, 80), [exploreRows.popularMovies, exploreRows.popularTv, exploreRows.today, exploreRows.week, recommended, tabResults]);
+  const exploreReels = useExploreReelPool(reelSeeds);
+  const queryActive = Boolean(queryProps.query?.trim());
+  const internalView = viewStack[viewStack.length - 1] || null;
+
+  const shelves = useMemo(() => {
+    const nearby = new Set();
+    const select = (pool, { limit = 14, predicate, ranked = true } = {}) => {
+      const valid = exploreCatalogue(pool, { requireArtwork: true, predicate }).filter((item) => item.poster_path);
+      const ordered = ranked ? sortExploreQuality(valid) : valid;
+      const mixed = mixExploreMedia(ordered, Math.max(30, limit * 2));
+      const selected = [...mixed.filter((item) => !nearby.has(keyOf(item))), ...mixed.filter((item) => nearby.has(keyOf(item)))].slice(0, limit);
+      selected.forEach((item) => nearby.add(keyOf(item)));
+      if (nearby.size > 42) {
+        [...nearby].slice(0, 14).forEach((key) => nearby.delete(key));
+      }
+      return selected;
+    };
+    const anticipated = dedupe([...(exploreRows.upcoming || []), ...(exploreRows.upcomingTv || [])])
+      .filter((item) => exploreSafeItem(item) && dateOf(item) && !isReleased(item) && (item.backdrop_path || item.poster_path))
+      .sort((a, b) => dateOf(a).localeCompare(dateOf(b)))
+      .slice(0, 14);
+    const scriptedShow = (item) => mediaType(item) === "tv" && !(item.genre_ids || []).some((id) => [99, 10763, 10764, 10767].includes(id)) && Number(item.vote_count || 0) >= 100;
+    const credibleGem = (item) => Number(item.vote_average || 0) >= 7.1 && Number(item.vote_count || 0) >= 120 && Number(item.popularity || 0) < 120;
+    const crediblePopular = (item) => Number(item.vote_count || 0) >= 80 || Number(item.popularity || 0) >= 30;
+    const liveTrending = dedupe([...(exploreRows.today || []), ...(exploreRows.week || [])]);
+    const trendingPool = liveTrending.length >= 10
+      ? liveTrending
+      : dedupe([...liveTrending, ...fallbackRows.trending, ...fallbackRows.movies, ...fallbackRows.series, ...fallbackRows.anime]);
+    return {
+      forYou: select([...recommended, ...tabResults, ...(exploreRows.week || [])]),
+      trending: select(trendingPool, { ranked: false }),
+      anticipated,
+      binge: select([...(exploreRows.bingeShows || []), ...(exploreRows.topShows || []), ...(exploreRows.comfortWatch || [])], { predicate: scriptedShow }),
+      hidden: select([...(exploreRows.hiddenGems || []), ...(communityCharts.highestRated || [])], { predicate: credibleGem }),
+      popular: select([...(exploreRows.popularMovies || []), ...(exploreRows.popularTv || [])], { predicate: crediblePopular }),
+      netflix: select([...(exploreRows.netflixMovies || []), ...(exploreRows.netflixShows || [])]),
+      prime: select([...(exploreRows.primeMovies || []), ...(exploreRows.primeShows || [])]),
+      hotstar: select([...(exploreRows.hotstarMovies || []), ...(exploreRows.hotstarShows || [])]),
+      apple: select([...(exploreRows.appleMovies || []), ...(exploreRows.appleShows || [])]),
+      crunchy: select([...(exploreRows.crunchyMovies || []), ...(exploreRows.crunchyShows || [])])
+    };
+  }, [communityCharts, exploreRows, recommended, tabResults]);
+
+  const openInternalView = useCallback((view) => {
+    const screen = exploreRootRef.current?.closest?.(".mg2-screen");
+    const depth = viewStack.length;
+    const position = Number(screen?.scrollTop || 0);
+    if (!depth) landingScrollRef.current = position;
+    viewScrollRef.current[depth] = position;
+    setViewStack((current) => [...current, view]);
+    window.requestAnimationFrame(() => {
+      const nextScreen = exploreRootRef.current?.closest?.(".mg2-screen");
+      if (nextScreen) nextScreen.scrollTop = 0;
+    });
+  }, [viewStack.length]);
+  const closeInternalView = useCallback(() => {
+    setViewStack((current) => {
+      const next = current.slice(0, -1);
+      const restorePosition = next.length ? viewScrollRef.current[next.length] : landingScrollRef.current;
+      window.requestAnimationFrame(() => {
+        const screen = exploreRootRef.current?.closest?.(".mg2-screen");
+        if (screen) screen.scrollTop = Number(restorePosition || 0);
+      });
+      return next;
+    });
+  }, []);
+  const openShelf = useCallback((id, title, items) => openInternalView({ id, title, items }), [openInternalView]);
+
+  const gatewayItems = useMemo(() => ({
+    movies: exploreCatalogue([...(exploreRows.nowPlaying || []), ...(exploreRows.popularMovies || []), ...(exploreRows.topMovies || [])]).filter((item) => mediaType(item) === "movie"),
+    shows: exploreCatalogue([...(exploreRows.onAir || []), ...(exploreRows.popularTv || []), ...(exploreRows.bingeShows || [])]).filter((item) => mediaType(item) === "tv"),
+    indian: exploreCatalogue(exploreRows.indianCinema || []),
+    anime: exploreCatalogue([...(exploreRows.crunchyMovies || []), ...(exploreRows.crunchyShows || [])]),
+    sitcoms: exploreCatalogue(exploreRows.sitcoms || [])
+  }), [exploreRows]);
+
+  const renderMediaView = (view) => {
+    const destinationView = { ...view, items: view.items || gatewayItems[view.id] || [] };
+    if (view.id === "reels") return <ExploreReelGrid reels={view.reels || exploreReels} selectedReel={view.selectedReel} onOpenReel={setActiveExploreReel} />;
+    if (view.id === "collections") return <ExploreCollectionBrowser apiFetch={queryProps.apiFetch} onOpenFranchise={onOpenFranchise} seedItems={reelSeeds} />;
+    if (view.id === "genres") return <ExploreGenreBrowser onOpenView={openInternalView} />;
+    if (view.id === "people") return <ExplorePeopleBrowser apiFetch={queryProps.apiFetch} initialPeople={actors} onOpenPerson={onOpenPerson} />;
+    return <ExploreBackdropList view={destinationView} apiFetch={queryProps.apiFetch} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} ratings={ratings} />;
+  };
+
+  if (internalView && !queryActive) {
+    return (
+      <section ref={exploreRootRef} className="mg-explore-v3 mg-explore-v3-subview">
+        <header><button type="button" onClick={closeInternalView} aria-label="Back to Explore"><Icon name="back" /></button><div><span>Explore</span><h2>{internalView.title}</h2></div></header>
+        {renderMediaView(internalView)}
+        {activeExploreReel ? <ExploreReelViewer reel={activeExploreReel} onClose={() => setActiveExploreReel(null)} /> : null}
       </section>
-      <div className="mg2-chips">
-        {exploreTabs.map((tab) => (
-          <button key={tab.id} className={activeExplore === tab.id ? "active" : ""} type="button" onClick={() => setActiveExplore(tab.id)}>{tab.label}</button>
-        ))}
-      </div>
-      <ContentRow title={activeFilter ? activeFilter.label : "Featured Picks"} items={tabResults} loading={tabLoading} onOpen={onOpen} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} cardScope="explore" />
-      {tabLoading && tabResults.length > 0 && <div className="mg2-empty compact">Loading more...</div>}
-      {chartRows.map((row) => (
-        <ContentRow
-          key={row.id}
-          title={row.title}
-          items={row.items.slice(0, row.id === "mostWatchlisted" ? 10 : 16)}
-          loading={exploreLoading}
-          onOpen={onOpen}
-          onQuickActions={onQuickActions}
-          watchlist={watchlist}
-          watched={watched}
-          ratings={ratings}
-          favorites={favorites}
-          cardScope="explore"
-        />
-      ))}
-      {exploreHubSections.map((section) => (
-        <ContentRow
-          key={section.id}
-          title={section.title}
-          items={exploreRows[section.id] || []}
-          loading={exploreLoading}
-          onOpen={onOpen}
-          onQuickActions={onQuickActions}
-          watchlist={watchlist}
-          watched={watched}
-          ratings={ratings}
-          favorites={favorites}
-          cardScope="explore"
-        />
-      ))}
-      <GenreRow genres={genreSeeds} />
-      <CollectionRow collections={collectionSeeds} onOpen={onOpen} />
-      <ActorRow actors={actors} loading={actorsLoading} onOpenPerson={onOpenPerson} />
-    </>
+    );
+  }
+
+  const portalItems = [...shelves.forYou, ...shelves.trending, ...shelves.popular];
+  const sectionProps = { loading: exploreLoading, onOpen, onQuickActions, watchlist, watched, ratings, favorites };
+  return (
+    <div ref={exploreRootRef} className="mg-explore-v3">
+      <SearchPanel {...queryProps} onOpen={onOpen} onOpenPerson={onOpenPerson} onOpenPublicProfile={onOpenPublicProfile} onOpenFranchise={onOpenFranchise} onQuickActions={onQuickActions} watchlist={watchlist} watched={watched} ratings={ratings} favorites={favorites} customLists={customLists} cardScope="explore" />
+      {!queryActive && (
+        <>
+          <ExploreDiscoveryHero items={portalItems} apiFetch={queryProps.apiFetch} onOpenView={(view) => openInternalView({ ...view, items: gatewayItems[view.id], reels: view.id === "reels" ? exploreReels : undefined })} />
+          <ExploreOverviewRail title="For You" items={shelves.forYou} onSeeAll={() => openShelf("for-you", "For You", shelves.forYou)} {...sectionProps} />
+          <ExploreOverviewRail title="Trending" items={shelves.trending} onSeeAll={() => openShelf("trending", "Trending", shelves.trending)} {...sectionProps} />
+          <ExploreReelRail reels={exploreReels} onOpenView={openInternalView} onOpenReel={setActiveExploreReel} />
+          <ExploreAnticipatedRail items={shelves.anticipated} onOpen={onOpen} onQuickActions={onQuickActions} onSeeAll={() => openShelf("anticipated", "Anticipated", shelves.anticipated)} />
+          <ExploreOverviewRail title="Binge-worthy" items={shelves.binge} onSeeAll={() => openShelf("binge", "Binge-worthy", shelves.binge)} {...sectionProps} />
+          <ExploreOverviewRail title="Hidden Gems" items={shelves.hidden} onSeeAll={() => openShelf("hidden", "Hidden Gems", shelves.hidden)} {...sectionProps} />
+          <ExploreOverviewRail title="Popular" items={shelves.popular} onSeeAll={() => openShelf("popular", "Popular", shelves.popular)} {...sectionProps} />
+          <ExploreOverviewRail title="Don't Miss on Netflix" brand="NETFLIX" items={shelves.netflix} onSeeAll={() => openShelf("netflix", "Don't Miss on Netflix", shelves.netflix)} {...sectionProps} />
+          <ExploreOverviewRail title="Worth a Watch on Prime Video" brand="PRIME" items={shelves.prime} onSeeAll={() => openShelf("prime", "Worth a Watch on Prime Video", shelves.prime)} {...sectionProps} />
+          <ExploreOverviewRail title="Top Picks on JioHotstar" brand="JIOHOTSTAR" items={shelves.hotstar} onSeeAll={() => openShelf("hotstar", "Top Picks on JioHotstar", shelves.hotstar)} {...sectionProps} />
+          <ExploreOverviewRail title="Must-Watch on Apple TV+" brand="APPLE TV+" items={shelves.apple} onSeeAll={() => openShelf("apple", "Must-Watch on Apple TV+", shelves.apple)} {...sectionProps} />
+          <ExploreOverviewRail title="Anime Picks on Crunchyroll" brand="CRUNCHYROLL" items={shelves.crunchy} onSeeAll={() => openShelf("crunchy", "Anime Picks on Crunchyroll", shelves.crunchy)} {...sectionProps} />
+          <section className="mg-explore-v3-more">
+            <ExploreOverviewHeading title="Explore More" />
+            <div>
+              {[
+                ["genres", "Genres", "sparkle"],
+                ["collections", "Collections & Universes", "log"],
+                ["people", "Actors & Directors", "profile"],
+                ["indian", "Indian Cinema", "reels"],
+                ["anime", "Anime", "play"],
+                ["sitcoms", "Sitcoms", "feed"]
+              ].map(([id, label, icon]) => <button key={id} type="button" onClick={() => openInternalView({ id, title: label, items: gatewayItems[id] })}><Icon name={icon} /><span>{label}</span></button>)}
+            </div>
+          </section>
+          {activeExploreReel ? <ExploreReelViewer reel={activeExploreReel} onClose={() => setActiveExploreReel(null)} /> : null}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -8842,119 +10005,1268 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
   );
 }
 
-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, tonightItems = [], onOpen, onOpenDiary, onOpenStats }) {
-  const [logTab, setLogTab] = useState("watchlist");
-  const [logQuery, setLogQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [genreFilter, setGenreFilter] = useState("all");
-  const watchedCollection = normalizeTrackingCollection(watched);
-  const saved = Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection));
-  const watchAsapItems = saved.filter((item) => item.watch_asap || item.watchAsap);
-  const watchedItems = Object.values(watchedCollection).filter((item) => isReleased(item));
-  const favoriteItems = Object.values(favorites);
-  const userListCards = Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [] }));
-  const listCards = userListCards.length ? userListCards : [
-    { id: "weekend", title: "Weekend Watch Party", subtitle: "Create your own lists from Details", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) }
-  ];
-  const logTabs = [
-    { id: "watchlist", label: "Watchlist" },
-    { id: "watched", label: "Watched" },
-    { id: "lists", label: "Lists" },
-    { id: "favorites", label: "Favorites" }
-  ];
-  const sourceItems = logTab === "watchlist"
-    ? (saved.length ? saved : dedupe([...(rows.trending || []), ...fallbackRows.trending]))
-    : logTab === "watched"
-      ? (watchedItems.length ? watchedItems : dedupe([...(rows.movies || []), ...fallbackRows.movies]))
-      : favoriteItems;
-  const filteredItems = sourceItems.filter((item) => {
-    const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
-    const queryMatch = titleOf(item).toLowerCase().includes(logQuery.trim().toLowerCase());
-    const typeMatch = typeFilter === "all" || mediaType(item) === typeFilter;
-    const genreMatch = genreFilter === "all" || searchable.includes(genreFilter) || (genreFilter === "anime" && mediaType(item) === "tv");
-    return queryMatch && typeMatch && genreMatch;
+const LOG_GENRE_NAMES = {
+  12: "Adventure", 14: "Fantasy", 16: "Animation", 18: "Drama", 27: "Horror",
+  28: "Action", 35: "Comedy", 36: "History", 53: "Thriller", 80: "Crime",
+  99: "Documentary", 878: "Sci-Fi", 9648: "Mystery", 10749: "Romance",
+  10751: "Family", 10759: "Action & Adventure", 10762: "Kids", 10763: "News",
+  10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap", 10767: "Talk",
+  10768: "War & Politics"
+};
+
+function logValidDate(value) {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    const [year, month, day] = value.trim().split("-").map(Number);
+    const localDate = new Date(year, month - 1, day, 12, 0, 0, 0);
+    return Number.isFinite(localDate.getTime()) ? localDate : null;
+  }
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function logWatchedDateValue(entry = {}) {
+  if (entry.watchedDateUnknown || entry.watched_date_unknown || entry.unknownDate) return "";
+  return entry.watchedAt || entry.watched_at || "";
+}
+
+function logWatchedDate(entry = {}) {
+  return logValidDate(logWatchedDateValue(entry));
+}
+
+function logDateHasReliableTime(value) {
+  if (!value) return false;
+  if (value instanceof Date || typeof value === "number") return true;
+  const text = String(value).trim();
+  return /T\d{2}:\d{2}/i.test(text) || /\s\d{1,2}:\d{2}(?::\d{2})?/i.test(text);
+}
+
+function logWatchedHasReliableTime(entry = {}) {
+  const value = logWatchedDateValue(entry);
+  return Boolean(value && logDateHasReliableTime(value) && logValidDate(value));
+}
+
+function logDateKey(date) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function logMonthKey(date) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function logSafeRuntime(value, maximum) {
+  const runtime = Number(value || 0);
+  return Number.isFinite(runtime) && runtime > 0 && runtime <= maximum ? runtime : 0;
+}
+
+function logDetailDuration(minutes = 0) {
+  const total = Math.max(0, Math.round(Number(minutes || 0)));
+  if (!total) return "Runtime unavailable";
+  const hours = Math.floor(total / 60);
+  const remainder = total % 60;
+  if (!hours) return `${remainder}m`;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function normalizeLogWatchEventDates(events = []) {
+  const normalized = events.map((event) => ({ ...event }));
+  const exactTimestampCounts = normalized.reduce((counts, event) => {
+    if (!event.date || !event.hasTime) return counts;
+    const key = String(event.date.getTime());
+    counts.set(key, (counts.get(key) || 0) + 1);
+    return counts;
+  }, new Map());
+
+  normalized.forEach((event) => {
+    const sharedCount = event.date && event.hasTime ? (exactTimestampCounts.get(String(event.date.getTime())) || 0) : 0;
+    if (sharedCount > 12) {
+      event.date = null;
+      event.hasTime = false;
+      event.dateReason = "bulk-import-timestamp";
+    } else if (sharedCount > 1) {
+      event.hasTime = false;
+      event.dateReason = "shared-timestamp";
+    }
   });
 
+  const daySummary = normalized.reduce((totals, event) => {
+    const key = logDateKey(event.date);
+    if (key) {
+      const current = totals.get(key) || { count: 0, minutes: 0 };
+      totals.set(key, { count: current.count + 1, minutes: current.minutes + Number(event.minutes || 0) });
+    }
+    return totals;
+  }, new Map());
+  const impossibleDays = new Set([...daySummary.entries()]
+    .filter(([, summary]) => summary.minutes > 24 * 60 || summary.count > 48)
+    .map(([key]) => key));
+
+  return normalized.map((event) => {
+    const key = logDateKey(event.date);
+    if (!key || !impossibleDays.has(key)) return event;
+    return { ...event, date: null, hasTime: false, dateReason: "impossible-day" };
+  });
+}
+
+function buildLogViewingSessions(events = []) {
+  const sessionGapMs = 90 * 60 * 1000;
+  return events
+    .filter((event) => event.date && event.hasTime && event.minutes > 0)
+    .sort((a, b) => a.date - b.date)
+    .reduce((sessions, event) => {
+      const previous = sessions.at(-1);
+      const eventEnd = new Date(event.date.getTime() + event.minutes * 60000);
+      const sameDay = previous && logDateKey(previous.startDate) === logDateKey(event.date);
+      if (!previous || !sameDay || event.date.getTime() - previous.endDate.getTime() > sessionGapMs) {
+        sessions.push({ startDate: event.date, endDate: eventEnd, minutes: event.minutes, events: [event] });
+      } else {
+        previous.events.push(event);
+        previous.endDate = new Date(Math.max(previous.endDate.getTime(), eventEnd.getTime()));
+        previous.minutes = Math.min(24 * 60, Math.round((previous.endDate.getTime() - previous.startDate.getTime()) / 60000));
+      }
+      return sessions;
+    }, []);
+}
+
+function logRatingEntries(ratings = {}) {
+  return Object.entries(ratings).map(([key, value]) => ({ key, value: normalizeUserRating(value) })).filter((entry) => entry.value);
+}
+
+function logGenresForItem(item = {}) {
+  const named = Array.isArray(item.genres) ? item.genres.map((genre) => genre?.name).filter(Boolean) : [];
+  const ids = Array.isArray(item.genre_ids) ? item.genre_ids.map((id) => LOG_GENRE_NAMES[id]).filter(Boolean) : [];
+  return [...new Set([...named, ...ids])];
+}
+
+function logItemIdentity(item = {}) {
+  const id = item.tmdb_id || item.tmdbId || item.id;
+  return id ? `${mediaType(item)}:${id}` : "";
+}
+
+function useCanonicalLogAnalytics({ watched = {}, ratings = {}, reviews = {}, favorites = {}, episodeProgress = {}, candidates = [], apiFetch }) {
+  const watchedItems = useMemo(() => Object.values(normalizeTrackingCollection(watched)), [watched]);
+  const episodeEntries = useMemo(() => Object.values(episodeProgress || {}).filter((entry) => (
+    entry && entry.watched !== false && entry.showId && entry.seasonNumber && entry.episodeNumber
+  )), [episodeProgress]);
+  const itemKey = useMemo(() => dedupe([...candidates, ...watchedItems])
+    .map(logItemIdentity).filter(Boolean).sort().join("|"), [candidates, watchedItems]);
+  const episodeKeyValue = useMemo(() => episodeEntries
+    .map((entry) => `${entry.showId}:${entry.seasonNumber}:${entry.episodeNumber}`)
+    .sort().join("|"), [episodeEntries]);
+  const [hydrated, setHydrated] = useState(() => ({ items: {}, episodes: {} }));
+
+  useEffect(() => {
+    let alive = true;
+    const cache = readHomeCache(LOG_ANALYTICS_CACHE_KEY, { items: {}, seasons: {} });
+    const homeSeriesCache = readHomeCache(HOME_SERIES_CACHE_KEY, {});
+    const now = Date.now();
+    const seedItems = {};
+    const seedEpisodes = {};
+    dedupe([...candidates, ...watchedItems]).forEach((item) => {
+      const identity = logItemIdentity(item);
+      const cached = cache.items?.[identity];
+      seedItems[identity] = cached?.timestamp && now - cached.timestamp < HOME_CACHE_TTL_MS
+        ? { ...item, ...cached.value, media_type: mediaType(item) }
+        : item;
+    });
+    episodeEntries.forEach((entry) => {
+      const seasonKey = `${entry.showId}:${entry.seasonNumber}`;
+      const cachedSeason = cache.seasons?.[seasonKey] || homeSeriesCache?.[entry.showId]?.seasons?.[entry.seasonNumber];
+      const exact = cachedSeason?.episodes?.find((episode) => Number(episode.episode_number) === Number(entry.episodeNumber));
+      if (exact) seedEpisodes[`${seasonKey}:${entry.episodeNumber}`] = exact;
+    });
+    setHydrated({ items: seedItems, episodes: seedEpisodes });
+    if (!apiFetch || (!itemKey && !episodeKeyValue)) return () => { alive = false; };
+
+    async function hydrate() {
+      const itemSeeds = dedupe([...candidates, ...watchedItems]);
+      const itemRequests = itemSeeds.slice(0, 80).map(async (item) => {
+        const identity = logItemIdentity(item);
+        if (!identity) return null;
+        const existing = cache.items?.[identity];
+        if (existing?.timestamp && now - existing.timestamp < HOME_CACHE_TTL_MS && existing.value?.id) {
+          return { identity, value: { ...item, ...existing.value, media_type: mediaType(item) } };
+        }
+        const id = item.tmdb_id || item.tmdbId || item.id;
+        const type = mediaType(item);
+        const value = await apiFetch(`/${type}/${id}`, { append_to_response: type === "tv" ? "credits,aggregate_credits" : "credits" });
+        const normalized = { ...item, ...value, id: Number(id), tmdb_id: Number(id), media_type: type };
+        cache.items = { ...(cache.items || {}), [identity]: { timestamp: Date.now(), value: normalized } };
+        return { identity, value: normalized };
+      });
+      const seasonGroups = [...new Set(episodeEntries.map((entry) => `${entry.showId}:${entry.seasonNumber}`))];
+      const seasonRequests = seasonGroups.slice(0, 80).map(async (seasonKey) => {
+        const [showId, seasonNumber] = seasonKey.split(":").map(Number);
+        const existing = cache.seasons?.[seasonKey] || homeSeriesCache?.[showId]?.seasons?.[seasonNumber];
+        if (existing?.timestamp && now - existing.timestamp < HOME_CACHE_TTL_MS && Array.isArray(existing.episodes)) {
+          return { seasonKey, episodes: existing.episodes };
+        }
+        const value = await apiFetch(`/tv/${showId}/season/${seasonNumber}`);
+        const normalized = { timestamp: Date.now(), episodes: value?.episodes || [] };
+        cache.seasons = { ...(cache.seasons || {}), [seasonKey]: normalized };
+        return { seasonKey, episodes: normalized.episodes };
+      });
+      const [itemsResult, seasonsResult] = await Promise.all([
+        Promise.allSettled(itemRequests),
+        Promise.allSettled(seasonRequests)
+      ]);
+      if (!alive) return;
+      const nextItems = { ...seedItems };
+      itemsResult.forEach((result) => {
+        if (result.status === "fulfilled" && result.value?.identity) nextItems[result.value.identity] = result.value.value;
+      });
+      const nextEpisodes = { ...seedEpisodes };
+      seasonsResult.forEach((result) => {
+        if (result.status !== "fulfilled") return;
+        const { seasonKey, episodes } = result.value;
+        episodes.forEach((episode) => { nextEpisodes[`${seasonKey}:${episode.episode_number}`] = episode; });
+      });
+      persist(LOG_ANALYTICS_CACHE_KEY, cache);
+      setHydrated({ items: nextItems, episodes: nextEpisodes });
+    }
+    hydrate();
+    return () => { alive = false; };
+  }, [apiFetch, candidates, episodeEntries, episodeKeyValue, itemKey, watchedItems]);
+
+  return useMemo(() => {
+    const enrichedCandidates = dedupe([...candidates, ...watchedItems].map((item) => {
+      const identity = logItemIdentity(item);
+      return identity && hydrated.items[identity] ? { ...item, ...hydrated.items[identity], media_type: mediaType(item) } : item;
+    }));
+    const enrichedWatched = Object.fromEntries(Object.entries(normalizeTrackingCollection(watched)).map(([key, item]) => {
+      const identity = logItemIdentity(item);
+      return [key, identity && hydrated.items[identity] ? {
+        ...item,
+        ...hydrated.items[identity],
+        watchedAt: item.watchedAt,
+        watchedDateUnknown: item.watchedDateUnknown || item.watched_date_unknown,
+        media_type: mediaType(item)
+      } : item];
+    }));
+    const enrichedProgress = Object.fromEntries(Object.entries(episodeProgress || {}).map(([key, entry]) => {
+      const exact = hydrated.episodes[`${entry.showId}:${entry.seasonNumber}:${entry.episodeNumber}`];
+      return [key, exact ? {
+        ...entry,
+        name: exact.name || entry.name,
+        runtime: exact.runtime || entry.runtime,
+        still_path: exact.still_path || entry.still_path,
+        air_date: exact.air_date || entry.air_date,
+        watchedAt: entry.watchedAt,
+        watchedDateUnknown: entry.watchedDateUnknown || entry.watched_date_unknown
+      } : entry];
+    }));
+    return buildLogAnalytics({ watched: enrichedWatched, ratings, reviews, favorites, episodeProgress: enrichedProgress, candidates: enrichedCandidates });
+  }, [candidates, episodeProgress, favorites, hydrated, ratings, reviews, watched, watchedItems]);
+}
+
+function buildLogAnalytics({ watched = {}, ratings = {}, reviews = {}, favorites = {}, episodeProgress = {}, candidates = [] }) {
+  const watchedItems = Object.values(normalizeTrackingCollection(watched)).filter(isReleased)
+    .sort((a, b) => (logWatchedDate(b)?.getTime() || 0) - (logWatchedDate(a)?.getTime() || 0));
+  const allCandidates = dedupe([...candidates, ...watchedItems, ...Object.values(reviews || {}).map((entry) => entry?.item).filter(Boolean)]);
+  const candidateMap = new Map(allCandidates.filter((item) => item?.id || item?.tmdb_id).map((item) => [`${mediaType(item)}:${item.tmdb_id || item.id}`, item]));
+  const movieItems = watchedItems.filter((item) => mediaType(item) === "movie");
+  const showItems = watchedItems.filter((item) => mediaType(item) === "tv");
+  const episodeEntries = [...Object.values(episodeProgress || {}).filter((entry) => (
+    entry && entry.watched !== false && entry.showId && entry.seasonNumber && entry.episodeNumber
+  )).reduce((map, entry) => {
+    const identity = `${entry.showId}:${entry.seasonNumber}:${entry.episodeNumber}`;
+    const previous = map.get(identity);
+    if (!previous || (logWatchedDate(entry)?.getTime() || 0) >= (logWatchedDate(previous)?.getTime() || 0)) map.set(identity, entry);
+    return map;
+  }, new Map()).values()];
+  const reviewPreviewByIdentity = Object.entries(reviews || {}).reduce((map, [key, entry]) => {
+    const item = entry?.item || candidateMap.get(key);
+    const identity = item ? logItemIdentity(item) : key;
+    const preview = String(entry?.text || "").trim();
+    if (identity && preview) map[identity] = preview;
+    return map;
+  }, {});
+  const rawEpisodeEvents = episodeEntries.map((entry) => {
+    const show = candidateMap.get(`tv:${entry.showId}`) || showItems.find((item) => String(item.id) === String(entry.showId));
+    const runtime = logSafeRuntime(entry.runtime || entry.episodeRuntime || entry.episode_run_time || show?.episode_run_time?.[0], 360);
+    return {
+      id: `episode:${entry.showId}:${entry.seasonNumber}:${entry.episodeNumber}`,
+      type: "episode",
+      item: show,
+      title: show ? titleOf(show) : String(entry.showTitle || entry.show_name || entry.seriesTitle || ""),
+      detail: `S${entry.seasonNumber} · E${entry.episodeNumber}${entry.name ? ` · ${entry.name}` : ""}`,
+      date: logWatchedDate(entry),
+      hasTime: logWatchedHasReliableTime(entry),
+      minutes: runtime,
+      runtimeKnown: runtime > 0,
+      showId: entry.showId,
+      episode: entry,
+      reviewPreview: show ? reviewPreviewByIdentity[logItemIdentity(show)] : ""
+    };
+  });
+  const rawMovieEvents = movieItems.map((item) => {
+    const runtime = logSafeRuntime(item.runtime, 1440);
+    return {
+      id: `watched:${keyOf(item)}`,
+      type: "watched",
+      item,
+      title: titleOf(item),
+      detail: "Movie watched",
+      date: logWatchedDate(item),
+      hasTime: logWatchedHasReliableTime(item),
+      minutes: runtime,
+      runtimeKnown: runtime > 0,
+      reviewPreview: reviewPreviewByIdentity[logItemIdentity(item)] || ""
+    };
+  });
+  const normalizedTimedEvents = normalizeLogWatchEventDates([...rawMovieEvents, ...rawEpisodeEvents]);
+  const movieEvents = normalizedTimedEvents.filter((event) => event.type === "watched");
+  const episodeEvents = normalizedTimedEvents.filter((event) => event.type === "episode");
+  const reviewEvents = Object.entries(reviews || {}).flatMap(([key, entry]) => {
+    const item = entry?.item || candidateMap.get(key);
+    const dateValue = entry?.reviewedAt || entry?.updated_at || entry?.created_at;
+    const date = logValidDate(dateValue);
+    if (!item || !date || !String(entry?.text || "").trim()) return [];
+    const preview = String(entry?.text || "").trim();
+    return [{ id: `review:${key}:${date.toISOString()}`, type: "review", item, title: titleOf(item), detail: `Review: ${preview.slice(0, 96)}${preview.length > 96 ? "..." : ""}`, date, hasTime: logDateHasReliableTime(dateValue), minutes: 0, runtimeKnown: true }];
+  });
+  const ratingEvents = Object.entries(ratings || {}).flatMap(([key, raw]) => {
+    if (!raw || typeof raw !== "object") return [];
+    const dateValue = raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt || raw.ratedAt;
+    const date = logValidDate(dateValue);
+    const item = raw.item || candidateMap.get(key);
+    const rating = normalizeUserRating(raw);
+    if (!date || !item || !rating) return [];
+    return [{ id: `rating:${key}:${date.toISOString()}`, type: "rating", item, title: titleOf(item), detail: `Rated ${rating}/5`, date, hasTime: logDateHasReliableTime(dateValue), minutes: 0, runtimeKnown: true }];
+  });
+  const watchEvents = normalizedTimedEvents.filter((event) => event.date && event.title).sort((a, b) => b.date - a.date);
+  const timelineEvents = [...watchEvents, ...reviewEvents, ...ratingEvents].sort((a, b) => b.date - a.date);
+  const timedEvents = normalizedTimedEvents;
+  const undatedWatchEvents = timedEvents.filter((event) => !event.date && event.title);
+  const unresolvedRuntimeCount = timedEvents.filter((event) => !event.runtimeKnown).length;
+  const totalMinutes = timedEvents.reduce((sum, event) => sum + event.minutes, 0);
+  const ratingEntries = logRatingEntries(ratings);
+  const ratingValues = ratingEntries.map((entry) => entry.value);
+  const averageRating = ratingValues.length ? ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length : null;
+  const datedDays = [...new Set(watchEvents.map((event) => logDateKey(event.date)).filter(Boolean))].sort().reverse();
+  let streak = datedDays.length ? 1 : 0;
+  for (let index = 1; index < datedDays.length; index += 1) {
+    const previous = new Date(`${datedDays[index - 1]}T00:00:00`);
+    const current = new Date(`${datedDays[index]}T00:00:00`);
+    if (Math.round((previous - current) / 86400000) !== 1) break;
+    streak += 1;
+  }
+  const now = new Date();
+  const monthKey = logMonthKey(now);
+  const thisMonthEvents = watchEvents.filter((event) => logMonthKey(event.date) === monthKey);
+  const thisMonthMinutes = watchEvents.filter((event) => logMonthKey(event.date) === monthKey).reduce((sum, event) => sum + event.minutes, 0);
+  const genreCounts = {};
+  const watchedIdentityItems = dedupe([...watchedItems, ...episodeEvents.map((event) => event.item).filter(Boolean)]);
+  const movieTitleItems = watchedIdentityItems.filter((item) => mediaType(item) === "movie");
+  const showTitleItems = watchedIdentityItems.filter((item) => mediaType(item) === "tv");
+  watchedIdentityItems.forEach((item) => logGenresForItem(item).forEach((genre) => { genreCounts[genre] = (genreCounts[genre] || 0) + 1; }));
+  const topGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]);
+  const countPeople = (selector) => {
+    const counts = {};
+    watchedIdentityItems.forEach((item) => selector(item).forEach((person) => {
+      if (person?.name) counts[person.name] = (counts[person.name] || 0) + 1;
+    }));
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  };
+  const topActors = countPeople((item) => item.credits?.cast?.slice(0, 8) || []);
+  const topCreators = countPeople((item) => [
+    ...(item.created_by || []),
+    ...(item.credits?.crew || []).filter((person) => /director|creator/i.test(person.job || "")),
+    ...(item.aggregate_credits?.crew || []).filter((person) => (person.jobs || []).some((job) => /director|creator/i.test(job.job || "")))
+  ]);
+  const dayCounts = Array(7).fill(0);
+  const hourCounts = Array(24).fill(0);
+  const minutesByDate = new Map();
+  watchEvents.forEach((event) => {
+    dayCounts[event.date.getDay()] += 1;
+    if (event.hasTime) hourCounts[event.date.getHours()] += event.minutes;
+    const dateKey = logDateKey(event.date);
+    minutesByDate.set(dateKey, (minutesByDate.get(dateKey) || 0) + event.minutes);
+  });
+  const weekdayDateMinutes = Array.from({ length: 7 }, () => []);
+  minutesByDate.forEach((minutes, dateKey) => {
+    const date = logValidDate(dateKey);
+    if (date) weekdayDateMinutes[date.getDay()].push(Math.min(24 * 60, minutes));
+  });
+  const weekdayMinutes = weekdayDateMinutes.map((values) => values.length
+    ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+    : 0);
+  const peakDayIndex = weekdayMinutes.indexOf(Math.max(...weekdayMinutes));
+  const peakHour = hourCounts.indexOf(Math.max(...hourCounts));
+  const peakDay = Math.max(...weekdayMinutes) ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][peakDayIndex] : null;
+  const peakTime = Math.max(...hourCounts) ? `${String(peakHour).padStart(2, "0")}:00-${String((peakHour + 1) % 24).padStart(2, "0")}:00` : null;
+  const monthTrend = Array.from({ length: 12 }, (_, offset) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (11 - offset), 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return { key, label: date.toLocaleDateString("en-US", { month: "short" }), value: watchEvents.filter((event) => logMonthKey(event.date) === key).reduce((sum, event) => sum + event.minutes, 0) };
+  });
+  const showEpisodeCounts = {};
+  episodeEvents.forEach((event) => { showEpisodeCounts[event.showId] = (showEpisodeCounts[event.showId] || 0) + 1; });
+  const topShowEntry = Object.entries(showEpisodeCounts).sort((a, b) => b[1] - a[1])[0];
+  const topShow = topShowEntry ? candidateMap.get(`tv:${topShowEntry[0]}`) : null;
+  const canonicalStoredKey = (key, item) => {
+    const resolved = item || candidateMap.get(key);
+    return resolved ? (logItemIdentity(resolved) || key) : key;
+  };
+  const reviewedTitleKeys = new Set();
+  Object.entries(ratings || {}).forEach(([key, value]) => {
+    if (normalizeUserRating(value)) reviewedTitleKeys.add(canonicalStoredKey(key, value?.item));
+  });
+  Object.entries(reviews || {}).forEach(([key, entry]) => {
+    if (String(entry?.text || "").trim() || normalizeUserRating(entry?.rating || entry?.user_rating)) {
+      reviewedTitleKeys.add(canonicalStoredKey(key, entry?.item));
+    }
+  });
+  const reviewCount = reviewedTitleKeys.size;
+  const rewatchCount = watchedItems.reduce((sum, item) => sum + Math.max(0, Number(item.rewatchCount || item.watch_count || item.watched_count || 1) - 1), 0);
+  const ratingDistribution = [5, 4, 3, 2, 1].map((rating) => ({ rating, count: ratingValues.filter((value) => Math.ceil(value) === rating).length }));
+  const collectionProgress = franchiseHubs.map((hub) => {
+    const total = hub.items?.length || 0;
+    const completed = (hub.items || []).filter((entry) => watchedItems.some((item) => itemMatches(item, entry))).length;
+    return { name: hub.shortName || hub.name, total, completed };
+  }).filter((entry) => entry.total > 1 && entry.completed > 0).sort((a, b) => b.completed - a.completed);
+  const ratedWatched = watchedItems.map((item) => ({ item, rating: ratingForItem(item, ratings) })).filter((entry) => entry.rating);
+  const favouriteMovie = [...ratedWatched].filter((entry) => mediaType(entry.item) === "movie").sort((a, b) => b.rating - a.rating || Number(b.item.vote_average || 0) - Number(a.item.vote_average || 0))[0]?.item || null;
+  const favouriteShow = [...ratedWatched].filter((entry) => mediaType(entry.item) === "tv").sort((a, b) => b.rating - a.rating || Number(b.item.vote_average || 0) - Number(a.item.vote_average || 0))[0]?.item || topShow || null;
+  const topTitle = [...ratedWatched].sort((a, b) => b.rating - a.rating || Number(b.item.vote_average || 0) - Number(a.item.vote_average || 0))[0]?.item || watchedItems[0] || null;
+  const mostWatchedFranchise = collectionProgress[0] || null;
+  const favouriteItems = dedupe(Object.values(normalizeTrackingCollection(favorites)).filter(Boolean));
+  const watchedRuntimeByIdentity = new Map();
+  movieEvents.forEach((event) => watchedRuntimeByIdentity.set(logItemIdentity(event.item), event.minutes));
+  episodeEvents.forEach((event) => {
+    const identity = logItemIdentity(event.item);
+    if (identity) watchedRuntimeByIdentity.set(identity, (watchedRuntimeByIdentity.get(identity) || 0) + event.minutes);
+  });
+  const peopleWithCounts = (selector) => {
+    const people = new Map();
+    watchedIdentityItems.forEach((item) => selector(item).forEach((person) => {
+      if (!person?.name) return;
+      const current = people.get(person.name) || { ...person, count: 0, watchedMinutes: 0 };
+      people.set(person.name, { ...current, ...person, count: current.count + 1, watchedMinutes: current.watchedMinutes + (watchedRuntimeByIdentity.get(logItemIdentity(item)) || 0) });
+    }));
+    return [...people.values()].sort((a, b) => b.count - a.count || b.watchedMinutes - a.watchedMinutes || a.name.localeCompare(b.name));
+  };
+  const topActorPeople = peopleWithCounts((item) => item.credits?.cast?.slice(0, 8) || []);
+  const topCreatorPeople = peopleWithCounts((item) => [
+    ...(item.created_by || []),
+    ...(item.credits?.crew || []).filter((person) => /director|creator/i.test(person.job || "")),
+    ...(item.aggregate_credits?.crew || []).filter((person) => (person.jobs || []).some((job) => /director|creator/i.test(job.job || "")))
+  ]);
+  const sessions = buildLogViewingSessions(timedEvents);
+  const longestSessionMinutes = Math.max(0, ...sessions.map((session) => session.minutes));
+  const averageSessionMinutes = sessions.length ? Math.round(sessions.reduce((sum, session) => sum + session.minutes, 0) / sessions.length) : 0;
+  const highestRated = ratedWatched.sort((a, b) => b.rating - a.rating)[0]?.item || null;
+  const mostRewatched = [...watchedItems].sort((a, b) => Number(b.rewatchCount || b.watch_count || b.watched_count || 1) - Number(a.rewatchCount || a.watch_count || a.watched_count || 1))[0] || null;
+  return {
+    watchedItems, titleItems: watchedIdentityItems, movieItems, showItems, movieTitleItems, showTitleItems, episodeEvents, watchEvents, timelineEvents, timedEvents, undatedWatchEvents, sessions,
+    totalMinutes, watchTimeComplete: unresolvedRuntimeCount === 0, unresolvedRuntimeCount,
+    averageRating, ratingCount: ratingValues.length, ratingDistribution, reviewCount,
+    streak, thisMonthCount: thisMonthEvents.length, thisMonthMinutes,
+    topGenres, topActors, topCreators, topActorPeople, topCreatorPeople, monthTrend, weekdayMinutes, peakDay, peakTime,
+    topShow, topShowEpisodeCount: Number(topShowEntry?.[1] || 0), rewatchCount, collectionProgress,
+    favouriteMovie, favouriteShow, favouriteItems, highestRated, mostRewatched, topTitle, mostWatchedFranchise,
+    longestSessionMinutes, averageSessionMinutes, latestWatched: watchEvents[0]?.item || null
+  };
+}
+
+function collapseLogEpisodeSessions(events = []) {
+  const collapsed = [];
+  [...events].sort((a, b) => a.date - b.date).forEach((event) => {
+    if (event.type !== "episode" || !event.date || !event.hasTime) {
+      collapsed.push({ ...event, firstDate: event.date, lastDate: event.date, episodeCount: 1 });
+      return;
+    }
+    const previous = collapsed.at(-1);
+    const previousEpisode = previous?.lastEpisode || previous?.episode;
+    const currentSeason = Number(event.episode?.seasonNumber || event.episode?.season_number || 0);
+    const currentEpisode = Number(event.episode?.episodeNumber || event.episode?.episode_number || 0);
+    const previousSeason = Number(previousEpisode?.seasonNumber || previousEpisode?.season_number || 0);
+    const previousNumber = Number(previousEpisode?.episodeNumber || previousEpisode?.episode_number || 0);
+    const previousEnd = previous?.lastDate ? previous.lastDate.getTime() + Number(previous.lastMinutes || previous.minutes || 0) * 60000 : 0;
+    const canJoin = previous?.type === "episode"
+      && previous.hasTime
+      && String(previous.showId) === String(event.showId)
+      && logDateKey(previous.lastDate) === logDateKey(event.date)
+      && currentSeason === previousSeason
+      && currentEpisode === previousNumber + 1
+      && event.date.getTime() - previousEnd <= 90 * 60 * 1000;
+    if (!canJoin) {
+      collapsed.push({ ...event, firstDate: event.date, lastDate: event.date, lastEpisode: event.episode, lastMinutes: event.minutes, episodeCount: 1 });
+      return;
+    }
+    previous.lastDate = event.date;
+    previous.lastEpisode = event.episode;
+    previous.lastMinutes = event.minutes;
+    previous.episode = event.episode;
+    previous.minutes += event.minutes;
+    previous.runtimeKnown = previous.runtimeKnown && event.runtimeKnown;
+    previous.episodeCount += 1;
+    previous.id = `${previous.id}:through:${currentEpisode}`;
+    previous.detail = `S${currentSeason} E${Number(previous.firstEpisodeNumber || previousEpisode?.episodeNumber || previousEpisode?.episode_number)}-E${currentEpisode} | ${previous.episodeCount} episodes`;
+    previous.firstEpisodeNumber ||= previousNumber;
+  });
+  return collapsed.sort((a, b) => b.date - a.date);
+}
+
+function logHoursLabel(analytics, minutes = analytics.totalMinutes) {
+  if (!minutes) return "0h";
+  return `${Math.round((minutes / 60) * 10) / 10}h`;
+}
+
+function LogCinematicArt({ variant = "journey" }) {
+  return <div className={`mg-log-v2-art ${variant}`} aria-hidden="true"><i /><i /><b /><span /></div>;
+}
+
+function LogSectionHeader({ title, onSeeAll }) {
   return (
-    <section className="mg2-log-screen">
-      <div className="mg2-log-search">
-        <Icon name="search" />
-        <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="Search your movies and shows" />
-      </div>
-      <div className="mg2-log-tabs" aria-label="Log sections">
-        {logTabs.map((tab) => <button key={tab.id} className={logTab === tab.id ? "active" : ""} type="button" onClick={() => setLogTab(tab.id)}>{tab.label}</button>)}
-      </div>
-      <button className="mg2-diary-entry" type="button" onClick={onOpenDiary}>
-        <span><strong>Watch Calendar / Diary</strong><small>See your watched history by date</small></span>
-        <Icon name="log" />
+    <div className="mg-log-v2-section-head">
+      <h2>{title}</h2>
+      {onSeeAll && <button type="button" onClick={onSeeAll}>See All <span aria-hidden="true">›</span></button>}
+    </div>
+  );
+}
+
+function LogTypeFilters({ value, onChange }) {
+  return (
+    <div className="mg-log-v2-filters" aria-label="Media type">
+      {[{ id: "all", label: "All" }, { id: "movie", label: "Movies" }, { id: "tv", label: "TV Shows" }].map((filter) => (
+        <button key={filter.id} className={value === filter.id ? "active" : ""} type="button" onClick={() => onChange(filter.id)}>{filter.label}</button>
+      ))}
+    </div>
+  );
+}
+
+function LogPosterTile({ item, onOpen, onWatchlist, onOpenListPicker, saved, match }) {
+  const holdTimerRef = useRef(null);
+  const heldRef = useRef(false);
+  const clearHold = () => {
+    if (holdTimerRef.current) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = null;
+  };
+  useEffect(() => clearHold, []);
+  const beginHold = () => {
+    heldRef.current = false;
+    clearHold();
+    holdTimerRef.current = window.setTimeout(() => {
+      heldRef.current = true;
+      onOpenListPicker?.(item);
+    }, 520);
+  };
+  const toggleDefaultList = (event) => {
+    event.stopPropagation();
+    clearHold();
+    if (heldRef.current) {
+      heldRef.current = false;
+      return;
+    }
+    onWatchlist?.(item);
+  };
+  return (
+    <article className="mg-log-v2-poster">
+      <button className="mg-log-v2-poster-open" type="button" onClick={() => onOpen(item)}>
+        <span>
+          <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+          {match ? <em>{match}% match</em> : null}
+        </span>
+        <strong>{titleOf(item)}</strong>
+        <small>{mediaType(item) === "tv" ? "TV Show" : "Movie"} · {yearOf(item)}</small>
       </button>
-      <div className="mg2-log-cp24-actions" aria-label="Personal analytics">
-        <button type="button" onClick={onOpenDiary}><Icon name="book" /><span>Watch History</span></button>
-        <button type="button" onClick={onOpenStats}><Icon name="chart" /><span>Stats</span></button>
-        <button type="button" onClick={onOpenStats}><Icon name="sparkle" /><span>Wrapped</span></button>
+      {onWatchlist && (
+        <button
+          className={`mg-log-v2-bookmark${saved ? " active" : ""}`}
+          type="button"
+          aria-label={saved ? `Remove ${titleOf(item)} from Watchlist` : `Add ${titleOf(item)} to Watchlist. Hold for lists.`}
+          aria-pressed={saved}
+          onPointerDown={beginHold}
+          onPointerUp={toggleDefaultList}
+          onPointerCancel={clearHold}
+          onPointerLeave={clearHold}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <Icon name="bookmark" />
+        </button>
+      )}
+    </article>
+  );
+}
+
+function LogPosterGrid({ items, onOpen, watchlist, onWatchlist, onOpenListPicker, showBookmark = false }) {
+  return (
+    <div className="mg-log-v2-grid">
+      {items.map((item) => <LogPosterTile key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} onWatchlist={showBookmark ? onWatchlist : undefined} onOpenListPicker={showBookmark ? onOpenListPicker : undefined} />)}
+    </div>
+  );
+}
+
+function LogPosterRail({ items, onOpen, watchlist, onWatchlist, onOpenListPicker, showMatch = false, showBookmark = true }) {
+  return (
+    <div className="mg-log-v2-rail">
+      {items.map((item, index) => (
+        <LogPosterTile
+          key={keyOf(item)}
+          item={item}
+          onOpen={onOpen}
+          saved={hasStoredItem(item, watchlist)}
+          onWatchlist={showBookmark ? onWatchlist : undefined}
+          onOpenListPicker={showBookmark ? onOpenListPicker : undefined}
+          match={showMatch && Number(item.__matchPercent) > 0 ? Math.round(item.__matchPercent) : null}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LogWrappedPage({ analytics, ratings = {}, onBack, onOpen }) {
+  const [period, setPeriod] = useState("year");
+  const now = new Date();
+  const inPeriod = (date) => {
+    if (period === "all") return true;
+    if (!date) return false;
+    if (period === "month") return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    return date.getFullYear() === now.getFullYear();
+  };
+  const periodTimedEvents = analytics.timedEvents.filter((event) => inPeriod(event.date));
+  const periodDatedEvents = periodTimedEvents.filter((event) => event.date);
+  const periodItems = dedupe(periodTimedEvents.map((event) => event.item).filter(Boolean));
+  const periodMinutes = periodTimedEvents.reduce((sum, event) => sum + event.minutes, 0);
+  const periodTimeComplete = periodTimedEvents.every((event) => event.runtimeKnown);
+  const movies = periodItems.filter((item) => mediaType(item) === "movie");
+  const shows = periodItems.filter((item) => mediaType(item) === "tv");
+  const periodRatings = periodItems.map((item) => ratingForItem(item, ratings)).filter(Boolean);
+  const periodAverage = periodRatings.length ? periodRatings.reduce((sum, value) => sum + value, 0) / periodRatings.length : null;
+  const runtimeByTitle = periodTimedEvents.reduce((totals, event) => {
+    const identity = logItemIdentity(event.item);
+    if (!identity) return totals;
+    const current = totals.get(identity) || { item: event.item, minutes: 0, latest: null };
+    current.minutes += Number(event.minutes || 0);
+    if (event.date && (!current.latest || event.date > current.latest)) current.latest = event.date;
+    totals.set(identity, current);
+    return totals;
+  }, new Map());
+  const rankedTopTitles = [...runtimeByTitle.values()].sort((a, b) => (
+    b.minutes - a.minutes
+    || (ratingForItem(b.item, ratings) || 0) - (ratingForItem(a.item, ratings) || 0)
+    || (b.latest?.getTime() || 0) - (a.latest?.getTime() || 0)
+  ));
+  const topTitle = rankedTopTitles.find((entry) => analytics.favouriteItems.some((favorite) => itemMatches(favorite, entry.item)))?.item
+    || rankedTopTitles[0]?.item
+    || null;
+  const periodSessions = buildLogViewingSessions(periodDatedEvents);
+  const bingeCandidates = periodSessions.flatMap((session) => {
+    const groups = session.events.filter((event) => event.type === "episode").reduce((map, event) => {
+      const key = String(event.showId || logItemIdentity(event.item));
+      const current = map.get(key) || { item: event.item, count: 0, minutes: 0 };
+      current.count += 1;
+      current.minutes += Number(event.minutes || 0);
+      map.set(key, current);
+      return map;
+    }, new Map());
+    return [...groups.values()];
+  }).sort((a, b) => b.count - a.count || b.minutes - a.minutes);
+  const longestBinge = bingeCandidates.find((candidate) => candidate.count > 1) || null;
+  const periodGenreCounts = {};
+  periodItems.forEach((item) => logGenresForItem(item).forEach((genre) => { periodGenreCounts[genre] = (periodGenreCounts[genre] || 0) + 1; }));
+  const topPeriodGenre = Object.entries(periodGenreCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const periodEpisodes = periodTimedEvents.filter((event) => event.type === "episode");
+  const periodWatchEvents = periodDatedEvents;
+  const dayCounts = periodWatchEvents.reduce((counts, event) => ({ ...counts, [event.date.getDay()]: (counts[event.date.getDay()] || 0) + 1 }), {});
+  const hourCounts = periodWatchEvents.filter((event) => event.hasTime).reduce((counts, event) => ({ ...counts, [event.date.getHours()]: (counts[event.date.getHours()] || 0) + 1 }), {});
+  const peakDayEntry = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
+  const peakHourEntry = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+  const peakDay = peakDayEntry ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(peakDayEntry[0])] : null;
+  const peakTime = peakHourEntry ? `${String(peakHourEntry[0]).padStart(2, "0")}:00` : null;
+  const periodFavourites = periodItems.filter((item) => analytics.favouriteItems.some((favorite) => itemMatches(favorite, item)));
+  const rankPeriodPeople = (selector) => {
+    const counts = new Map();
+    periodItems.forEach((item) => selector(item).forEach((person) => {
+      if (!person?.name) return;
+      const current = counts.get(person.name) || { ...person, count: 0 };
+      counts.set(person.name, { ...current, ...person, count: current.count + 1 });
+    }));
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  };
+  const periodActors = rankPeriodPeople((item) => item.credits?.cast?.slice(0, 8) || []);
+  const periodCreators = rankPeriodPeople((item) => [
+    ...(item.created_by || []),
+    ...(item.credits?.crew || []).filter((person) => /director|creator/i.test(person.job || "")),
+    ...(item.aggregate_credits?.crew || []).filter((person) => (person.jobs || []).some((job) => /director|creator/i.test(job.job || "")))
+  ]);
+  const periodFranchise = franchiseHubs.map((hub) => ({
+    name: hub.shortName || hub.name,
+    count: (hub.items || []).filter((entry) => periodItems.some((item) => itemMatches(item, entry))).length
+  })).filter((entry) => entry.count > 0).sort((a, b) => b.count - a.count)[0];
+  const highlights = [
+    { label: "Top Genre", value: topPeriodGenre || "No data yet" },
+    { label: "Longest Binge", value: longestBinge?.item ? `${titleOf(longestBinge.item)} | ${longestBinge.count} episode${longestBinge.count === 1 ? "" : "s"}` : "No binge yet" },
+    { label: "Peak Day & Time", value: [peakDay, peakTime].filter(Boolean).join(" | ") || "No timed activity" },
+    { label: "Top Actor", value: periodActors[0]?.name || "No cast data" },
+    { label: "Top Director / Creator", value: periodCreators[0]?.name || "No crew data" },
+    { label: "Top Franchise", value: periodFranchise ? `${periodFranchise.name} | ${periodFranchise.count} watched` : "No franchise yet" }
+  ];
+  const recapTrend = period === "month"
+    ? Array.from({ length: 5 }, (_, index) => {
+      const startDay = index * 7 + 1;
+      const endDay = Math.min(startDay + 6, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate());
+      return {
+        key: `week-${index}`,
+        label: `W${index + 1}`,
+        value: periodDatedEvents.filter((event) => event.date.getDate() >= startDay && event.date.getDate() <= endDay).reduce((sum, event) => sum + event.minutes, 0)
+      };
+    })
+    : Array.from({ length: 12 }, (_, index) => {
+      const date = period === "year"
+        ? new Date(now.getFullYear(), index, 1)
+        : new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
+      const key = logMonthKey(date);
+      return {
+        key,
+        label: date.toLocaleDateString("en-US", { month: "short" }),
+        value: periodDatedEvents.filter((event) => logMonthKey(event.date) === key).reduce((sum, event) => sum + event.minutes, 0)
+      };
+    });
+  const recapTrendMax = Math.max(1, ...recapTrend.map((entry) => entry.value));
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-wrapped">
+      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Wrapped</h2></div>
+      <div className="mg-log-v2-collection-hero mg-log-v2-generic-hero mg-log-v2-recap-hero">
+        <LogCinematicArt variant="recap" />
+        <small>YOUR RECAP</small>
+        <strong>{periodItems.length ? "The stories you watched." : "Your next chapter starts here."}</strong>
+        <span>{periodItems.length} watched title{periodItems.length === 1 ? "" : "s"}{period === "all" && analytics.undatedWatchEvents.length ? " | Includes undated watches" : ""}</span>
       </div>
-      <div className="mg2-log-filters" aria-label="Log filters">
-        <button className={typeFilter === "all" ? "active" : ""} type="button" onClick={() => setTypeFilter("all")}>All</button>
-        <button className={typeFilter === "movie" ? "active" : ""} type="button" onClick={() => setTypeFilter("movie")}>Movie</button>
-        <button className={typeFilter === "tv" ? "active" : ""} type="button" onClick={() => setTypeFilter("tv")}>TV</button>
-        <select value={genreFilter} onChange={(event) => setGenreFilter(event.target.value)} aria-label="Genre filter">
-          <option value="all">Genre</option>
-          <option value="drama">Drama</option>
-          <option value="sci-fi">Sci-Fi</option>
-          <option value="anime">Anime</option>
-        </select>
+      <div className="mg-log-v2-periods" aria-label="Recap period">
+        <button className={period === "month" ? "active" : ""} type="button" onClick={() => setPeriod("month")}>This month</button>
+        <button className={period === "year" ? "active" : ""} type="button" onClick={() => setPeriod("year")}>This year</button>
+        <button className={period === "all" ? "active" : ""} type="button" onClick={() => setPeriod("all")}>All Time</button>
+      </div>
+      <div className="mg-log-v2-wrapped-metrics">
+        <span><Icon name="clock" /><strong>{logHoursLabel({ ...analytics, watchTimeComplete: periodTimeComplete }, periodMinutes)}</strong><small>Watch time</small></span>
+        <span><Icon name="log" /><strong>{periodItems.length}</strong><small>Titles</small></span>
+        <span><Icon name="reels" /><strong>{movies.length}</strong><small>Movies</small></span>
+        <span><Icon name="screen" /><strong>{shows.length}</strong><small>TV shows</small></span>
+        <span><Icon name="book" /><strong>{periodEpisodes.length}</strong><small>Episodes</small></span>
+        <span><Icon name="sparkle" /><strong>{periodAverage ? periodAverage.toFixed(1) : "-"}</strong><small>Avg rating</small></span>
+      </div>
+      {topTitle && <button className="mg-log-v2-top-title" type="button" onClick={() => onOpen(topTitle)} style={{ backgroundImage: `linear-gradient(90deg, rgba(5,5,9,.96), rgba(5,5,9,.18)), url(${backdropUrl(topTitle.backdrop_path || topTitle.poster_path, "w780")})` }}><small>TOP TITLE</small><strong>{titleOf(topTitle)}</strong><span>{ratingForItem(topTitle, ratings) ? `${ratingForItem(topTitle, ratings)}/5 rating` : `${mediaType(topTitle) === "tv" ? "TV Show" : "Movie"} | ${yearOf(topTitle)}`}</span></button>}
+      {highlights.length > 0 && <div className="mg-log-v2-recap-highlights">{highlights.map((item) => <article key={item.label}><small>{item.label}</small><strong>{item.value}</strong></article>)}</div>}
+      {movies.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Movies in your recap" /><LogPosterRail items={movies} onOpen={onOpen} showBookmark={false} /></section>}
+      {shows.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Shows in your recap" /><LogPosterRail items={shows} onOpen={onOpen} showBookmark={false} /></section>}
+      {periodFavourites.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Favourites of the period" /><LogPosterRail items={periodFavourites} onOpen={onOpen} showBookmark={false} /></section>}
+      {recapTrend.some((entry) => entry.value) ? <section className="mg-log-v2-stat-card"><h3>{period === "month" ? "This month" : "Month by month"}</h3><div className="mg-log-v2-bars mg-log-v2-bars-months mg-log-v2-recap-trend">{recapTrend.map((entry) => <span key={entry.key}><i style={{ height: `${entry.value ? Math.max(8, (entry.value / recapTrendMax) * 100) : 3}%` }} /><small>{entry.label}</small></span>)}</div></section> : periodItems.length > 0 ? <section className="mg-log-v2-stat-card mg-log-v2-trend-empty"><h3>Viewing trend</h3><p>No explicitly dated activity is available for this period.</p></section> : null}
+      {!periodItems.length && <div className="mg2-empty">No watched titles are dated in this period yet.</div>}
+    </section>
+  );
+}
+
+function LogContinueCard({ item, onOpenEpisode, onToggleEpisode }) {
+  const [busy, setBusy] = useState(false);
+  const nextEpisode = item.__nextEpisode;
+  const progress = Math.max(1, Math.min(99, Number(item.__seriesProgress || 0)));
+  const remaining = Math.max(0, Number(item.__releasedEpisodeCount || 0) - Number(item.__watchedEpisodeCount || 0));
+  const advance = async (event) => {
+    event.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await Promise.resolve(onToggleEpisode?.(item, nextEpisode));
+      if (result === false) throw new Error("Episode progress failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <article className="mg-log-v2-continue">
+      <button className="mg-log-v2-continue-open" type="button" onClick={() => onOpenEpisode(item, nextEpisode)}>
+        <span className="mg-log-v2-continue-art">
+          <img src={backdropUrl(nextEpisode.still_path || item.backdrop_path, "w500")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+          <i><b style={{ width: `${progress}%` }} /></i>
+        </span>
+        <span>
+          <strong>{titleOf(item)}</strong>
+          <small>S{nextEpisode.season_number} E{nextEpisode.episode_number}{nextEpisode.name ? ` · ${nextEpisode.name}` : " next"}</small>
+          <em>{remaining} released episode{remaining === 1 ? "" : "s"} left</em>
+        </span>
+      </button>
+      <button className={`mg-log-v2-continue-check${busy ? " loading" : ""}`} type="button" disabled={busy} aria-label={`Mark S${nextEpisode.season_number} E${nextEpisode.episode_number} watched`} onClick={advance}>
+        {busy ? <span aria-hidden="true" /> : <Icon name="check" />}
+      </button>
+    </article>
+  );
+}
+
+function LogCollectionPage({ title, items, watchlist, onBack, onOpen, onWatchlist, onOpenListPicker, showHero = true, continueMode = false, onOpenEpisode, onToggleEpisode }) {
+  const [filter, setFilter] = useState("all");
+  const filtered = items.filter((item) => filter === "all" || mediaType(item) === filter);
+  return (
+    <section className="mg-log-v2-subpage">
+      <div className="mg-log-v2-subhead">
+        <button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
+        <h2>{title}</h2>
+      </div>
+      {showHero && (
+        <div className="mg-log-v2-collection-hero mg-log-v2-generic-hero">
+          <LogCinematicArt variant="collection" />
+          <small>YOUR COLLECTION</small>
+          <strong>{title}</strong>
+          <span>{items.length} title{items.length === 1 ? "" : "s"}</span>
+        </div>
+      )}
+      {!continueMode && <LogTypeFilters value={filter} onChange={setFilter} />}
+      {continueMode && filtered.length ? <div className="mg-log-v2-continue-list">{filtered.map((item) => <LogContinueCard key={keyOf(item)} item={item} onOpenEpisode={onOpenEpisode} onToggleEpisode={onToggleEpisode} />)}</div> : null}
+      {!continueMode && filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} showBookmark /> : null}
+      {!filtered.length && <div className="mg2-empty">No titles are available in this collection.</div>}
+    </section>
+  );
+}
+
+function logCurrentStreak(items = []) {
+  const days = [...new Set(items.map((item) => String(item.watchedAt || "").slice(0, 10)).filter(Boolean))].sort().reverse();
+  if (!days.length) return 0;
+  let streak = 1;
+  for (let index = 1; index < days.length; index += 1) {
+    const prior = new Date(`${days[index - 1]}T00:00:00`);
+    const current = new Date(`${days[index]}T00:00:00`);
+    if (Math.round((prior - current) / 86400000) !== 1) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function LegacyLogDiaryPage({ watchedItems, continueItems, ratings, onBack, onOpen }) {
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const thisMonth = watchedItems.filter((item) => String(item.watchedAt || "").startsWith(monthKey));
+  const hours = Math.round(thisMonth.reduce((sum, item) => sum + Number(item.runtime || item.episode_run_time?.[0] || 0), 0) / 60);
+  const rated = watchedItems.map((item) => ratingForItem(item, ratings)).filter(Boolean);
+  const average = rated.length ? (rated.reduce((sum, rating) => sum + rating, 0) / rated.length).toFixed(1) : "—";
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-diary">
+      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Diary</h2></div>
+      <div className="mg-log-v2-diary-summary">
+        <span><strong>{thisMonth.length}</strong><small>This Month</small></span>
+        <span><strong>{hours}</strong><small>Hours</small></span>
+        <span><strong>{logCurrentStreak(watchedItems)}</strong><small>Streak</small></span>
+        <span><strong>{average}</strong><small>Avg Rating</small></span>
+      </div>
+      {continueItems.length > 0 && (
+        <section>
+          <LogSectionHeader title="In Progress" />
+          <div className="mg-log-v2-diary-progress">
+            {continueItems.slice(0, 5).map((item) => <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}><img src={posterUrl(item.poster_path, "w185")} alt="" /><span><strong>{titleOf(item)}</strong><small>S{item.__nextEpisode.season_number} E{item.__nextEpisode.episode_number} next</small></span></button>)}
+          </div>
+        </section>
+      )}
+      <section className="mg-log-v2-diary-timeline-section">
+        <LogSectionHeader title="Watch History" />
+        {watchedItems.length ? (
+          <div className="mg-log-v2-timeline">
+            {watchedItems.map((item) => (
+              <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
+                <time>{item.watchedAt ? new Date(item.watchedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Saved"}</time>
+                <img src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+                <span><strong>{titleOf(item)}</strong><small>{mediaType(item) === "tv" ? "TV Show" : "Movie"} · {yearOf(item)}</small>{ratingForItem(item, ratings) ? <em>★ {ratingForItem(item, ratings)}</em> : null}</span>
+              </button>
+            ))}
+          </div>
+        ) : <div className="mg2-empty">Your diary will appear after you mark a title watched.</div>}
+      </section>
+    </section>
+  );
+}
+
+function LegacyCanonicalLogDiaryPage({ analytics, continueItems, ratings, onBack, onOpen, onOpenEpisode }) {
+  const [trendMode, setTrendMode] = useState("weekly");
+  const [selectedDay, setSelectedDay] = useState("");
+  const [showOlder, setShowOlder] = useState(false);
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const eventsByDay = analytics.watchEvents.reduce((map, event) => {
+    const key = event.date.toISOString().slice(0, 10);
+    map[key] = [...(map[key] || []), event];
+    return map;
+  }, {});
+  const calendarCells = [...Array(firstDay.getDay()).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)];
+  while (calendarCells.length % 7) calendarCells.push(null);
+  const weeklyTrend = Array.from({ length: 8 }, (_, offset) => {
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    end.setDate(end.getDate() - (7 - offset) * 7);
+    const start = new Date(end);
+    start.setDate(start.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+    const events = analytics.timedEvents.filter((event) => event.date >= start && event.date <= end);
+    return { label: `W${offset + 1}`, value: events.reduce((sum, event) => sum + event.minutes, 0) };
+  });
+  const monthlyTrend = analytics.monthTrend.map((entry) => ({ ...entry, value: analytics.timedEvents.filter((event) => event.date?.toISOString().startsWith(entry.key)).reduce((sum, event) => sum + event.minutes, 0) }));
+  const trend = trendMode === "weekly" ? weeklyTrend : monthlyTrend;
+  const maxTrend = Math.max(1, ...trend.map((entry) => entry.value));
+  const currentPeriod = trend.at(-1)?.value || 0;
+  const previousPeriod = trend.at(-2)?.value || 0;
+  const change = previousPeriod ? Math.round(((currentPeriod - previousPeriod) / previousPeriod) * 100) : null;
+  const todayKey = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = yesterday.toISOString().slice(0, 10);
+  const weekCutoff = new Date(now); weekCutoff.setDate(weekCutoff.getDate() - 7);
+  const visibleTimeline = showOlder ? analytics.timelineEvents : analytics.timelineEvents.slice(0, 14);
+  const groups = [
+    { label: "Today", events: visibleTimeline.filter((event) => event.date.toISOString().slice(0, 10) === todayKey) },
+    { label: "Yesterday", events: visibleTimeline.filter((event) => event.date.toISOString().slice(0, 10) === yesterdayKey) },
+    { label: "This Week", events: visibleTimeline.filter((event) => event.date < new Date(`${yesterdayKey}T00:00:00`) && event.date >= weekCutoff) },
+    { label: "Earlier", events: visibleTimeline.filter((event) => event.date < weekCutoff) }
+  ].filter((group) => group.events.length);
+  const selectedEvents = selectedDay ? eventsByDay[selectedDay] || [] : [];
+  const selectedMinutes = selectedEvents.reduce((sum, event) => sum + event.minutes, 0);
+  const openTimelineEntry = (entry) => {
+    if (entry.type === "episode" && entry.item && entry.episode) onOpenEpisode(entry.item, { ...entry.episode, season_number: entry.episode.seasonNumber || entry.episode.season_number, episode_number: entry.episode.episodeNumber || entry.episode.episode_number });
+    else if (entry.item) onOpen(entry.item);
+  };
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-diary">
+      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Diary</h2></div>
+      <div className="mg-log-v2-diary-summary">
+        <span><strong>{analytics.thisMonthCount}</strong><small>This month</small></span>
+        <span><strong>{logHoursLabel(analytics)}</strong><small>Total hours</small></span>
+        <span><strong>{analytics.streak}</strong><small>Streak</small></span>
+        <span><strong>{analytics.averageRating ? analytics.averageRating.toFixed(1) : "N/A"}</strong><small>Avg rating</small></span>
+      </div>
+      {continueItems.length > 0 && <section><LogSectionHeader title="In Progress" /><div className="mg-log-v2-diary-progress">{continueItems.slice(0, 5).map((item) => <button key={keyOf(item)} type="button" onClick={() => onOpenEpisode(item, item.__nextEpisode)}><img src={posterUrl(item.poster_path, "w185")} alt="" /><span><strong>{titleOf(item)}</strong><small>S{item.__nextEpisode.season_number} · E{item.__nextEpisode.episode_number} next</small></span></button>)}</div></section>}
+      <section className="mg-log-v2-diary-card">
+        <LogSectionHeader title={now.toLocaleDateString("en-US", { month: "long", year: "numeric" })} />
+        <div className="mg-log-v2-calendar-week">{"SMTWTFS".split("").map((day, index) => <small key={`${day}-${index}`}>{day}</small>)}</div>
+        <div className="mg-log-v2-calendar">{calendarCells.map((day, index) => {
+          const key = day ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : `blank-${index}`;
+          const firstEvent = day ? eventsByDay[key]?.[0] : null;
+          return <button className={`${firstEvent ? "active " : ""}${day === now.getDate() ? "today " : ""}${selectedDay === key ? "selected" : ""}`} key={key} type="button" disabled={!day} onClick={() => setSelectedDay(firstEvent ? key : "")}><small>{day || ""}</small>{firstEvent?.item?.poster_path ? <img src={posterUrl(firstEvent.item.poster_path, "w92")} alt="" /> : null}</button>;
+        })}</div>
+        {selectedDay && <div className="mg-log-v2-day-detail"><header><strong>{new Date(`${selectedDay}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}</strong><small>{selectedEvents.length} activities · {selectedMinutes ? `${Math.round(selectedMinutes)} min` : "Runtime unavailable"}</small></header>{selectedEvents.map((entry) => <button key={entry.id} type="button" onClick={() => openTimelineEntry(entry)}><img src={posterUrl(entry.item?.poster_path, "w185")} alt="" /><span><strong>{entry.title}</strong><small>{entry.detail}</small><em>{entry.minutes ? `${entry.minutes} min` : ""}{entry.item && ratingForItem(entry.item, ratings) ? ` · Rated ${ratingForItem(entry.item, ratings)}/5` : ""}</em></span></button>)}</div>}
+      </section>
+      <section className="mg-log-v2-diary-card">
+        <div className="mg-log-v2-chart-head"><h2>Viewing trend</h2><div><button className={trendMode === "weekly" ? "active" : ""} type="button" onClick={() => setTrendMode("weekly")}>Weekly</button><button className={trendMode === "monthly" ? "active" : ""} type="button" onClick={() => setTrendMode("monthly")}>Monthly</button></div></div>
+        <div className="mg-log-v2-bars">{trend.map((entry) => <span key={`${trendMode}-${entry.label}`}><i style={{ height: `${entry.value ? Math.max(12, (entry.value / maxTrend) * 100) : 4}%` }} /><small>{entry.label}</small></span>)}</div>
+        <div className="mg-log-v2-period-total"><span><small>{trendMode === "weekly" ? "This week" : "This month"}</small><strong>{currentPeriod ? `${Math.round(currentPeriod / 60 * 10) / 10}h` : "0h"}</strong></span><span><small>Previous period</small><strong>{previousPeriod ? `${Math.round(previousPeriod / 60 * 10) / 10}h` : "0h"}{change !== null ? ` · ${change >= 0 ? "+" : ""}${change}%` : ""}</strong></span></div>
+        {(analytics.peakDay || analytics.peakTime) && <div className="mg-log-v2-peak"><span><small>Most active day</small><strong>{analytics.peakDay || "N/A"}</strong></span><span><small>Peak viewing time</small><strong>{analytics.peakTime || "N/A"}</strong></span></div>}
+      </section>
+      <section className="mg-log-v2-diary-timeline-section">
+        <LogSectionHeader title="Diary timeline" />
+        {groups.length ? groups.map((group) => <div className="mg-log-v2-timeline-group" key={group.label}><h3>{group.label}</h3><div className="mg-log-v2-timeline">{group.events.map((entry) => <button key={entry.id} type="button" disabled={!entry.item} onClick={() => openTimelineEntry(entry)}><time>{entry.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time><img src={posterUrl(entry.item?.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} /><span><strong>{entry.title}</strong><small>{entry.detail}</small>{entry.minutes ? <em>{entry.minutes} min</em> : entry.item && ratingForItem(entry.item, ratings) ? <em>Rated {ratingForItem(entry.item, ratings)}/5</em> : null}</span></button>)}</div></div>) : <div className="mg2-empty">Your diary will appear after you mark a title or episode watched.</div>}
+        {analytics.timelineEvents.length > 14 && <button className="mg-log-v2-older" type="button" onClick={() => setShowOlder((value) => !value)}>{showOlder ? "Show recent activity" : "View older activity"}</button>}
+      </section>
+    </section>
+  );
+}
+
+function logDiaryEpisodeLabel(entry = {}) {
+  const firstEpisode = entry.firstEpisodeNumber || entry.episode?.episodeNumber || entry.episode?.episode_number;
+  const lastEpisode = entry.lastEpisode?.episodeNumber || entry.lastEpisode?.episode_number || entry.episode?.episodeNumber || entry.episode?.episode_number;
+  const season = entry.episode?.seasonNumber || entry.episode?.season_number || entry.lastEpisode?.seasonNumber || entry.lastEpisode?.season_number;
+  if (!season || !firstEpisode) return "Episode";
+  if (entry.episodeCount > 1) return `S${season} E${firstEpisode}-E${lastEpisode} \u00b7 ${entry.episodeCount} episodes`;
+  const name = entry.episode?.name;
+  return `S${season} E${firstEpisode}${name ? ` \u00b7 ${name}` : ""}`;
+}
+
+function LogDiaryEventRow({ entry, ratings, onOpen, unknownDate = false }) {
+  const rating = entry.item ? ratingForItem(entry.item, ratings) : null;
+  const meta = entry.type === "episode"
+    ? `${logDiaryEpisodeLabel(entry)} \u00b7 ${logDetailDuration(entry.minutes)}`
+    : `Movie${yearOf(entry.item) ? ` \u00b7 ${yearOf(entry.item)}` : ""} \u00b7 ${logDetailDuration(entry.minutes)}`;
+  return (
+    <button className="mg-log-v2-diary-event" type="button" disabled={!entry.item} onClick={() => onOpen(entry)}>
+      <i aria-hidden="true" />
+      <img src={posterUrl(entry.item?.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+      <span>
+        <strong>{entry.title}{rating ? <em><Icon name="sparkle" /> {rating}</em> : null}</strong>
+        <small>{meta}</small>
+        {entry.reviewPreview ? <q>{entry.reviewPreview.slice(0, 64)}</q> : null}
+      </span>
+      <time>{unknownDate ? "Watched \u2014 unknown date" : entry.hasTime ? entry.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : entry.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</time>
+      <b aria-hidden="true">...</b>
+    </button>
+  );
+}
+
+function LogWatchHistoryCard({ entry, ratings, onOpen, unknownDate = false }) {
+  const rating = entry.item ? ratingForItem(entry.item, ratings) : null;
+  const episodeLabel = entry.type === "episode" ? logDiaryEpisodeLabel(entry) : "";
+  const metadata = entry.type === "episode"
+    ? `${episodeLabel} \u00b7 ${logDetailDuration(entry.minutes)}`
+    : `Movie${yearOf(entry.item) ? ` \u00b7 ${yearOf(entry.item)}` : ""} \u00b7 ${logDetailDuration(entry.minutes)}`;
+  return (
+    <button className="mg-log-v2-history-card" type="button" disabled={!entry.item} onClick={() => onOpen(entry)}>
+      <span className="mg-log-v2-history-poster">
+        <img src={posterUrl(entry.item?.poster_path, "w342")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+        {rating ? <em><Icon name="sparkle" /> {rating}</em> : null}
+      </span>
+      <strong>{entry.title}</strong>
+      <small>{metadata}</small>
+      {unknownDate ? (
+        <time>Watched \u2014 unknown date</time>
+      ) : (
+        <span className="mg-log-v2-history-when">
+          <time>{entry.date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</time>
+          {entry.hasTime ? <time>{entry.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time> : null}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function LogDiaryPage({ analytics, continueItems, episodeProgress, ratings, onBack, onOpen, onOpenEpisode, onToggleEpisode }) {
+  const [selectedDay, setSelectedDay] = useState("");
+  const [showOlder, setShowOlder] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const diaryContinueItems = useMemo(() => {
+    const latestProgressByShow = new Map();
+    Object.values(episodeProgress || {}).forEach((entry) => {
+      const showId = Number(entry?.showId ?? entry?.show_id);
+      if (!Number.isFinite(showId)) return;
+      const timestamp = new Date(entry?.watchedAt || entry?.watched_at || 0).getTime();
+      if (Number.isFinite(timestamp) && timestamp > (latestProgressByShow.get(showId) || 0)) {
+        latestProgressByShow.set(showId, timestamp);
+      }
+    });
+    return (continueItems || [])
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => (
+        mediaType(item) === "tv"
+        && item.__nextEpisode
+        && Number(item.__watchedEpisodeCount || 0) < Number(item.__releasedEpisodeCount || 0)
+        && Number(item.__seriesProgress || 0) < 100
+      ))
+      .sort((left, right) => {
+        const rightTime = latestProgressByShow.get(Number(right.item.id || right.item.tmdb_id)) || 0;
+        const leftTime = latestProgressByShow.get(Number(left.item.id || left.item.tmdb_id)) || 0;
+        return rightTime - leftTime || left.index - right.index;
+      })
+      .map(({ item }) => item);
+  }, [continueItems, episodeProgress]);
+  const now = new Date();
+  const eventsByDay = analytics.watchEvents.reduce((map, event) => {
+    const key = logDateKey(event.date);
+    if (!key) return map;
+    map[key] = [...(map[key] || []), event];
+    return map;
+  }, {});
+  const collapsedWatchEvents = collapseLogEpisodeSessions(analytics.watchEvents);
+  const collapsedTimelineEvents = [...collapsedWatchEvents].sort((a, b) => b.date - a.date);
+  const todayKey = logDateKey(now);
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = logDateKey(yesterday);
+  const weekCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  const visibleTimeline = showOlder ? collapsedTimelineEvents.slice(0, 24) : collapsedTimelineEvents.slice(0, 5);
+  const groups = [
+    { label: "Today", events: visibleTimeline.filter((event) => logDateKey(event.date) === todayKey) },
+    { label: "Yesterday", events: visibleTimeline.filter((event) => logDateKey(event.date) === yesterdayKey) },
+    { label: "This Week", events: visibleTimeline.filter((event) => event.date < new Date(`${yesterdayKey}T00:00:00`) && event.date >= weekCutoff) },
+    { label: "Earlier", events: visibleTimeline.filter((event) => event.date < weekCutoff) }
+  ].filter((group) => group.events.length);
+  const selectedEvents = selectedDay ? eventsByDay[selectedDay] || [] : [];
+  const selectedMinutes = selectedEvents.reduce((sum, event) => sum + event.minutes, 0);
+  const recentEvents = collapsedWatchEvents.filter((event) => event.item && event.date).slice(0, 10);
+  const historyGroups = collapsedWatchEvents.reduce((groups, entry) => {
+    const key = logDateKey(entry.date);
+    if (!key) return groups;
+    const existing = groups.at(-1);
+    if (existing?.key === key) existing.events.push(entry);
+    else groups.push({ key, date: entry.date, events: [entry] });
+    return groups;
+  }, []);
+  const calendarYear = calendarMonth.getFullYear();
+  const calendarMonthIndex = calendarMonth.getMonth();
+  const calendarPrefix = `${calendarYear}-${String(calendarMonthIndex + 1).padStart(2, "0")}`;
+  const calendarCells = [
+    ...Array.from({ length: new Date(calendarYear, calendarMonthIndex, 1).getDay() }, (_, index) => ({ key: `blank-${index}`, blank: true })),
+    ...Array.from({ length: new Date(calendarYear, calendarMonthIndex + 1, 0).getDate() }, (_, index) => {
+      const day = index + 1;
+      const key = `${calendarPrefix}-${String(day).padStart(2, "0")}`;
+      return { key, day, events: eventsByDay[key] || [] };
+    })
+  ];
+  const openTimelineEntry = (entry) => {
+    if (entry.type === "episode" && entry.item && entry.episode) onOpenEpisode(entry.item, { ...entry.episode, season_number: entry.episode.seasonNumber || entry.episode.season_number, episode_number: entry.episode.episodeNumber || entry.episode.episode_number });
+    else if (entry.item) onOpen(entry.item);
+  };
+  if (historyOpen) {
+    return (
+      <section className="mg-log-v2-subpage mg-log-v2-diary mg-log-v2-watch-history">
+        <div className="mg-log-v2-subhead"><button type="button" onClick={() => setHistoryOpen(false)} aria-label="Back to Diary"><Icon name="back" /></button><h2>Watch History</h2></div>
+        {historyGroups.map((group) => <section className="mg-log-v2-history-group" key={group.key}><h3>{group.date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3><div>{group.events.map((entry) => <LogWatchHistoryCard key={entry.id} entry={entry} ratings={ratings} onOpen={openTimelineEntry} />)}</div></section>)}
+        {analytics.undatedWatchEvents.length > 0 && <section className="mg-log-v2-history-group unknown"><h3>Unknown Date</h3><div>{analytics.undatedWatchEvents.map((entry) => <LogWatchHistoryCard key={`undated-${entry.id}`} entry={entry} ratings={ratings} onOpen={openTimelineEntry} unknownDate />)}</div></section>}
+        {!collapsedWatchEvents.length && !analytics.undatedWatchEvents.length && <div className="mg2-empty">No watch history has been recorded yet.</div>}
+      </section>
+    );
+  }
+  if (calendarOpen) {
+    return (
+      <section className="mg-log-v2-subpage mg-log-v2-diary mg-log-v2-diary-calendar-page">
+        <div className="mg-log-v2-subhead"><button type="button" onClick={() => setCalendarOpen(false)} aria-label="Back to Diary"><Icon name="back" /></button><h2>Viewing calendar</h2></div>
+        <section className="mg-log-v2-diary-card mg-log-v2-calendar-page-card">
+          <header className="mg-log-v2-calendar-head">
+            <button type="button" aria-label="Previous month" onClick={() => { setSelectedDay(""); setCalendarMonth(new Date(calendarYear, calendarMonthIndex - 1, 1)); }}>‹</button>
+            <strong>{calendarMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>
+            <button type="button" aria-label="Next month" onClick={() => { setSelectedDay(""); setCalendarMonth(new Date(calendarYear, calendarMonthIndex + 1, 1)); }}>›</button>
+          </header>
+          <div className="mg-log-v2-calendar-weekdays">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <small key={day}>{day}</small>)}</div>
+          <div className="mg-log-v2-calendar-month">{calendarCells.map((cell) => {
+            if (cell.blank) return <span key={cell.key} />;
+            const firstEvent = cell.events[0];
+            return <button className={`${firstEvent ? "active " : ""}${cell.key === todayKey ? "today " : ""}${selectedDay === cell.key ? "selected" : ""}`} key={cell.key} type="button" onClick={() => setSelectedDay(firstEvent ? cell.key : "")}><strong>{cell.day}</strong><span>{firstEvent?.item?.poster_path ? <img src={posterUrl(firstEvent.item.poster_path, "w92")} alt="" /> : null}</span>{firstEvent?.item && ratingForItem(firstEvent.item, ratings) ? <em>{ratingForItem(firstEvent.item, ratings)}</em> : null}</button>;
+          })}</div>
+        </section>
+        {selectedDay && <section className="mg-log-v2-diary-card mg-log-v2-day-detail"><header><strong>{new Date(`${selectedDay}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</strong><small>{selectedEvents.length} entries - {logDetailDuration(selectedMinutes)} total</small></header>{selectedEvents.map((entry) => <LogDiaryEventRow key={entry.id} entry={entry} ratings={ratings} onOpen={openTimelineEntry} />)}</section>}
+      </section>
+    );
+  }
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-diary mg-log-v2-diary-compact">
+      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Diary</h2></div>
+      <div className="mg-log-v2-diary-summary">
+        <span><i className="month"><Icon name="reels" /></i><small>This Month</small><strong>{analytics.thisMonthCount}<em> watched</em></strong></span>
+        <span><i className="hours"><Icon name="clock" /></i><small>Hours Watched</small><strong>{logHoursLabel(analytics)}</strong></span>
+        <span><i className="streak"><Icon name="sparkle" /></i><small>Current Streak</small><strong>{analytics.streak}<em>{analytics.streak === 1 ? " day" : " days"}</em></strong></span>
+        <span><i className="rating"><Icon name="sparkle" /></i><small>Average Rating</small><strong>{analytics.averageRating ? analytics.averageRating.toFixed(1) : "-"}</strong></span>
+      </div>
+      {diaryContinueItems.length > 0 && <section className="mg-log-v2-diary-progress-section"><aside><h2>In Progress <b>{diaryContinueItems.length}</b></h2><p>Shows you're currently watching</p></aside><div className="mg-home-v3-rail mg-home-v3-rail--continue">{diaryContinueItems.map((item) => <ContinueWatchingCard key={keyOf(item)} item={item} episodeProgress={episodeProgress} onOpenEpisode={onOpenEpisode} onToggleEpisode={onToggleEpisode} />)}</div></section>}
+      <section className="mg-log-v2-diary-timeline-section mg-log-v2-diary-card">
+        <div className="mg-log-v2-section-head"><h2>Diary</h2><button type="button" onClick={() => setCalendarOpen(true)}><Icon name="calendar" /> Calendar</button></div>
+        {groups.length ? <div className="mg-log-v2-timeline-groups">{groups.map((group) => <div className="mg-log-v2-timeline-group" key={group.label}><h3>{group.label}<small>{group.events[0]?.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</small></h3><div className="mg-log-v2-timeline">{group.events.map((entry) => <LogDiaryEventRow key={entry.id} entry={entry} ratings={ratings} onOpen={openTimelineEntry} />)}</div></div>)}</div> : <div className="mg2-empty">Your diary will appear after you mark a title or episode watched.</div>}
+        {collapsedTimelineEvents.length > 5 && <button className="mg-log-v2-older" type="button" onClick={() => setShowOlder((value) => !value)}>{showOlder ? "Show recent activity" : "View older activity"}</button>}
+      </section>
+      {recentEvents.length > 0 && <section className="mg-log-v2-section mg-log-v2-diary-recent"><LogSectionHeader title="Recently Watched" onSeeAll={() => setHistoryOpen(true)} /><div>{recentEvents.map((entry) => <button key={entry.id} type="button" onClick={() => openTimelineEntry(entry)}><span><img src={posterUrl(entry.item?.poster_path, "w185")} alt="" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />{entry.item && ratingForItem(entry.item, ratings) ? <em><Icon name="sparkle" /> {ratingForItem(entry.item, ratings)}</em> : null}</span><strong>{entry.title}</strong><small><Icon name="check" /> {entry.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{entry.hasTime ? ` | ${entry.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</small></button>)}</div></section>}
+    </section>
+  );
+}
+
+function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, reviews = {}, favorites = {}, customLists = {}, tonightItems = [], episodeProgress = {}, apiFetch, onOpen, onOpenPerson, onOpenStats, onWatchlist, onOpenListPicker, onCreateList, onToggleEpisode }) {
+  const [logTab, setLogTab] = useState("watchlist");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [subpage, setSubpage] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newListTitle, setNewListTitle] = useState("");
+  const watchedCollection = useMemo(() => normalizeTrackingCollection(watched), [watched]);
+  const saved = useMemo(() => Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection)).filter(isReleased), [watchlist, watchedCollection]);
+  const watchedItems = useMemo(() => Object.values(watchedCollection).filter(isReleased).sort((a, b) => (logWatchedDate(b)?.getTime() || 0) - (logWatchedDate(a)?.getTime() || 0)), [watchedCollection]);
+  const watchAsapItems = useMemo(() => saved.filter((item) => item.watch_asap || item.watchAsap), [saved]);
+  const rowItems = useMemo(() => dedupe(Object.values(rows || {}).flatMap((row) => Array.isArray(row) ? row : [])), [rows]);
+  const customListItems = useMemo(() => dedupe(Object.values(customLists || {}).flatMap((list) => list.items || [])), [customLists]);
+  const candidateUniverse = useMemo(() => dedupe([...saved, ...watchedItems, ...customListItems, ...rowItems]), [customListItems, rowItems, saved, watchedItems]);
+  const analytics = useCanonicalLogAnalytics({ watched: watchedCollection, ratings, reviews, favorites, episodeProgress, candidates: candidateUniverse, apiFetch });
+  const continueCandidates = useMemo(() => dedupe([...saved, ...watchedItems, ...customListItems, ...rowItems.filter((item) => mediaType(item) === "tv")]), [customListItems, rowItems, saved, watchedItems]);
+  const continueItems = useHomeSeriesProgress({ episodeProgress, candidates: continueCandidates, apiFetch, maxShows: null });
+  const recentlyWatched = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000;
+    return watchedItems.filter((item) => {
+      const watchedAt = logWatchedDate(item)?.getTime();
+      return Number.isFinite(watchedAt) && watchedAt >= cutoff;
+    });
+  }, [watchedItems]);
+  const ratedItems = useMemo(() => candidateUniverse.filter((item) => ratingForItem(item, ratings)).sort((a, b) => ratingForItem(b, ratings) - ratingForItem(a, ratings)), [candidateUniverse, ratings]);
+  const rewatchItems = useMemo(() => watchedItems.filter((item) => item.rewatch || Number(item.rewatchCount || item.watch_count || item.watched_count || 0) > 1), [watchedItems]);
+  const favoriteItems = useMemo(() => Object.values(favorites || {}).filter(Boolean), [favorites]);
+  const averageRating = ratedItems.length ? (ratedItems.reduce((sum, item) => sum + ratingForItem(item, ratings), 0) / ratedItems.length).toFixed(1) : "—";
+  const filtered = (logTab === "watched" ? watchedItems : saved).filter((item) => typeFilter === "all" || mediaType(item) === typeFilter);
+  const listCards = [
+    { id: "watchlist", title: "Watchlist", subtitle: "Saved for later", items: saved, icon: "bookmark" },
+    { id: "asap", title: "ASAP", subtitle: "Watch next", items: watchAsapItems, icon: "clock" },
+    { id: "rated", title: "Rated", subtitle: "Your ratings", items: ratedItems, icon: "sparkle" },
+    { id: "rewatch", title: "Rewatch", subtitle: "Worth another watch", items: rewatchItems, icon: "reels" },
+    { id: "favorites", title: "Favourites", subtitle: "Your favourites", items: favoriteItems, icon: "heart" },
+    ...Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [], icon: "list" }))
+  ];
+
+  const openCollection = (title, items, options = {}) => setSubpage({ type: "collection", title, items: dedupe(items || []), ...options });
+  const openLogEpisode = (show, episode, returnTo = null) => setSubpage({ type: "episode", show, episode, returnTo });
+  const openLogSeason = (show, seasonNumber, episode) => setSubpage({ type: "season", show, seasonNumber, episode, returnTo: subpage });
+  const closeNestedLogPage = () => setSubpage((current) => current?.returnTo || null);
+  const createList = async (event) => {
+    event.preventDefault();
+    const title = newListTitle.trim();
+    if (!title) return;
+    await Promise.resolve(onCreateList?.(title, null, { visibility: "private" }));
+    setNewListTitle("");
+    setCreateOpen(false);
+  };
+
+  if (subpage?.type === "episode") return <section className="mg-log-v2-subpage mg-log-v2-episode"><HomeEpisodeDetails key={`${subpage.show.id}-${subpage.episode.season_number}-${subpage.episode.episode_number}`} show={subpage.show} episodeSeed={subpage.episode} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeNestedLogPage} onToggleEpisode={onToggleEpisode} onOpenPerson={onOpenPerson} onOpenSeason={openLogSeason} /></section>;
+  if (subpage?.type === "season") return <section className="mg-log-v2-subpage mg-log-v2-episode"><HomeSeasonPage key={`${subpage.show.id}-${subpage.seasonNumber}`} show={subpage.show} initialSeason={subpage.seasonNumber} episodeProgress={episodeProgress} apiFetch={apiFetch} onBack={closeNestedLogPage} onOpenEpisode={(show, episode) => openLogEpisode(show, episode, subpage)} onToggleEpisode={onToggleEpisode} /></section>;
+  if (subpage?.type === "diary") return <LogDiaryPage analytics={analytics} continueItems={continueItems} episodeProgress={episodeProgress} ratings={ratings} onBack={() => setSubpage(null)} onOpen={onOpen} onOpenEpisode={(show, episode) => openLogEpisode(show, episode, { type: "diary" })} onToggleEpisode={onToggleEpisode} />;
+  if (subpage?.type === "stats") return <StatsScreen watched={watchedCollection} watchlist={watchlist} ratings={ratings} reviews={reviews} favorites={favorites} episodeProgress={episodeProgress} customLists={customLists} apiFetch={apiFetch} onBack={() => setSubpage(null)} onOpen={onOpen} onOpenPerson={onOpenPerson} />;
+  if (subpage?.type === "wrapped") return <LogWrappedPage analytics={analytics} ratings={ratings} onBack={() => setSubpage(null)} onOpen={onOpen} />;
+  if (subpage?.type === "collection") return <LogCollectionPage title={subpage.title} items={subpage.items} watchlist={watchlist} onBack={() => setSubpage(null)} onOpen={onOpen} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} continueMode={subpage.continueMode} onOpenEpisode={(show, episode) => openLogEpisode(show, episode, subpage)} onToggleEpisode={onToggleEpisode} />;
+
+  return (
+    <section className="mg-log-v2">
+      <div className="mg-log-v2-tabs" aria-label="Log sections">
+        {[{ id: "watchlist", label: "Watchlist" }, { id: "watched", label: "Watched" }, { id: "lists", label: "Lists" }].map((tab) => (
+          <button key={tab.id} className={logTab === tab.id ? "active" : ""} type="button" onClick={() => { setLogTab(tab.id); setTypeFilter("all"); }}>{tab.label}</button>
+        ))}
       </div>
 
-      {logTab === "lists" ? (
-        <div className="mg2-log-lists">
-          {listCards.map((list) => (
-            <button key={list.id} type="button">
-              <span className="mg2-log-list-posters">
-                {list.items.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
-              </span>
-              <span><strong>{list.title}</strong><small>{list.subtitle}</small></span>
-              <em>{list.items.length}</em>
-            </button>
-          ))}
-        </div>
-      ) : filteredItems.length ? (
+      {logTab === "watchlist" && (
         <>
-          {logTab === "watchlist" && watchAsapItems.length > 0 && (
-            <section className="mg2-watch-asap-shelf" aria-label="Watch ASAP">
-              <div className="mg2-section-head"><h2>Watch ASAP</h2><span>{watchAsapItems.length}</span></div>
-              <div className="mg2-watch-asap-row">
-                {watchAsapItems.map((item) => (
-                  <button key={`log-asap-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
-                    <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
-                    <span>{titleOf(item)}</span>
-                  </button>
-                ))}
-              </div>
+          <section className="mg-log-v2-hub">
+            <LogCinematicArt variant="journey" />
+            <small>TRACKING HUB</small>
+            <h2>Your movie journey, in sync.</h2>
+            <p>Every watch, every rating, every moment.</p>
+            <div>
+              <button type="button" onClick={() => setSubpage({ type: "diary" })}><Icon name="book" /><span><strong>Diary</strong><small>Log your journey</small></span></button>
+              <button type="button" onClick={() => setSubpage({ type: "stats" })}><Icon name="chart" /><span><strong>Stats</strong><small>See your progress</small></span></button>
+              <button type="button" onClick={() => setSubpage({ type: "wrapped" })}><Icon name="sparkle" /><span><strong>Wrapped</strong><small>Your recap</small></span></button>
+            </div>
+          </section>
+
+          {continueItems.length > 0 && (
+            <section className="mg-log-v2-section">
+              <LogSectionHeader title="Continue Watching" onSeeAll={() => openCollection("Continue Watching", continueItems, { continueMode: true })} />
+              <div className="mg-log-v2-continue-rail">{continueItems.map((item) => <LogContinueCard key={keyOf(item)} item={item} onOpenEpisode={(show, episode) => openLogEpisode(show, episode)} onToggleEpisode={onToggleEpisode} />)}</div>
             </section>
           )}
-          {logTab === "watchlist" && tonightItems.length > 0 && (
-            <section className="mg2-watch-asap-shelf mg2-watch-tonight" aria-label="What to Watch Tonight">
-              <div className="mg2-section-head"><h2>What to Watch Tonight</h2><span>Smart picks</span></div>
-              <div className="mg2-smart-row">
-                {tonightItems.map((item) => (
-                  <button key={`log-tonight-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
-                    <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
-                    <strong>{titleOf(item)}</strong>
-                    <small>{item.__recReasons?.[0] || "High match tonight"}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
+          {watchAsapItems.length > 0 && (
+            <section className="mg-log-v2-section"><LogSectionHeader title="Watch ASAP" onSeeAll={() => openCollection("Watch ASAP", watchAsapItems)} /><LogPosterRail items={watchAsapItems} onOpen={onOpen} showBookmark={false} /></section>
           )}
-          <div className="mg2-log-grid">
-            {filteredItems.map((item) => {
-              const userRating = ratingForItem(item, ratings);
-              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
-            })}
+          <section className="mg-log-v2-section mg-log-v2-all"><LogSectionHeader title="All Watchlist" /><LogTypeFilters value={typeFilter} onChange={setTypeFilter} />{filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /> : <div className="mg2-empty">Your watchlist is empty. Save a title to begin.</div>}</section>
+        </>
+      )}
+
+      {logTab === "watched" && (
+        <>
+          <div className="mg-log-v2-watched-hero">
+            <LogCinematicArt variant="watched" />
+            <div className="mg-log-v2-watched-summary mg-log-v2-watched-summary-three">
+              <span><Icon name="log" /><strong>{analytics.watchedItems.length}</strong><small>Titles Watched</small></span>
+              <span><Icon name="clock" /><strong>{logHoursLabel(analytics)}</strong><small>Time Spent</small></span>
+              <span><Icon name="sparkle" /><strong>{analytics.latestWatched ? titleOf(analytics.latestWatched) : "-"}</strong><small>Latest Watched</small></span>
+            </div>
+          </div>
+          {recentlyWatched.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Recently Watched" onSeeAll={() => openCollection("Recently Watched", recentlyWatched)} /><LogPosterRail items={recentlyWatched} onOpen={onOpen} showBookmark={false} /></section>}
+          <section className="mg-log-v2-section mg-log-v2-all"><LogSectionHeader title="All Watched" /><LogTypeFilters value={typeFilter} onChange={setTypeFilter} />{filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /> : <div className="mg2-empty">Your watched history will appear here.</div>}</section>
+        </>
+      )}
+
+      {logTab === "lists" && (
+        <>
+          <section className="mg-log-v2-lists-hero">
+            <LogCinematicArt variant="collection" />
+            <small>YOUR COLLECTIONS</small><h2>Organize. Discover.<br />Rewatch. Repeat.</h2><p>{listCards.length} lists | {dedupe(listCards.flatMap((list) => list.items)).length} unique titles</p>
+            <button type="button" onClick={() => setCreateOpen((current) => !current)}><Icon name="list" /> Create New List</button>
+            {createOpen && <form onSubmit={createList}><input autoFocus value={newListTitle} onChange={(event) => setNewListTitle(event.target.value)} maxLength={80} placeholder="List name" /><button type="submit">Create</button></form>}
+          </section>
+          <div className="mg-log-v2-list-cards">
+            {listCards.map((list) => (
+              <button key={list.id} type="button" onClick={() => openCollection(list.title, list.items)}>
+                <i><Icon name={list.icon || "list"} /></i>
+                <span><strong>{list.title}</strong><small>{list.items.length} item{list.items.length === 1 ? "" : "s"} · {list.subtitle}</small></span>
+                <em>{list.items.slice(0, 3).map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}</em>
+                <b aria-hidden="true">›</b>
+              </button>
+            ))}
           </div>
         </>
-      ) : (
-        <div className="mg2-empty">{logTab === "watchlist" ? "Your watchlist is empty. Save titles from Home, Explore, or Details." : logTab === "watched" ? "Mark titles watched from Details to build your history." : "No titles match your current filters."}</div>
       )}
     </section>
   );
@@ -9983,7 +12295,7 @@ function BlendScreen({ rows, savedBlendLists, onSaveBlend }) {
   );
 }
 
-function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, episodeProgress = {}, customLists = {} }) {
+function LegacyStatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, episodeProgress = {}, customLists = {} }) {
   const [recapReady, setRecapReady] = useState(false);
   const watchedItems = Object.values(watched);
   const savedItems = Object.values(watchlist);
@@ -10193,6 +12505,97 @@ function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {},
           <small>Open any Movie or TV Details page and tap Mark Watched. Your recap will use those saved local titles.</small>
         </div>
       )}
+    </section>
+  );
+}
+
+function LogAnalyticsBars({ items, total }) {
+  const max = total || Math.max(1, ...items.map((item) => item.value));
+  return <div className="mg-log-v2-stat-bars">{items.map((item) => <p key={item.label}><span><i style={{ width: `${item.value ? Math.max(5, (item.value / max) * 100) : 0}%` }} /></span><strong>{item.label}</strong><small>{item.display ?? item.value}</small></p>)}</div>;
+}
+
+function LegacyLogStatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, episodeProgress = {}, customLists = {}, apiFetch }) {
+  const candidates = useMemo(() => dedupe([
+    ...Object.values(watched || {}),
+    ...Object.values(watchlist || {}),
+    ...Object.values(customLists || {}).flatMap((list) => list.items || [])
+  ]), [customLists, watched, watchlist]);
+  const analytics = useCanonicalLogAnalytics({ watched, ratings, reviews, episodeProgress, candidates, apiFetch });
+  const watchMix = [
+    { label: "Movies", value: analytics.movieItems.length },
+    { label: "TV shows", value: analytics.showItems.length }
+  ];
+  const monthMax = Math.max(1, ...analytics.monthTrend.map((entry) => entry.value));
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-stats">
+      <div className="mg-log-v2-collection-hero mg-log-v2-generic-hero">
+        <LogCinematicArt variant="analytics" />
+        <small>YOUR ANALYTICS</small>
+        <strong>Every watch, clearly measured.</strong>
+        <span>Only activity recorded in your MovieGram history</span>
+      </div>
+      <div className="mg-log-v2-stats-overview">
+        <article><Icon name="log" /><span><strong>{analytics.watchedItems.length}</strong><small>Titles watched</small></span></article>
+        <article><Icon name="clock" /><span><strong>{logHoursLabel(analytics)}</strong><small>Watch time</small></span></article>
+        <article><Icon name="reels" /><span><strong>{analytics.episodeEvents.length}</strong><small>Episodes watched</small></span></article>
+        <article><Icon name="sparkle" /><span><strong>{analytics.averageRating ? analytics.averageRating.toFixed(1) : "N/A"}</strong><small>Average rating</small></span></article>
+        <article><Icon name="book" /><span><strong>{analytics.reviewCount}</strong><small>Reviews</small></span></article>
+        <article><Icon name="refresh" /><span><strong>{analytics.rewatchCount}</strong><small>Rewatches</small></span></article>
+      </div>
+      <section className="mg-log-v2-stat-card"><h3>Watch Mix</h3><LogAnalyticsBars items={watchMix} /></section>
+      {analytics.ratingCount > 0 && <section className="mg-log-v2-stat-card"><h3>Ratings distribution</h3><LogAnalyticsBars items={analytics.ratingDistribution.map((entry) => ({ label: `${entry.rating} star`, value: entry.count }))} /></section>}
+      {analytics.topGenres.length > 0 && <section className="mg-log-v2-stat-card"><h3>Top genres</h3><LogAnalyticsBars items={analytics.topGenres.slice(0, 5).map(([label, value]) => ({ label, value }))} /></section>}
+      {analytics.watchEvents.length > 0 && <section className="mg-log-v2-stat-card"><h3>Viewing trend</h3><div className="mg-log-v2-bars mg-log-v2-bars-months">{analytics.monthTrend.map((entry) => <span key={entry.key}><i style={{ height: `${entry.value ? Math.max(10, (entry.value / monthMax) * 100) : 4}%` }} /><small>{entry.label}</small></span>)}</div></section>}
+      {(analytics.peakDay || analytics.peakTime) && <section className="mg-log-v2-stat-card"><h3>Viewing rhythm</h3><div className="mg-log-v2-peak"><span><small>Most active day</small><strong>{analytics.peakDay || "N/A"}</strong></span><span><small>Peak viewing time</small><strong>{analytics.peakTime || "N/A"}</strong></span></div></section>}
+      {analytics.collectionProgress.length > 0 && <section className="mg-log-v2-stat-card"><h3>Collection progress</h3><LogAnalyticsBars items={analytics.collectionProgress.slice(0, 5).map((entry) => ({ label: entry.name, value: entry.completed, display: `${entry.completed}/${entry.total}` }))} /></section>}
+      {analytics.topActors.length > 0 && <section className="mg-log-v2-stat-card"><h3>Top actors</h3><LogAnalyticsBars items={analytics.topActors.slice(0, 5).map(([label, value]) => ({ label, value }))} /></section>}
+      {analytics.topCreators.length > 0 && <section className="mg-log-v2-stat-card"><h3>Top directors & creators</h3><LogAnalyticsBars items={analytics.topCreators.slice(0, 5).map(([label, value]) => ({ label, value }))} /></section>}
+      {(analytics.topShow || analytics.favouriteMovie || analytics.favouriteShow || analytics.mostWatchedFranchise) && <section className="mg-log-v2-stat-card"><h3>Highlights</h3><div className="mg-log-v2-highlight-list">{analytics.topShow && <span><small>Most watched show</small><strong>{titleOf(analytics.topShow)}</strong><em>{analytics.topShowEpisodeCount} watched episodes</em></span>}{analytics.favouriteMovie && <span><small>Favourite movie</small><strong>{titleOf(analytics.favouriteMovie)}</strong><em>Highest genuine rating</em></span>}{analytics.favouriteShow && <span><small>Favourite series</small><strong>{titleOf(analytics.favouriteShow)}</strong><em>Highest genuine rating</em></span>}{analytics.mostWatchedFranchise && <span><small>Most watched franchise</small><strong>{analytics.mostWatchedFranchise.name}</strong><em>{analytics.mostWatchedFranchise.completed} watched</em></span>}</div></section>}
+      {!analytics.watchedItems.length && !analytics.episodeEvents.length && <div className="mg2-empty">Watch activity will build your analytics here.</div>}
+    </section>
+  );
+}
+
+function StatsScreen({ watched = {}, watchlist = {}, ratings = {}, reviews = {}, favorites = {}, episodeProgress = {}, customLists = {}, apiFetch, onBack, onOpen, onOpenPerson }) {
+  const candidates = useMemo(() => dedupe([
+    ...Object.values(watched || {}),
+    ...Object.values(watchlist || {}),
+    ...Object.values(favorites || {}),
+    ...Object.values(customLists || {}).flatMap((list) => list.items || [])
+  ]), [customLists, favorites, watched, watchlist]);
+  const analytics = useCanonicalLogAnalytics({ watched, ratings, reviews, favorites, episodeProgress, candidates, apiFetch });
+  const mixTotal = analytics.movieTitleItems.length + analytics.showTitleItems.length;
+  const moviePercent = mixTotal ? Math.round((analytics.movieTitleItems.length / mixTotal) * 100) : 0;
+  const showPercent = mixTotal ? 100 - moviePercent : 0;
+  const monthMax = Math.max(1, ...analytics.monthTrend.map((entry) => entry.value));
+  const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const weekdayMax = Math.max(1, ...analytics.weekdayMinutes);
+  const favouriteContent = analytics.favouriteItems.length ? analytics.favouriteItems : dedupe([analytics.favouriteMovie, analytics.favouriteShow].filter(Boolean));
+  return (
+    <section className="mg-log-v2-subpage mg-log-v2-stats mg-log-v2-stats-premium">
+      {onBack && <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Stats</h2></div>}
+      <div className="mg-log-v2-collection-hero mg-log-v2-generic-hero mg-log-v2-stats-hero">
+        <LogCinematicArt variant="analytics" />
+        <small>YOUR ANALYTICS</small><strong>Your viewing, in focus.</strong><span>Live insights from recorded MovieGram activity</span>
+      </div>
+      <div className="mg-log-v2-stats-overview mg-log-v2-stats-overview-six">
+        <article><Icon name="log" /><span><strong>{analytics.titleItems.length}</strong><small>Titles</small></span></article>
+        <article><Icon name="clock" /><span><strong>{logHoursLabel(analytics)}</strong><small>Watch time</small></span></article>
+        <article><Icon name="reels" /><span><strong>{analytics.movieTitleItems.length}</strong><small>Movies</small></span></article>
+        <article><Icon name="screen" /><span><strong>{analytics.showTitleItems.length}</strong><small>TV Shows</small></span></article>
+        <article><Icon name="book" /><span><strong>{analytics.episodeEvents.length}</strong><small>Episodes</small></span></article>
+        <article><Icon name="book" /><span><strong>{analytics.reviewCount}</strong><small>Reviews</small></span></article>
+      </div>
+      {mixTotal > 0 && <section className="mg-log-v2-stat-card mg-log-v2-watch-mix"><h3>Watch Mix</h3><div><i style={{ background: `conic-gradient(#8b3df1 0 ${moviePercent}%, #e15bc4 ${moviePercent}% 100%)` }}><b>{mixTotal}</b></i><p><span><b />Movies <strong>{moviePercent}%</strong></span><span><b />TV Shows <strong>{showPercent}%</strong></span><small>{analytics.episodeEvents.length} watched episodes tracked separately</small></p></div></section>}
+      {analytics.ratingCount > 0 && <section className="mg-log-v2-stat-card"><h3>Ratings</h3><LogAnalyticsBars items={analytics.ratingDistribution.map((entry) => ({ label: `${entry.rating} stars`, value: entry.count }))} /><div className="mg-log-v2-stat-pair"><span><small>Average rating</small><strong>{analytics.averageRating.toFixed(1)}</strong></span><span><small>Total reviews</small><strong>{analytics.reviewCount}</strong></span></div></section>}
+      {analytics.watchEvents.length > 0 && <section className="mg-log-v2-stat-card"><h3>Viewing Patterns</h3><LogAnalyticsBars items={analytics.weekdayMinutes.map((value, index) => ({ label: weekdayLabels[index], value, display: value ? logDetailDuration(value) : "0" }))} total={weekdayMax} /><div className="mg-log-v2-bars mg-log-v2-bars-months">{analytics.monthTrend.map((entry) => <span key={entry.key}><i style={{ height: `${entry.value ? Math.max(10, (entry.value / monthMax) * 100) : 4}%` }} /><small>{entry.label}</small></span>)}</div><div className="mg-log-v2-pattern-grid"><span><small>Peak day</small><strong>{analytics.peakDay || "-"}</strong></span><span><small>Peak time</small><strong>{analytics.peakTime || "-"}</strong></span><span><small>Longest session</small><strong>{analytics.longestSessionMinutes ? logDetailDuration(analytics.longestSessionMinutes) : "-"}</strong></span><span><small>Average session</small><strong>{analytics.averageSessionMinutes ? logDetailDuration(analytics.averageSessionMinutes) : "-"}</strong></span></div></section>}
+      {analytics.topGenres.length > 0 && <section className="mg-log-v2-stat-card"><h3>Top Genres</h3><LogAnalyticsBars items={analytics.topGenres.slice(0, 6).map(([label, value]) => ({ label, value, display: `${value} watched` }))} /></section>}
+      {favouriteContent.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Favourite Content" /><LogPosterRail items={favouriteContent} onOpen={onOpen || (() => {})} showBookmark={false} /></section>}
+      {analytics.collectionProgress.length > 0 && <section className="mg-log-v2-stat-card"><h3>Collection Progress</h3><LogAnalyticsBars items={analytics.collectionProgress.slice(0, 5).map((entry) => ({ label: entry.name, value: entry.completed, display: `${entry.completed}/${entry.total}` }))} /></section>}
+      {analytics.topActorPeople.length > 0 && <section className="mg-log-v2-people-section"><h3>Top Actors</h3><div className="mg-log-v2-people-rail">{analytics.topActorPeople.slice(0, 8).map((person) => <button key={person.name} type="button" disabled={!person.id || !onOpenPerson} onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span>{person.name.slice(0, 1)}</span>}<strong>{person.name}</strong><small>{person.count} titles</small></button>)}</div></section>}
+      {analytics.topCreatorPeople.length > 0 && <section className="mg-log-v2-people-section"><h3>Top Directors & Creators</h3><div className="mg-log-v2-people-rail">{analytics.topCreatorPeople.slice(0, 8).map((person) => <button key={person.name} type="button" disabled={!person.id || !onOpenPerson} onClick={() => onOpenPerson?.(person)}>{person.profile_path ? <img src={posterUrl(person.profile_path, "w185")} alt="" /> : <span>{person.name.slice(0, 1)}</span>}<strong>{person.name}</strong><small>{person.count} titles</small></button>)}</div></section>}
+      {(analytics.topShow || analytics.favouriteMovie || analytics.favouriteShow || analytics.mostWatchedFranchise) && <section className="mg-log-v2-stat-card"><h3>Content Highlights</h3><div className="mg-log-v2-highlight-list">{analytics.favouriteMovie && <span><small>Favourite movie</small><strong>{titleOf(analytics.favouriteMovie)}</strong></span>}{analytics.favouriteShow && <span><small>Favourite series</small><strong>{titleOf(analytics.favouriteShow)}</strong></span>}{analytics.topShow && <span><small>Most watched show</small><strong>{titleOf(analytics.topShow)}</strong><em>{analytics.topShowEpisodeCount} episodes</em></span>}{analytics.mostWatchedFranchise && <span><small>Most watched franchise</small><strong>{analytics.mostWatchedFranchise.name}</strong><em>{analytics.mostWatchedFranchise.completed} watched</em></span>}</div></section>}
+      {!analytics.watchedItems.length && !analytics.episodeEvents.length && <div className="mg2-empty">Watch activity will build your analytics here.</div>}
     </section>
   );
 }
@@ -10448,6 +12851,30 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
   const [seasonLoading, setSeasonLoading] = useState(false);
   const [tmdbCollectionHub, setTmdbCollectionHub] = useState(null);
   const [hydratedSeedHub, setHydratedSeedHub] = useState(null);
+  const saveHoldTimerRef = useRef(null);
+  const saveHeldRef = useRef(false);
+  const clearSaveHold = () => {
+    if (saveHoldTimerRef.current) window.clearTimeout(saveHoldTimerRef.current);
+    saveHoldTimerRef.current = null;
+  };
+  useEffect(() => clearSaveHold, []);
+  const beginSaveHold = () => {
+    saveHeldRef.current = false;
+    clearSaveHold();
+    saveHoldTimerRef.current = window.setTimeout(() => {
+      saveHeldRef.current = true;
+      onOpenListSheet?.(shown);
+    }, 520);
+  };
+  const finishSavePress = (event) => {
+    event.stopPropagation();
+    clearSaveHold();
+    if (saveHeldRef.current) {
+      saveHeldRef.current = false;
+      return;
+    }
+    onWatchlist(shown);
+  };
   const shown = details || item;
   const similar = normalize(details?.similar?.results || []).slice(0, 8);
   const recs = normalize(details?.recommendations?.results || []).slice(0, 8);
@@ -10696,7 +13123,7 @@ function DetailModal({ item, details, loading, onClose, onWatchlist, saved, watc
             </div>
             <div className="mg2-detail-actions">
               <button className={watched ? "active watched" : ""} type="button" disabled={!watched && !released} onClick={() => onWatched(shown)} aria-label={watched ? "Mark unwatched" : released ? "Mark watched" : releaseMessage(shown)}><Icon name="check" /><span>{watched ? "Watched" : released ? "Watch" : "Unreleased"}</span></button>
-              <button className={saved ? "active" : ""} type="button" onClick={() => onWatchlist(shown)} aria-label={saved ? "Remove from watchlist" : "Add to watchlist"}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
+              <button className={saved ? "active" : ""} type="button" onPointerDown={beginSaveHold} onPointerUp={finishSavePress} onPointerCancel={clearSaveHold} onPointerLeave={clearSaveHold} onContextMenu={(event) => event.preventDefault()} aria-label={saved ? "Remove from watchlist. Hold for lists." : "Add to watchlist. Hold for lists."}><Icon name="bookmark" /><span>{saved ? "Saved" : "List"}</span></button>
               <button className={watchAsap ? "active asap" : ""} type="button" disabled={watched} onClick={() => onWatchAsap(shown)} aria-label={watched ? "Already watched" : watchAsap ? "Remove from Watch ASAP" : "Add to Watch ASAP"}><Icon name="clock" /><span>Watch ASAP</span></button>
               <button className={favorite ? "active favorite" : ""} type="button" onClick={() => onFavorite(shown)} aria-label={favorite ? "Unlike" : "Like"}><Icon name="heart" /><span>{favorite ? "Liked" : "Like"}</span></button>
             </div>
@@ -11035,6 +13462,7 @@ export default function Home() {
     popularTv: fallbackRows.series,
     topRated: fallbackRows.movies,
     upcoming: fallbackRows.trending,
+    upcomingTv: [],
     nowPlaying: fallbackRows.movies,
     airingToday: fallbackRows.series,
     onAir: fallbackRows.series,
@@ -11048,7 +13476,17 @@ export default function Home() {
     weekendPicks: fallbackRows.movies,
     indianCinema: fallbackRows.movies,
     kDrama: fallbackRows.series,
-    sitcoms: fallbackRows.series
+    sitcoms: fallbackRows.series,
+    netflixMovies: [],
+    netflixShows: [],
+    primeMovies: [],
+    primeShows: [],
+    hotstarMovies: [],
+    hotstarShows: [],
+    appleMovies: [],
+    appleShows: [],
+    crunchyMovies: [],
+    crunchyShows: []
   });
   const [exploreLoading, setExploreLoading] = useState(false);
   const [popularActors, setPopularActors] = useState(actorFallbacks);
@@ -11131,15 +13569,22 @@ export default function Home() {
   const localStateHydrated = useRef(false);
   const remoteHydrating = useRef(false);
   const latestLocalState = useRef(DEFAULT_LOCAL_STATE);
+  const customListMutationVersion = useRef({});
   const librarySyncLogged = useRef(false);
   const detailsOpenActivityRef = useRef({});
   const ratingDebugRef = useRef({});
+  const searchRequestRef = useRef(0);
   const remoteSyncTimer = useRef(null);
   const remoteSyncSuppressed = useRef(false);
   const skipNextRemoteAutosync = useRef(false);
   const sessionRemoteLoad = useRef({ userId: "", inFlight: false, cooldownUntil: 0 });
 
-  const apiFetch = useCallback(async (path, params = {}) => {
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (tabs.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab);
+  }, []);
+
+  const apiFetch = useCallback(async (path, params = {}, options = {}) => {
     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
     const url = new URL(`${API_BASE}${path}`);
     url.searchParams.set("api_key", API_KEY);
@@ -11148,6 +13593,7 @@ export default function Home() {
       if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
     });
     const key = url.toString();
+    if (options.refresh) cache.current.delete(key);
     if (cache.current.has(key)) return cache.current.get(key);
     const promise = new Promise((resolve, reject) => {
       const controller = new AbortController();
@@ -11723,10 +14169,28 @@ export default function Home() {
   useEffect(() => {
     async function loadExploreHub() {
       setExploreLoading(true);
+      const cachedHub = readHomeCache(EXPLORE_HUB_CACHE_KEY, null);
+      if (cachedHub?.rows && Object.keys(cachedHub.rows).length) {
+        setExploreRows((current) => ({ ...current, ...cachedHub.rows }));
+      }
       try {
         const settled = await Promise.allSettled(exploreHubSections.map(async (section) => {
-          const data = await apiFetch(section.endpoint, { page: 1, ...(section.params || {}) });
-          return [section.id, dedupe(normalize(data.results)).slice(0, 16)];
+          const forcedType = section.endpoint.includes("/movie") || section.endpoint.includes("discover/movie")
+            ? "movie"
+            : section.endpoint.includes("/tv") || section.endpoint.includes("discover/tv")
+              ? "tv"
+              : "";
+          const params = { page: 1, include_adult: "false", ...(section.params || {}) };
+          const first = await apiFetch(section.endpoint, params);
+          let rows = normalizeExploreResults(first?.results || [], forcedType);
+          const totalPages = Math.max(1, Number(first?.total_pages || 1));
+          let page = 2;
+          while (exploreCatalogue(rows, { requireArtwork: true }).length < 14 && page <= Math.min(4, totalPages)) {
+            const nextPage = await apiFetch(section.endpoint, { ...params, page });
+            rows = dedupe([...rows, ...normalizeExploreResults(nextPage?.results || [], forcedType)]);
+            page += 1;
+          }
+          return [section.id, rows.slice(0, 40)];
         }));
         const next = { ...exploreRows };
         Object.assign(next, Object.fromEntries(
@@ -11735,6 +14199,7 @@ export default function Home() {
             .map((result) => result.value)
         ));
         setExploreRows(next);
+        persist(EXPLORE_HUB_CACHE_KEY, { timestamp: Date.now(), rows: next });
       } catch {
         setExploreRows((current) => current);
       } finally {
@@ -11760,24 +14225,49 @@ export default function Home() {
 
   const search = useCallback(async (page = 1, append = false) => {
     if (!debouncedQuery) {
+      searchRequestRef.current += 1;
       setSearchResults([]);
       setSearchPage(1);
       setSearchTotalPages(1);
       return;
     }
+    const requestId = ++searchRequestRef.current;
     setSearchLoading(true);
     try {
-      const data = await apiFetch("/search/multi", { query: debouncedQuery, include_adult: "false", page });
-      const merged = append ? dedupe([...searchResults, ...normalizeSearch(data.results)]) : dedupe(normalizeSearch(data.results));
-      setSearchResults(sortResults(merged, debouncedQuery));
-      setSearchPage(data.page || page);
-      setSearchTotalPages(Math.min(data.total_pages || 1, 500));
+      const params = { query: debouncedQuery, include_adult: "false", page };
+      const [movieResult, tvResult, multiResult] = await Promise.allSettled([
+        apiFetch("/search/movie", params, { refresh: true }),
+        apiFetch("/search/tv", params, { refresh: true }),
+        apiFetch("/search/multi", params, { refresh: true })
+      ]);
+      if (requestId !== searchRequestRef.current) return;
+      const fulfilled = [movieResult, tvResult, multiResult].filter((result) => result.status === "fulfilled");
+      if (!fulfilled.length) throw new Error("TMDB search unavailable.");
+
+      const movieData = movieResult.status === "fulfilled" ? movieResult.value : {};
+      const tvData = tvResult.status === "fulfilled" ? tvResult.value : {};
+      const multiData = multiResult.status === "fulfilled" ? multiResult.value : {};
+      const liveResults = dedupe([
+        ...(movieData.results || []).map((item) => ({ ...item, media_type: "movie" })),
+        ...(tvData.results || []).map((item) => ({ ...item, media_type: "tv" })),
+        ...normalizeSearch(multiData.results || [])
+      ]);
+      setSearchResults((current) => sortResults(
+        append ? dedupe([...current, ...liveResults]) : liveResults,
+        debouncedQuery
+      ));
+      setSearchPage(page);
+      setSearchTotalPages(Math.min(Math.max(
+        Number(movieData.total_pages) || 1,
+        Number(tvData.total_pages) || 1,
+        Number(multiData.total_pages) || 1
+      ), 500));
     } catch {
-      setSearchResults([]);
+      if (requestId === searchRequestRef.current && !append) setSearchResults([]);
     } finally {
-      setSearchLoading(false);
+      if (requestId === searchRequestRef.current) setSearchLoading(false);
     }
-  }, [apiFetch, debouncedQuery, searchResults]);
+  }, [apiFetch, debouncedQuery]);
 
   useEffect(() => {
     search(1, false);
@@ -12981,38 +15471,72 @@ export default function Home() {
 
   async function createCustomList(title, item, options = {}) {
     const id = `list-${Date.now()}`;
-    const normalized = { ...item, media_type: mediaType(item) };
+    const normalized = item ? { ...item, media_type: mediaType(item) } : null;
     let listId = id;
+    let includeInitialItem = Boolean(normalized);
     if (supabaseUser?.id) {
       const remoteList = await createUserList(supabaseUser.id, { name: title, description: options.description || "", visibility: options.visibility || "public" });
-      if (remoteList?.id) {
-        listId = remoteList.id;
-        addItemToList(supabaseUser.id, remoteList.id, normalized);
+      if (!remoteList?.id) {
+        setSocialError("The list could not be created. Nothing was changed.");
+        return false;
+      }
+      listId = remoteList.id;
+      if (normalized) {
+        const membership = await addItemToList(supabaseUser.id, remoteList.id, normalized);
+        if (!membership) {
+          includeInitialItem = false;
+          setSocialError("The list was created, but this title could not be saved to it.");
+        }
       }
     }
     const next = {
       ...customLists,
-      [listId]: { id: listId, title, description: options.description || "", privacy: options.visibility || "public", createdAt: new Date().toISOString(), items: [normalized] }
+      [listId]: { id: listId, title, description: options.description || "", privacy: options.visibility || "public", createdAt: new Date().toISOString(), items: includeInitialItem && normalized ? [normalized] : [] }
     };
     setCustomLists(next);
     persist("moviegram.customLists", next);
     setProfileStats((current) => current ? { ...current, lists: (current.lists || 0) + 1 } : current);
     syncTrackingNow("custom_list_create", { customLists: next });
-    logActivity("list_create", normalized, { listKey: listId, title, description: options.description || "", visibility: options.visibility || "public" });
+    if (includeInitialItem && normalized) logActivity("list_create", normalized, { listKey: listId, title, description: options.description || "", visibility: options.visibility || "public" });
+    return includeInitialItem || !normalized;
   }
 
-  function toggleCustomListItem(listId, item) {
-    const list = customLists[listId];
+  async function toggleCustomListItem(listId, item) {
+    const currentLists = { ...customLists, ...(latestLocalState.current.customLists || {}) };
+    const list = currentLists[listId];
     if (!list) return;
     const normalized = { ...item, media_type: mediaType(item) };
     const exists = (list.items || []).some((entry) => itemMatches(entry, normalized));
     const nextItems = exists ? (list.items || []).filter((entry) => !itemMatches(entry, normalized)) : [...(list.items || []), normalized];
-    const next = { ...customLists, [listId]: { ...list, items: nextItems, updatedAt: new Date().toISOString() } };
+    const previousList = list;
+    const next = { ...currentLists, [listId]: { ...list, items: nextItems, updatedAt: new Date().toISOString() } };
+    const mutationVersion = (customListMutationVersion.current[listId] || 0) + 1;
+    customListMutationVersion.current[listId] = mutationVersion;
     setCustomLists(next);
+    latestLocalState.current = { ...latestLocalState.current, customLists: next };
     persist("moviegram.customLists", next);
-    syncTrackingNow(exists ? "custom_list_remove" : "custom_list_add", { customLists: next });
-    if (!exists && supabaseUser?.id && /^[0-9a-f-]{36}$/i.test(listId)) addItemToList(supabaseUser.id, listId, normalized, nextItems.length - 1);
+    if (supabaseUser?.id && /^[0-9a-f-]{36}$/i.test(listId)) {
+      const result = exists
+        ? await removeItemFromList(supabaseUser.id, listId, normalized)
+        : await addItemToList(supabaseUser.id, listId, normalized, nextItems.length - 1);
+      if (!result) {
+        if (customListMutationVersion.current[listId] === mutationVersion) {
+          setCustomLists((current) => {
+            const rollback = { ...current, [listId]: previousList };
+            latestLocalState.current = { ...latestLocalState.current, customLists: rollback };
+            persist("moviegram.customLists", rollback);
+            return rollback;
+          });
+          setSocialError("The list change could not be saved. Your previous membership was restored.");
+        }
+        return false;
+      }
+    }
+    if (customListMutationVersion.current[listId] === mutationVersion) {
+      syncTrackingNow(exists ? "custom_list_remove" : "custom_list_add", { customLists: next });
+    }
     logActivity(exists ? "list_remove" : "list_add", normalized, { listKey: listId, title: list.title });
+    return true;
   }
 
   function deleteCustomList(listId) {
@@ -13230,7 +15754,7 @@ export default function Home() {
           <button className="mg2-social-back" type="button" onClick={() => setActiveSocial(null)}><Icon name="back" /></button>
           <h2>Stats</h2>
         </div>
-        <StatsScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} episodeProgress={episodeProgress} customLists={customLists} />
+        <StatsScreen watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} episodeProgress={episodeProgress} customLists={customLists} apiFetch={apiFetch} onOpen={openItem} onOpenPerson={openPerson} />
       </section>
     );
   } else if (activeSocial === "diary") {
@@ -13250,7 +15774,7 @@ export default function Home() {
   } else if (activeTab === "reels") {
     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
   } else if (activeTab === "log") {
-    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} tonightItems={tonightItems} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
+    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} customLists={customLists} tonightItems={tonightItems} episodeProgress={episodeProgress} apiFetch={apiFetch} onOpen={openItem} onOpenPerson={openPerson} onOpenStats={() => setActiveSocial("stats")} onWatchlist={toggleWatchlist} onOpenListPicker={(item) => setListItem({ ...item, media_type: mediaType(item) })} onCreateList={createCustomList} onToggleEpisode={toggleHomeEpisodeWatched} />;
   } else if (activeTab === "explore") {
     screen = (
       <ExploreScreen
@@ -13270,12 +15794,13 @@ export default function Home() {
         onOpenPerson={openPerson}
         onOpenPublicProfile={openPublicProfile}
         onOpenFranchise={openFranchise}
-        onQuickActions={(item) => setQuickActionItem({ ...item, media_type: mediaType(item) })}
+        onQuickActions={(item) => setListItem({ ...item, media_type: mediaType(item) })}
         watchlist={libraryState.watchlist}
         watched={libraryState.watched}
         ratings={libraryState.ratings}
         favorites={favorites}
         customLists={customLists}
+        recommended={recommended}
       />
     );
   } else {
@@ -13410,8 +15935,15 @@ export default function Home() {
       <CustomListSheet
         item={listItem}
         lists={customLists}
+        watchlisted={listItem ? isItemWatchlisted(listItem) : false}
+        watchAsap={listItem ? isItemWatchAsap(listItem) : false}
+        favorite={listItem ? hasStoredItem(listItem, favorites) : false}
+        rated={listItem ? Boolean(getItemRating(listItem)) : false}
         onCreate={createCustomList}
         onToggleItem={toggleCustomListItem}
+        onWatchlist={toggleWatchlist}
+        onWatchAsap={toggleWatchAsap}
+        onFavorite={toggleFavorite}
         onClose={() => setListItem(null)}
       />
       <SafetySheet

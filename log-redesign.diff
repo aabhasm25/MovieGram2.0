@@ -1,0 +1,2156 @@
+﻿diff --git a/app/globals.css b/app/globals.css
+index a16fd9a..cfb6805 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -36,6 +36,902 @@
+   flex: initial;
+ }
+ 
++/* Log v2 is intentionally isolated from Home, Explore, and shared poster cards. */
++.mg-log-v2,
++.mg-log-v2-subpage {
++  --log-accent: #9b4dff;
++  --log-accent-2: #dc4dce;
++  --log-surface: #101119;
++  --log-surface-raised: #171821;
++  --log-line: rgba(255, 255, 255, .09);
++  color: #f7f6fb;
++  padding: 0 14px 24px;
++}
++
++.mg-log-v2 button,
++.mg-log-v2-subpage button,
++.mg-log-v2 input {
++  font: inherit;
++}
++
++.mg-log-v2-tabs {
++  position: sticky;
++  top: 0;
++  z-index: 7;
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  margin: 0 -14px 12px;
++  padding: 0 14px;
++  background: rgba(5, 5, 9, .94);
++  border-bottom: 1px solid rgba(255, 255, 255, .06);
++  backdrop-filter: blur(18px);
++}
++
++.mg-log-v2-tabs button {
++  position: relative;
++  min-height: 43px;
++  border: 0;
++  color: rgba(241, 240, 248, .55);
++  background: transparent;
++  font-size: 13px;
++  font-weight: 800;
++}
++
++.mg-log-v2-tabs button::after {
++  content: "";
++  position: absolute;
++  right: 22%;
++  bottom: 0;
++  left: 22%;
++  height: 2px;
++  border-radius: 2px 2px 0 0;
++  background: transparent;
++}
++
++.mg-log-v2-tabs button.active {
++  color: #d9b8ff;
++}
++
++.mg-log-v2-tabs button.active::after {
++  background: linear-gradient(90deg, var(--log-accent), var(--log-accent-2));
++}
++
++.mg-log-v2-hub {
++  min-height: 184px;
++  padding: 17px 16px 14px;
++  overflow: hidden;
++  border: 1px solid rgba(161, 92, 255, .3);
++  border-radius: 14px;
++  background-color: #130a2a;
++  background-position: center right;
++  background-size: cover;
++  box-shadow: 0 20px 45px rgba(0, 0, 0, .32), inset 0 0 45px rgba(134, 67, 255, .08);
++}
++
++.mg-log-v2-hub > small,
++.mg-log-v2-lists-hero > small,
++.mg-log-v2-collection-hero > small {
++  display: block;
++  margin-bottom: 5px;
++  color: #caa2ff;
++  font-size: 9px;
++  font-weight: 900;
++  letter-spacing: .04em;
++}
++
++.mg-log-v2-hub h2,
++.mg-log-v2-hub p {
++  width: min(62%, 220px);
++  margin: 0;
++}
++
++.mg-log-v2-hub h2 {
++  font-size: 21px;
++  line-height: 1.08;
++}
++
++.mg-log-v2-hub p {
++  margin-top: 7px;
++  color: rgba(238, 235, 247, .68);
++  font-size: 11px;
++  line-height: 1.35;
++}
++
++.mg-log-v2-hub > div {
++  display: grid;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++  gap: 7px;
++  margin-top: 16px;
++}
++
++.mg-log-v2-hub > div > button {
++  display: grid;
++  grid-template-columns: 24px minmax(0, 1fr);
++  gap: 7px;
++  min-width: 0;
++  min-height: 48px;
++  padding: 8px;
++  border: 1px solid rgba(255, 255, 255, .1);
++  border-radius: 9px;
++  color: #fff;
++  text-align: left;
++  background: rgba(72, 37, 118, .48);
++}
++
++.mg-log-v2-hub > div svg {
++  width: 22px;
++  height: 22px;
++  fill: none;
++  stroke: #c786ff;
++  stroke-width: 1.8;
++}
++
++.mg-log-v2-hub > div span,
++.mg-log-v2-hub > div strong,
++.mg-log-v2-hub > div small {
++  display: block;
++  min-width: 0;
++}
++
++.mg-log-v2-hub > div strong {
++  font-size: 11px;
++  line-height: 1.1;
++}
++
++.mg-log-v2-hub > div small {
++  margin-top: 3px;
++  color: rgba(239, 234, 248, .57);
++  font-size: 8px;
++  line-height: 1.2;
++}
++
++.mg-log-v2-section {
++  margin-top: 22px;
++}
++
++.mg-log-v2-section-head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  margin-bottom: 10px;
++}
++
++.mg-log-v2-section-head h2 {
++  margin: 0;
++  font-size: 17px;
++  line-height: 1.15;
++  letter-spacing: 0;
++}
++
++.mg-log-v2-section-head button {
++  min-width: 58px;
++  min-height: 34px;
++  padding: 0;
++  border: 0;
++  color: #c891ff;
++  background: transparent;
++  font-size: 11px;
++  font-weight: 850;
++}
++
++.mg-log-v2-section-head button span {
++  font-size: 17px;
++  vertical-align: -1px;
++}
++
++.mg-log-v2-rail,
++.mg-log-v2-continue-rail {
++  display: flex;
++  align-items: flex-start;
++  gap: 10px;
++  margin-right: -14px;
++  padding-right: 14px;
++  overflow-x: auto;
++  overscroll-behavior-inline: contain;
++  scrollbar-width: none;
++}
++
++.mg-log-v2-rail::-webkit-scrollbar,
++.mg-log-v2-continue-rail::-webkit-scrollbar {
++  display: none;
++}
++
++.mg-log-v2-poster {
++  position: relative;
++  flex: 0 0 108px;
++  width: 108px;
++  min-width: 0;
++  overflow: hidden;
++}
++
++.mg-log-v2-poster-open {
++  display: block;
++  width: 100%;
++  padding: 0;
++  border: 0;
++  color: inherit;
++  text-align: left;
++  background: transparent;
++}
++
++.mg-log-v2-poster-open > span {
++  position: relative;
++  display: block;
++  width: 100%;
++  aspect-ratio: 2 / 3;
++  overflow: hidden;
++  border: 1px solid rgba(255, 255, 255, .08);
++  border-radius: 9px;
++  background: #15151b;
++}
++
++.mg-log-v2-poster-open img {
++  display: block;
++  width: 100%;
++  height: 100%;
++  object-fit: cover;
++}
++
++.mg-log-v2-poster-open em {
++  position: absolute;
++  top: 6px;
++  left: 6px;
++  padding: 4px 6px;
++  border-radius: 6px;
++  color: #fff;
++  background: rgba(112, 48, 198, .9);
++  font-size: 8px;
++  font-style: normal;
++  font-weight: 900;
++}
++
++.mg-log-v2-poster-open strong,
++.mg-log-v2-poster-open small {
++  display: block;
++  overflow: hidden;
++}
++
++.mg-log-v2-poster-open strong {
++  min-height: 30px;
++  margin-top: 6px;
++  color: #f7f5fb;
++  font-size: 11px;
++  font-weight: 850;
++  line-height: 15px;
++  display: -webkit-box;
++  -webkit-box-orient: vertical;
++  -webkit-line-clamp: 2;
++}
++
++.mg-log-v2-poster-open small {
++  height: 14px;
++  margin-top: 2px;
++  color: rgba(222, 217, 235, .62);
++  font-size: 9px;
++  line-height: 14px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-bookmark {
++  position: absolute;
++  top: 5px;
++  right: 5px;
++  z-index: 2;
++  display: grid;
++  width: 29px;
++  height: 29px;
++  padding: 0;
++  place-items: center;
++  border: 1px solid rgba(255, 255, 255, .22);
++  border-radius: 50%;
++  color: #fff;
++  background: rgba(8, 8, 12, .68);
++  backdrop-filter: blur(8px);
++}
++
++.mg-log-v2-bookmark.active {
++  color: #fff;
++  background: #7c2be6;
++}
++
++.mg-log-v2-bookmark svg {
++  width: 14px;
++  height: 14px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 1.8;
++}
++
++.mg-log-v2-grid {
++  display: grid;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++  align-items: start;
++  gap: 18px 10px;
++}
++
++.mg-log-v2-grid .mg-log-v2-poster {
++  width: auto;
++}
++
++.mg-log-v2-filters {
++  display: flex;
++  gap: 7px;
++  margin: 0 0 12px;
++}
++
++.mg-log-v2-filters button {
++  min-height: 32px;
++  padding: 0 13px;
++  border: 1px solid var(--log-line);
++  border-radius: 17px;
++  color: rgba(238, 235, 246, .7);
++  background: #101117;
++  font-size: 10px;
++  font-weight: 800;
++}
++
++.mg-log-v2-filters button.active {
++  border-color: rgba(161, 89, 255, .68);
++  color: #fff;
++  background: #6f25d2;
++}
++
++.mg-log-v2-continue {
++  position: relative;
++  flex: 0 0 268px;
++  width: 268px;
++  height: 124px;
++  overflow: hidden;
++  border: 1px solid var(--log-line);
++  border-radius: 11px;
++  background: linear-gradient(135deg, #171820, #0d0e14);
++}
++
++.mg-log-v2-continue-open {
++  display: grid;
++  grid-template-columns: 78px minmax(0, 1fr);
++  width: 100%;
++  height: 100%;
++  padding: 6px 44px 6px 6px;
++  border: 0;
++  color: #fff;
++  text-align: left;
++  background: transparent;
++}
++
++.mg-log-v2-continue-open > img {
++  width: 78px;
++  height: 112px;
++  object-fit: cover;
++  border-radius: 7px;
++}
++
++.mg-log-v2-continue-open > span {
++  display: flex;
++  min-width: 0;
++  padding: 8px 0 6px 10px;
++  flex-direction: column;
++}
++
++.mg-log-v2-continue-open strong,
++.mg-log-v2-continue-open small,
++.mg-log-v2-continue-open em {
++  display: block;
++  overflow: hidden;
++}
++
++.mg-log-v2-continue-open strong {
++  max-height: 32px;
++  font-size: 13px;
++  line-height: 16px;
++  display: -webkit-box;
++  -webkit-box-orient: vertical;
++  -webkit-line-clamp: 2;
++}
++
++.mg-log-v2-continue-open small {
++  margin-top: 8px;
++  color: #dbc7ef;
++  font-size: 10px;
++  line-height: 14px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-continue-open em {
++  margin-top: 4px;
++  color: rgba(234, 230, 242, .52);
++  font-size: 9px;
++  font-style: normal;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-continue-open i {
++  height: 4px;
++  margin-top: auto;
++  overflow: hidden;
++  border-radius: 4px;
++  background: rgba(255, 255, 255, .16);
++}
++
++.mg-log-v2-continue-open i b {
++  display: block;
++  height: 100%;
++  border-radius: inherit;
++  background: linear-gradient(90deg, #7d35f5, #d05ce8);
++}
++
++.mg-log-v2-continue-check {
++  position: absolute;
++  right: 7px;
++  bottom: 10px;
++  display: grid;
++  width: 34px;
++  height: 34px;
++  padding: 0;
++  place-items: center;
++  border: 1px solid rgba(255, 255, 255, .26);
++  border-radius: 50%;
++  color: #fff;
++  background: #772bd3;
++}
++
++.mg-log-v2-continue-check svg {
++  width: 17px;
++  height: 17px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 2;
++}
++
++.mg-log-v2-continue-check.loading span {
++  width: 15px;
++  height: 15px;
++  border: 2px solid rgba(255, 255, 255, .32);
++  border-top-color: #fff;
++  border-radius: 50%;
++  animation: mg-log-spin .7s linear infinite;
++}
++
++@keyframes mg-log-spin {
++  to { transform: rotate(360deg); }
++}
++
++.mg-log-v2-watched-summary {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 8px;
++  margin-top: 4px;
++}
++
++.mg-log-v2-watched-summary > span {
++  display: grid;
++  grid-template-columns: 30px minmax(0, 1fr);
++  min-height: 62px;
++  padding: 10px;
++  border: 1px solid var(--log-line);
++  border-radius: 10px;
++  background: linear-gradient(135deg, rgba(105, 42, 182, .2), #11121a 64%);
++}
++
++.mg-log-v2-watched-summary svg {
++  grid-row: 1 / 3;
++  width: 22px;
++  height: 22px;
++  fill: none;
++  stroke: #bb79ff;
++  stroke-width: 1.8;
++}
++
++.mg-log-v2-watched-summary strong {
++  font-size: 18px;
++  line-height: 20px;
++}
++
++.mg-log-v2-watched-summary small {
++  color: rgba(231, 226, 240, .55);
++  font-size: 9px;
++}
++
++.mg-log-v2-lists-hero {
++  position: relative;
++  min-height: 154px;
++  padding: 18px 16px;
++  overflow: hidden;
++  border: 1px solid rgba(151, 79, 249, .28);
++  border-radius: 14px;
++  background:
++    radial-gradient(circle at 85% 20%, rgba(188, 87, 255, .42), transparent 28%),
++    linear-gradient(135deg, #160a30, #11111a 62%, #271041);
++}
++
++.mg-log-v2-lists-hero h2,
++.mg-log-v2-lists-hero p {
++  max-width: 72%;
++  margin: 0;
++}
++
++.mg-log-v2-lists-hero h2 {
++  font-size: 22px;
++  line-height: 1.08;
++}
++
++.mg-log-v2-lists-hero p {
++  margin-top: 8px;
++  color: rgba(236, 230, 246, .64);
++  font-size: 10px;
++}
++
++.mg-log-v2-lists-hero > button {
++  display: inline-flex;
++  align-items: center;
++  gap: 7px;
++  min-height: 35px;
++  margin-top: 15px;
++  padding: 0 13px;
++  border: 1px solid rgba(255, 255, 255, .18);
++  border-radius: 8px;
++  color: #fff;
++  background: #7025d2;
++  font-size: 10px;
++  font-weight: 850;
++}
++
++.mg-log-v2-lists-hero > button svg {
++  width: 15px;
++  height: 15px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 1.8;
++}
++
++.mg-log-v2-lists-hero form {
++  display: flex;
++  gap: 7px;
++  margin-top: 10px;
++}
++
++.mg-log-v2-lists-hero form input {
++  width: 0;
++  min-width: 0;
++  min-height: 35px;
++  padding: 0 10px;
++  flex: 1;
++  border: 1px solid rgba(255, 255, 255, .15);
++  border-radius: 8px;
++  color: #fff;
++  outline: none;
++  background: rgba(5, 5, 10, .64);
++}
++
++.mg-log-v2-lists-hero form button {
++  min-height: 35px;
++  padding: 0 13px;
++  border: 0;
++  border-radius: 8px;
++  color: #fff;
++  background: #8a35e8;
++  font-weight: 800;
++}
++
++.mg-log-v2-list-cards {
++  display: grid;
++  gap: 8px;
++  margin-top: 13px;
++}
++
++.mg-log-v2-list-cards > button {
++  display: grid;
++  grid-template-columns: 38px minmax(0, 1fr) 92px 12px;
++  align-items: center;
++  min-height: 64px;
++  padding: 8px 10px;
++  border: 1px solid var(--log-line);
++  border-radius: 10px;
++  color: #fff;
++  text-align: left;
++  background: linear-gradient(90deg, #14151d, #0d0e13);
++}
++
++.mg-log-v2-list-cards > button > i {
++  display: grid;
++  width: 32px;
++  height: 32px;
++  place-items: center;
++  border-radius: 8px;
++  color: #c285ff;
++  background: rgba(126, 48, 221, .2);
++}
++
++.mg-log-v2-list-cards > button > i svg {
++  width: 17px;
++  height: 17px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 1.8;
++}
++
++.mg-log-v2-list-cards > button > span,
++.mg-log-v2-list-cards strong,
++.mg-log-v2-list-cards small {
++  display: block;
++  min-width: 0;
++}
++
++.mg-log-v2-list-cards strong {
++  overflow: hidden;
++  font-size: 12px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-list-cards small {
++  margin-top: 3px;
++  overflow: hidden;
++  color: rgba(230, 225, 239, .52);
++  font-size: 9px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-list-cards em {
++  display: flex;
++  justify-content: flex-end;
++  height: 46px;
++  font-style: normal;
++}
++
++.mg-log-v2-list-cards em img {
++  width: 30px;
++  height: 46px;
++  margin-left: -4px;
++  object-fit: cover;
++  border: 1px solid #171820;
++  border-radius: 4px;
++  background: #1a1a20;
++}
++
++.mg-log-v2-list-cards b {
++  color: rgba(255, 255, 255, .45);
++  font-size: 20px;
++}
++
++.mg-log-v2-subpage {
++  min-height: 100%;
++}
++
++.mg-log-v2-subhead {
++  position: sticky;
++  top: 0;
++  z-index: 8;
++  display: grid;
++  grid-template-columns: 38px minmax(0, 1fr);
++  align-items: center;
++  min-height: 50px;
++  margin: 0 -14px;
++  padding: 0 14px;
++  border-bottom: 1px solid var(--log-line);
++  background: rgba(6, 6, 10, .94);
++  backdrop-filter: blur(18px);
++}
++
++.mg-log-v2-subhead button {
++  display: grid;
++  width: 34px;
++  height: 34px;
++  padding: 0;
++  place-items: center;
++  border: 0;
++  border-radius: 50%;
++  color: #fff;
++  background: rgba(255, 255, 255, .07);
++}
++
++.mg-log-v2-subhead svg {
++  width: 19px;
++  height: 19px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 2;
++}
++
++.mg-log-v2-subhead h2 {
++  margin: 0 0 0 5px;
++  overflow: hidden;
++  font-size: 18px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-collection-hero {
++  display: flex;
++  min-height: 150px;
++  margin: 12px 0;
++  padding: 18px;
++  overflow: hidden;
++  flex-direction: column;
++  justify-content: flex-end;
++  border: 1px solid rgba(255, 255, 255, .08);
++  border-radius: 13px;
++  background-color: #12121a;
++  background-position: center;
++  background-size: cover;
++}
++
++.mg-log-v2-collection-hero strong {
++  max-width: 70%;
++  font-size: 23px;
++  line-height: 1.06;
++}
++
++.mg-log-v2-collection-hero span {
++  margin-top: 7px;
++  color: rgba(239, 235, 247, .64);
++  font-size: 10px;
++}
++
++.mg-log-v2-diary-summary {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++  gap: 6px;
++  margin-top: 12px;
++}
++
++.mg-log-v2-diary-summary span {
++  display: grid;
++  min-height: 60px;
++  padding: 9px 4px;
++  place-items: center;
++  border: 1px solid var(--log-line);
++  border-radius: 9px;
++  background: #12131a;
++  text-align: center;
++}
++
++.mg-log-v2-diary-summary strong {
++  color: #c996ff;
++  font-size: 17px;
++}
++
++.mg-log-v2-diary-summary small {
++  color: rgba(233, 228, 242, .56);
++  font-size: 8px;
++}
++
++.mg-log-v2-diary-progress {
++  display: flex;
++  gap: 8px;
++  overflow-x: auto;
++  scrollbar-width: none;
++}
++
++.mg-log-v2-diary-progress button {
++  display: grid;
++  grid-template-columns: 46px 116px;
++  flex: 0 0 auto;
++  min-height: 66px;
++  padding: 5px;
++  border: 1px solid var(--log-line);
++  border-radius: 9px;
++  color: #fff;
++  text-align: left;
++  background: #13141c;
++}
++
++.mg-log-v2-diary-progress img {
++  width: 46px;
++  height: 56px;
++  object-fit: cover;
++  border-radius: 5px;
++}
++
++.mg-log-v2-diary-progress span {
++  min-width: 0;
++  padding: 8px;
++}
++
++.mg-log-v2-diary-progress strong,
++.mg-log-v2-diary-progress small {
++  display: block;
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-diary-progress strong { font-size: 10px; }
++.mg-log-v2-diary-progress small { margin-top: 5px; color: #c394ef; font-size: 9px; }
++
++.mg-log-v2-timeline {
++  position: relative;
++  display: grid;
++  gap: 8px;
++}
++
++.mg-log-v2-timeline::before {
++  content: "";
++  position: absolute;
++  top: 10px;
++  bottom: 10px;
++  left: 27px;
++  width: 1px;
++  background: linear-gradient(#9c4cff, rgba(156, 76, 255, .08));
++}
++
++.mg-log-v2-timeline button {
++  position: relative;
++  z-index: 1;
++  display: grid;
++  grid-template-columns: 50px 48px minmax(0, 1fr);
++  align-items: center;
++  min-height: 70px;
++  padding: 6px 8px 6px 2px;
++  border: 1px solid var(--log-line);
++  border-radius: 10px;
++  color: #fff;
++  text-align: left;
++  background: rgba(17, 18, 25, .96);
++}
++
++.mg-log-v2-timeline time {
++  color: #c08aff;
++  font-size: 9px;
++  font-weight: 850;
++  text-align: center;
++}
++
++.mg-log-v2-timeline img {
++  width: 42px;
++  height: 58px;
++  object-fit: cover;
++  border-radius: 5px;
++}
++
++.mg-log-v2-timeline span {
++  min-width: 0;
++  padding-left: 9px;
++}
++
++.mg-log-v2-timeline strong,
++.mg-log-v2-timeline small,
++.mg-log-v2-timeline em {
++  display: block;
++}
++
++.mg-log-v2-timeline strong {
++  overflow: hidden;
++  font-size: 11px;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.mg-log-v2-timeline small {
++  margin-top: 4px;
++  color: rgba(231, 226, 240, .55);
++  font-size: 9px;
++}
++
++.mg-log-v2-timeline em {
++  margin-top: 5px;
++  color: #d29cff;
++  font-size: 9px;
++  font-style: normal;
++}
++
++@media (min-width: 400px) {
++  .mg-log-v2-poster {
++    flex-basis: 112px;
++    width: 112px;
++  }
++
++  .mg-log-v2-continue {
++    flex-basis: 276px;
++    width: 276px;
++  }
++}
++
+ /* Explore alone uses MovieGram's media-type card width distinction. */
+ .mg2-row.mg2-explore-media-row,
+ .mg2-grid.mg2-explore-results-grid {
+@@ -2480,6 +3376,14 @@
+   filter: drop-shadow(0 8px 20px rgba(0, 0, 0, .68));
+ }
+ 
++.mg-home-v3-reel-open.is-fullscreen-trigger {
++  cursor: pointer;
++}
++
++.mg-home-v3-reel-open.is-playback-toggle {
++  background: radial-gradient(circle at center, rgba(0, 0, 0, .18), transparent 24%);
++}
++
+ .mg-home-v3-reel-creator {
+   display: grid;
+   width: 100%;
+@@ -2558,6 +3462,140 @@
+ 
+ .mg-home-v3-reel-post > .mg-home-v3-discovery-actions span { font-size: 8px; }
+ 
++.mg-home-v3-fullscreen {
++  position: fixed;
++  z-index: 1800;
++  inset: 0;
++  display: grid;
++  width: 100dvw;
++  height: 100dvh;
++  place-items: center;
++  overflow: hidden;
++  color: #fff;
++  background: #020205;
++}
++
++.mg-home-v3-fullscreen-feed {
++  width: min(100dvw, 520px);
++  height: 100dvh;
++  overflow-x: hidden;
++  overflow-y: auto;
++  overscroll-behavior-y: contain;
++  scroll-snap-type: y mandatory;
++  scrollbar-width: none;
++  background: #000;
++}
++
++.mg-home-v3-fullscreen-feed::-webkit-scrollbar { display: none; }
++
++.mg-home-v3-fullscreen-page {
++  position: relative;
++  width: 100%;
++  height: 100dvh;
++  overflow: hidden;
++  scroll-snap-align: start;
++  scroll-snap-stop: always;
++  background: #000;
++}
++
++.mg-home-v3-fullscreen-page:not(.is-active) .mg-home-v3-reel-content {
++  visibility: hidden;
++}
++
++.mg-home-v3-fullscreen-media,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media.is-landscape,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media.is-portrait,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media.is-unknown {
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  aspect-ratio: auto;
++  background: #000;
++}
++
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-content,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media.is-landscape .mg-home-v3-reel-content,
++.mg-home-v3-fullscreen-media .mg-home-v3-reel-media.is-unknown .mg-home-v3-reel-content {
++  object-fit: contain;
++}
++
++.mg-home-v3-fullscreen-close {
++  position: absolute;
++  z-index: 8;
++  top: max(14px, env(safe-area-inset-top, 0px));
++  left: 14px;
++  display: grid;
++  width: 44px;
++  height: 44px;
++  place-items: center;
++  border-radius: 50%;
++  color: #fff;
++  background: rgba(5, 5, 9, .64);
++  box-shadow: 0 4px 18px rgba(0, 0, 0, .32);
++  font-size: 22px;
++}
++
++.mg-home-v3-fullscreen-page > .mg-home-v3-discovery-actions.is-rail {
++  position: absolute;
++  z-index: 6;
++  right: 10px;
++  bottom: max(118px, calc(env(safe-area-inset-bottom, 0px) + 104px));
++  display: grid;
++  width: 62px;
++  grid-template-columns: 1fr;
++  gap: 4px;
++  padding: 0;
++  background: transparent;
++}
++
++.mg-home-v3-fullscreen-page > .mg-home-v3-discovery-actions.is-rail button {
++  min-height: 56px;
++  border-radius: 14px;
++  color: #fff;
++  background: rgba(0, 0, 0, .22);
++  text-shadow: 0 1px 8px #000;
++}
++
++.mg-home-v3-fullscreen-page > .mg-home-v3-discovery-actions.is-rail button.active {
++  color: #c084fc;
++}
++
++.mg-home-v3-fullscreen-page > .mg-home-v3-discovery-actions.is-rail svg {
++  width: 27px;
++  height: 27px;
++  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .88));
++}
++
++.mg-home-v3-fullscreen-page > .mg-home-v3-discovery-actions.is-rail span {
++  font-size: 10px;
++}
++
++.mg-home-v3-fullscreen-caption {
++  position: absolute;
++  z-index: 5;
++  right: 78px;
++  bottom: 0;
++  left: 0;
++  padding: 64px 0 max(16px, env(safe-area-inset-bottom, 0px));
++  background: linear-gradient(0deg, rgba(0, 0, 0, .88), rgba(0, 0, 0, .48) 62%, transparent);
++}
++
++.mg-home-v3-fullscreen-caption .mg-home-v3-reel-caption {
++  padding-bottom: 0;
++  background: transparent;
++}
++
++@media (max-width: 600px) {
++  .mg-home-v3-fullscreen-feed { width: 100dvw; }
++}
++
++.mg2-phone:has(.mg-home-v3-fullscreen) > .mg2-topbar,
++.mg2-phone:has(.mg-home-v3-fullscreen) > .mg2-bottomnav {
++  visibility: hidden;
++}
++
+ .mg-home-v3-comments {
+   display: grid;
+   width: min(100%, 430px);
+@@ -2571,6 +3609,11 @@
+   box-shadow: 0 -20px 70px rgba(0, 0, 0, .58);
+ }
+ 
++.mg-home-v3-discover > .mg2-sheet-backdrop {
++  position: fixed;
++  z-index: 1900;
++}
++
+ .mg-home-v3-comments > header {
+   display: flex;
+   min-height: 58px;
+diff --git a/app/log/page.js b/app/log/page.js
+index c21be45..e6e2a67 100644
+--- a/app/log/page.js
++++ b/app/log/page.js
+@@ -1,10 +1,5 @@
+-import AppShell from "@/components/AppShell";
+-import LogScreen from "@/components/screens/LogScreen";
++import { redirect } from "next/navigation";
+ 
+ export default function LogPage() {
+-  return (
+-    <AppShell title="Log" activeTab="log">
+-      <LogScreen />
+-    </AppShell>
+-  );
++  redirect("/?tab=log");
+ }
+diff --git a/app/page.js b/app/page.js
+index 4025c42..fa15dc8 100644
+--- a/app/page.js
++++ b/app/page.js
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
++import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+ import { createPortal } from "react-dom";
+ import {
+   acceptFollowRequest,
+@@ -5656,6 +5656,10 @@ function pauseActiveHomeDiscoveryMedia(report = true) {
+   activeHomeDiscoveryMedia?.pause?.(report);
+ }
+ 
++function readActiveHomeDiscoverySnapshot() {
++  return activeHomeDiscoveryMedia?.snapshot?.() || null;
++}
++
+ function readHomeReelSoundPreference() {
+   if (typeof window === "undefined") return true;
+   const stored = window.sessionStorage.getItem(HOME_REEL_SOUND_SESSION_KEY);
+@@ -5667,7 +5671,7 @@ function saveHomeReelSoundPreference(enabled) {
+   window.sessionStorage.setItem(HOME_REEL_SOUND_SESSION_KEY, enabled ? "on" : "off");
+ }
+ 
+-function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, priority = false, soundEnabled = false, onEnableSound, playbackRef }) {
++function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, onOpenFullscreen, priority = false, soundEnabled = false, onEnableSound, playbackRef }) {
+   const videoRef = useRef(null);
+   const youtubeHostRef = useRef(null);
+   const youtubePlayerRef = useRef(null);
+@@ -5731,19 +5735,19 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+     };
+   };
+ 
+-  const pauseMedia = (report = true) => {
++  const pauseMedia = (report = true, silence = true) => {
+     const snapshot = readPlayerSnapshot();
+     currentTimeRef.current = snapshot.currentTime;
+     const video = videoRef.current;
+     if (video) {
+       video.pause();
+-      video.muted = true;
++      if (silence) video.muted = true;
+     }
+     const player = youtubePlayerRef.current;
+     if (player && youtubeReadyRef.current) {
+       try {
+         player.pauseVideo?.();
+-        player.mute?.();
++        if (silence) player.mute?.();
+       } catch {
+         // Cleanup remains best-effort when YouTube has already released the iframe.
+       }
+@@ -5754,8 +5758,9 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+   };
+ 
+   const controllerRef = useRef(null);
+-  if (!controllerRef.current) controllerRef.current = { pause: pauseMedia };
++  if (!controllerRef.current) controllerRef.current = { pause: pauseMedia, snapshot: readPlayerSnapshot };
+   controllerRef.current.pause = pauseMedia;
++  controllerRef.current.snapshot = readPlayerSnapshot;
+ 
+   useEffect(() => {
+     if (!active || (!directUrl && !youtubeVideoId)) {
+@@ -5776,6 +5781,7 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+     const youtubeHost = youtubeHostRef.current;
+     let effectPlayer = null;
+     let playerDisposed = false;
++    const ownsFullscreenTransfer = () => surface !== "fullscreen" || playbackRef?.current?.reelId === reelId;
+ 
+     const disposeYouTubePlayer = () => {
+       if (playerDisposed) return;
+@@ -5815,7 +5821,11 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+           },
+           events: {
+             onReady: (event) => {
+-              if (disposed || generation !== youtubeGenerationRef.current) return;
++              if (disposed || generation !== youtubeGenerationRef.current || !ownsFullscreenTransfer()) {
++                try { event.target.pauseVideo?.(); } catch {}
++                try { event.target.mute?.(); } catch {}
++                return;
++              }
+               youtubeReadyRef.current = true;
+               if (currentTimeRef.current > 0 && restoredTransferRef.current !== transferKey) {
+                 event.target.seekTo(currentTimeRef.current, true);
+@@ -5823,12 +5833,23 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+               }
+               if (preferredMuted) event.target.mute();
+               else event.target.unMute();
+-              if (shouldPlay) event.target.playVideo();
+-              else event.target.pauseVideo();
++              if (shouldPlay) {
++                event.target.playVideo();
++                playingRef.current = true;
++                setIsPlaying(true);
++              } else {
++                event.target.pauseVideo();
++                playingRef.current = false;
++                setIsPlaying(false);
++              }
+               reportPlayback({ playing: shouldPlay, muted: preferredMuted, currentTime: currentTimeRef.current });
+             },
+             onStateChange: (event) => {
+-              if (disposed || generation !== youtubeGenerationRef.current) return;
++              if (disposed || generation !== youtubeGenerationRef.current || !ownsFullscreenTransfer()) {
++                try { event.target.pauseVideo?.(); } catch {}
++                try { event.target.mute?.(); } catch {}
++                return;
++              }
+               const state = Number(event.data);
+               const nextPlaying = state === YT.PlayerState.PLAYING;
+               currentTimeRef.current = Number(event.target.getCurrentTime?.() || currentTimeRef.current || 0);
+@@ -5903,34 +5924,44 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+     const player = youtubePlayerRef.current;
+     if (isYouTube && player && youtubeReadyRef.current) {
+       claimHomeDiscoveryMedia(controllerRef.current);
+-      const wasPlaying = Number(player.getPlayerState?.()) === 1;
+-      if (wasPlaying) pauseMedia(true);
++      const snapshot = readPlayerSnapshot();
++      if (snapshot.playing) pauseMedia(true, false);
+       else {
+-        if (muted && soundEnabled) {
+-          player.unMute?.();
+-          setMuted(false);
+-          onEnableSound?.();
+-        }
++        if (snapshot.muted) player.mute?.();
++        else player.unMute?.();
+         player.playVideo?.();
++        playingRef.current = true;
++        setIsPlaying(true);
++        reportPlayback({ playing: true, muted: snapshot.muted, currentTime: snapshot.currentTime });
+       }
+       return;
+     }
+     if (!video) return;
+     if (video.paused) {
+       claimHomeDiscoveryMedia(controllerRef.current);
++      const snapshot = readPlayerSnapshot();
++      video.muted = snapshot.muted;
+       video.play().catch(() => pauseMedia(true));
+       setFeedbackIcon("pause");
+     } else {
+-      pauseMedia(true);
++      pauseMedia(true, false);
+       setFeedbackIcon("play");
+     }
+     if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+     feedbackTimerRef.current = window.setTimeout(() => setFeedbackIcon(""), 650);
+   };
+ 
++  const openFullscreen = (event) => {
++    event?.stopPropagation?.();
++    if (surface !== "inline" || !active || !onOpenFullscreen) return;
++    const snapshot = readPlayerSnapshot();
++    pauseMedia(false, true);
++    onOpenFullscreen({ ...snapshot, reelId, index, owner: "inline" });
++  };
++
+   if (!directUrl && !youtubeVideoId) return null;
+   return (
+-    <div className={`mg-home-v3-reel-media is-${presentation}`}>
++    <div className={`mg-home-v3-reel-media is-${presentation} is-${surface}`}>
+       {active ? (
+         isYouTube
+           ? <div className="mg-home-v3-reel-content mg-home-v3-youtube-player" ref={youtubeHostRef} aria-label={`${titleOf(content)} video`} />
+@@ -5938,7 +5969,9 @@ function HomeReelMedia({ reel, index = 0, surface = "inline", active, onEnded, p
+       ) : (
+         <img className="mg-home-v3-reel-content" src={thumbnail || BACKDROP_FALLBACK} alt={titleOf(content)} loading={priority ? "eager" : "lazy"} onError={(event) => { event.currentTarget.src = BACKDROP_FALLBACK; }} />
+       )}
+-      <button className="mg-home-v3-reel-open" type="button" onClick={togglePlayback} aria-label={isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{!isYouTube && feedbackIcon && <Icon name={feedbackIcon} />}</button>
++      {surface === "inline"
++        ? <button className="mg-home-v3-reel-open is-fullscreen-trigger" type="button" onClick={openFullscreen} aria-label={`Open ${titleOf(content)} fullscreen`} />
++        : <button className="mg-home-v3-reel-open is-playback-toggle" type="button" onClick={togglePlayback} aria-label={isPlaying ? `Pause ${titleOf(content)}` : `Play ${titleOf(content)}`}>{feedbackIcon && <Icon name={feedbackIcon} />}</button>}
+     </div>
+   );
+ }
+@@ -5984,7 +6017,19 @@ function HomeReelCaption({ reel, item, showIdentity = true }) {
+   );
+ }
+ 
+-function HomeDiscoveryActions({ liked, saved, asap, onLike, onComment, onDetails, onList, onAsap, onShare }) {
++function formatHomeReelCount(value) {
++  const count = Number(value || 0);
++  if (!Number.isFinite(count) || count <= 0) return "";
++  if (count >= 1000000) return `${(count / 1000000).toFixed(count >= 10000000 ? 0 : 1).replace(/\.0$/, "")}M`;
++  if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1).replace(/\.0$/, "")}K`;
++  return String(Math.round(count));
++}
++
++function homeReelLikeCount(reel = {}) {
++  return Number(reel.like_count ?? reel.likes_count ?? reel.likeCount ?? reel.likes ?? 0) || 0;
++}
++
++function HomeDiscoveryActions({ liked, likeCount = 0, saved, asap, layout = "row", onLike, onComment, onDetails, onList, onAsap, onShare }) {
+   const [state, setState] = useState({ liked: Boolean(liked), saved: Boolean(saved), asap: Boolean(asap) });
+   const [busy, setBusy] = useState("");
+   const [failed, setFailed] = useState("");
+@@ -6011,8 +6056,8 @@ function HomeDiscoveryActions({ liked, saved, asap, onLike, onComment, onDetails
+     handler?.();
+   };
+   return (
+-    <div className="mg-home-v3-discovery-actions" aria-label="Reel actions">
+-      <button className={`${state.liked ? "active" : ""} ${busy === "liked" ? "loading" : ""} ${failed === "liked" ? "error" : ""}`} type="button" aria-pressed={state.liked} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "liked", onLike)}><Icon name="heart" /><span>Like</span></button>
++    <div className={`mg-home-v3-discovery-actions is-${layout}`} aria-label="Reel actions">
++      <button className={`${state.liked ? "active" : ""} ${busy === "liked" ? "loading" : ""} ${failed === "liked" ? "error" : ""}`} type="button" aria-pressed={state.liked} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "liked", onLike)}><Icon name="heart" /><span>{formatHomeReelCount(likeCount) || "Like"}</span></button>
+       <button type="button" onClick={(event) => runAction(event, onComment)}><Icon name="chat" /><span>Comment</span></button>
+       <button type="button" onClick={(event) => runAction(event, onDetails)}><Icon name="info" /><span>Details</span></button>
+       <button className={`${state.saved ? "active" : ""} ${busy === "saved" ? "loading" : ""} ${failed === "saved" ? "error" : ""}`} type="button" aria-pressed={state.saved} disabled={Boolean(busy)} onClick={(event) => runToggle(event, "saved", onList)}><Icon name="bookmark" /><span>List</span></button>
+@@ -6038,38 +6083,46 @@ function HomeReelCommentsSheet({ selection, onClose }) {
+     let alive = true;
+     const load = async () => {
+       setLoading(true);
+-      const collected = [];
+       try {
+         const userResult = await supabase?.auth?.getUser?.();
+         const userId = userResult?.data?.user?.id || "";
+         if (alive) setCurrentUserId(userId);
+-        const tasks = [];
+-        if (videoId) {
+-          tasks.push(fetch(`/api/reel-comments?videoId=${encodeURIComponent(videoId)}`)
+-            .then((response) => response.ok ? response.json() : { comments: [] })
+-            .then((payload) => collected.push(...(payload.comments || []).map((comment) => ({ ...comment, source: "youtube" })))));
+-        }
++        let moviegramComments = [];
+         if (supabase && userId) {
+-          tasks.push(supabase.from("reel_comments")
++          const { data, error: loadError } = await supabase.from("reel_comments")
+             .select("id,user_id,comment_text,body,created_at")
+             .eq("reel_key", identity)
+-            .order("created_at", { ascending: true })
+-            .limit(50)
+-            .then(({ data, error: loadError }) => {
+-              if (loadError) throw loadError;
+-              collected.push(...(data || []).map((comment) => ({
+-                id: comment.id,
+-                text: comment.comment_text || comment.body || "",
+-                author: comment.user_id === userId ? "You" : "MovieGram user",
+-                createdAt: comment.created_at,
+-                source: "moviegram"
+-              })));
+-            }));
++            .order("created_at", { ascending: false })
++            .limit(50);
++          if (loadError) throw loadError;
++          moviegramComments = (data || []).map((comment) => ({
++            id: comment.id,
++            text: comment.comment_text || comment.body || "",
++            author: comment.user_id === userId ? "You" : "MovieGram user",
++            createdAt: comment.created_at,
++            source: "moviegram"
++          })).filter((comment) => comment.text);
+         }
+-        await Promise.allSettled(tasks);
+         if (alive) {
+-          const unique = new Map(collected.filter((comment) => comment.text).map((comment) => [comment.id || `${comment.source}:${comment.createdAt}:${comment.text}`, comment]));
+-          setComments([...unique.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)));
++          setComments(moviegramComments);
++          setLoading(false);
++        }
++        if (videoId) {
++          fetch(`/api/reel-comments?videoId=${encodeURIComponent(videoId)}`)
++            .then((response) => response.ok ? response.json() : { comments: [] })
++            .then((payload) => {
++              if (!alive) return;
++              const youtubeComments = (payload.comments || []).map((comment) => ({ ...comment, source: "youtube" })).filter((comment) => comment.text);
++              setComments((current) => {
++                const moviegram = current.filter((comment) => comment.source === "moviegram");
++                const uniqueYouTube = new Map(youtubeComments.map((comment) => [comment.id || `youtube:${comment.createdAt}:${comment.text}`, comment]));
++                return [...moviegram, ...uniqueYouTube.values()].sort((a, b) => {
++                  if (a.source !== b.source) return a.source === "moviegram" ? -1 : 1;
++                  return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
++                });
++              });
++            })
++            .catch(() => {});
+         }
+       } finally {
+         if (alive) setLoading(false);
+@@ -6103,7 +6156,7 @@ function HomeReelCommentsSheet({ selection, onClose }) {
+       };
+       const { data, error: saveError } = await supabase.from("reel_comments").insert(payload).select("id,created_at").single();
+       if (saveError) throw saveError;
+-      setComments((current) => [...current, { id: data.id, text, author: "You", createdAt: data.created_at || createdAt, source: "moviegram" }]);
++      setComments((current) => [{ id: data.id, text, author: "You", createdAt: data.created_at || createdAt, source: "moviegram" }, ...current]);
+       setDraft("");
+     } catch (nextError) {
+       setError(nextError.message || "Comment could not be posted.");
+@@ -6211,15 +6264,127 @@ function HomeReelShareSheet({ selection, onClose }) {
+   );
+ }
+ 
++function HomeDiscoveryFullscreen({ items, activeReelId, active, suspended = false, likedFeed, likeCounts, watchlist, soundEnabled, playbackRef, onEnableSound, onClose, onActiveReelChange, onLike, onComment, onDetails, onList, onAsap, onShare }) {
++  const feedRef = useRef(null);
++  const activeReelIdRef = useRef(activeReelId);
++  const positioningRef = useRef(true);
++  const scrollFrameRef = useRef(null);
++  const reelSnapshotsRef = useRef(new Map());
++  const activeIndex = useMemo(() => items.findIndex((reel) => reelIdentity(reel) === activeReelId), [activeReelId, items]);
++
++  useEffect(() => {
++    activeReelIdRef.current = activeReelId;
++  }, [activeReelId]);
++
++  useLayoutEffect(() => {
++    if (!feedRef.current) return undefined;
++    positioningRef.current = true;
++    const feed = feedRef.current;
++    const targetTop = Math.max(0, activeIndex) * feed.clientHeight;
++    feed.scrollTop = targetTop;
++    const frame = window.requestAnimationFrame(() => {
++      if (feedRef.current === feed) feed.scrollTop = targetTop;
++      positioningRef.current = false;
++    });
++    return () => {
++      window.cancelAnimationFrame(frame);
++      positioningRef.current = false;
++    };
++  }, [activeIndex]);
++
++  const activateReel = useCallback((nextIndex) => {
++    const boundedIndex = Math.max(0, Math.min(items.length - 1, nextIndex));
++    const previousReelId = activeReelIdRef.current;
++    const previousIndex = items.findIndex((reel) => reelIdentity(reel) === previousReelId);
++    const previousReel = items[previousIndex];
++    const nextReel = items[boundedIndex];
++    if (!nextReel) return;
++    const nextReelId = reelIdentity(nextReel);
++    if (nextReelId === previousReelId) return;
++
++    const liveCandidate = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
++    const live = liveCandidate.reelId === previousReelId ? liveCandidate : playbackRef?.current?.reelId === previousReelId ? playbackRef.current : {};
++    if (previousReel && live.reelId === previousReelId) reelSnapshotsRef.current.set(previousReelId, { ...live });
++    pauseActiveHomeDiscoveryMedia(false);
++
++    const saved = reelSnapshotsRef.current.get(nextReelId);
++    const transferId = Number(live.transferId || playbackRef?.current?.transferId || 0) + 1;
++    if (playbackRef) playbackRef.current = {
++      ...live,
++      ...saved,
++      reelId: nextReelId,
++      index: boundedIndex,
++      owner: "fullscreen",
++      currentTime: Number(saved?.currentTime || 0),
++      playing: Boolean(active),
++      muted: saved?.muted ?? live.muted ?? !soundEnabled,
++      soundEnabled,
++      transferId
++    };
++    activeReelIdRef.current = nextReelId;
++    onActiveReelChange(nextReelId);
++  }, [active, items, onActiveReelChange, playbackRef, soundEnabled]);
++
++  const handleScroll = useCallback(() => {
++    if (positioningRef.current || scrollFrameRef.current) return;
++    scrollFrameRef.current = window.requestAnimationFrame(() => {
++      scrollFrameRef.current = null;
++      const feed = feedRef.current;
++      if (!feed?.clientHeight) return;
++      activateReel(Math.round(feed.scrollTop / feed.clientHeight));
++    });
++  }, [activateReel]);
++
++  useEffect(() => () => {
++    if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current);
++  }, []);
++
++  const advanceFromEnded = useCallback((index) => {
++    if (index >= items.length - 1) return;
++    const nextIndex = index + 1;
++    activateReel(nextIndex);
++    feedRef.current?.scrollTo({ top: nextIndex * feedRef.current.clientHeight, behavior: "smooth" });
++  }, [activateReel, items.length]);
++
++  return (
++    <section className="mg-home-v3-fullscreen" role="dialog" aria-modal="true" aria-label="Home discovery fullscreen reels" hidden={suspended}>
++      <div ref={feedRef} className="mg-home-v3-fullscreen-feed" onScroll={handleScroll}>
++        {items.map((reel, index) => {
++          const item = homeReelContent(reel);
++          const id = reelIdentity(reel);
++          const storedItem = Object.values(watchlist || {}).find((entry) => itemMatches(entry, item));
++          const isActive = active && activeReelId === id;
++          return (
++            <article className={`mg-home-v3-fullscreen-page ${isActive ? "is-active" : ""}`} key={id} data-fullscreen-reel-index={index} data-fullscreen-reel-id={id}>
++              <div className="mg-home-v3-fullscreen-media">
++                <HomeReelMedia reel={reel} index={index} surface="fullscreen" active={isActive} priority={Math.abs(activeIndex - index) <= 1} soundEnabled={soundEnabled} onEnableSound={onEnableSound} playbackRef={playbackRef} onEnded={() => advanceFromEnded(index)} />
++              </div>
++              <button type="button" className="mg-home-v3-fullscreen-close" onClick={(event) => { event.stopPropagation(); onClose(); }} aria-label="Close fullscreen reels">x</button>
++              <HomeDiscoveryActions layout="rail" liked={Boolean(likedFeed[id])} likeCount={likeCounts[id] ?? homeReelLikeCount(reel)} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => onLike(reel, id)} onComment={() => onComment(reel, item, index)} onDetails={() => onDetails(item, index)} onList={() => onList(item)} onAsap={() => onAsap(item)} onShare={() => onShare(reel, item, index)} />
++              <div className="mg-home-v3-fullscreen-caption"><HomeReelCaption reel={reel} item={item} /></div>
++            </article>
++          );
++        })}
++      </div>
++    </section>
++  );
++}
++
+ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWatchlist, onWatchAsap, watchlist, detailsOpen, playbackRef }) {
+   const [commentItem, setCommentItem] = useState(null);
+   const [shareItem, setShareItem] = useState(null);
++  const [fullscreenReelId, setFullscreenReelId] = useState("");
+   const [activeVideoIndex, setActiveVideoIndex] = useState(-1);
+   const [soundEnabled, setSoundEnabled] = useState(readHomeReelSoundPreference);
++  const [likeCounts, setLikeCounts] = useState({});
++  const sectionRef = useRef(null);
+   const postRefs = useRef([]);
+   const ratiosRef = useRef(new Map());
+   const overlaySnapshotRef = useRef(null);
+   const detailsWasOpenRef = useRef(false);
++  const fullscreenScrollRef = useRef(0);
++  const discoveryItems = useMemo(() => items.slice(0, 16), [items]);
++  const fullscreenIndex = useMemo(() => fullscreenReelId ? discoveryItems.findIndex((reel) => reelIdentity(reel) === fullscreenReelId) : -1, [discoveryItems, fullscreenReelId]);
+   const enableSound = () => {
+     saveHomeReelSoundPreference(true);
+     setSoundEnabled(true);
+@@ -6263,12 +6428,13 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
+     };
+   }, [items]);
+   const pauseForOverlay = useCallback((index, owner) => {
+-    const wasPlaying = playbackRef?.current?.playing !== false;
+-    pauseActiveHomeDiscoveryMedia(true);
+-    const paused = { ...(playbackRef?.current || {}), index };
+-    overlaySnapshotRef.current = { ...paused, playing: wasPlaying };
++    const live = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
++    const resumeOwner = fullscreenIndex < 0 ? "inline" : "fullscreen";
++    pauseActiveHomeDiscoveryMedia(false);
++    const paused = { ...live, index, owner: resumeOwner };
++    overlaySnapshotRef.current = paused;
+     if (playbackRef) playbackRef.current = { ...paused, owner, playing: false, transferId: Number(paused.transferId || 0) + 1 };
+-  }, [playbackRef]);
++  }, [fullscreenIndex, playbackRef]);
+   const openComments = useCallback((reel, item, index) => {
+     pauseForOverlay(index, "comments");
+     setCommentItem({ reel, item, index });
+@@ -6276,7 +6442,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
+   const closeComments = useCallback(() => {
+     const snapshot = overlaySnapshotRef.current;
+     overlaySnapshotRef.current = null;
+-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
++    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
+     setCommentItem(null);
+   }, [playbackRef]);
+   const openDetails = useCallback((item, index) => {
+@@ -6292,7 +6458,7 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
+     detailsWasOpenRef.current = false;
+     const snapshot = overlaySnapshotRef.current;
+     overlaySnapshotRef.current = null;
+-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
++    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
+   }, [detailsOpen, playbackRef]);
+   const openShare = useCallback((reel, item, index) => {
+     pauseForOverlay(index, "share");
+@@ -6301,32 +6467,83 @@ function HomeInlineReels({ items, likedFeed, toggleFeedLike, onOpenDetails, onWa
+   const closeShare = useCallback(() => {
+     const snapshot = overlaySnapshotRef.current;
+     overlaySnapshotRef.current = null;
+-    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, owner: "inline", transferId: Number(snapshot.transferId || 0) + 1 };
++    if (snapshot && playbackRef) playbackRef.current = { ...snapshot, transferId: Number(snapshot.transferId || 0) + 1 };
+     setShareItem(null);
+   }, [playbackRef]);
++
++  const openFullscreen = useCallback((reelId, snapshot) => {
++    const index = discoveryItems.findIndex((reel) => reelIdentity(reel) === reelId);
++    if (index < 0) return;
++    const scrollNode = sectionRef.current?.closest?.(".mg2-screen");
++    fullscreenScrollRef.current = Number(scrollNode?.scrollTop || 0);
++    const matchingSnapshot = snapshot?.reelId === reelId ? snapshot : playbackRef?.current?.reelId === reelId ? playbackRef.current : { reelId, currentTime: 0, playing: true, muted: !soundEnabled };
++    pauseActiveHomeDiscoveryMedia(false);
++    const transfer = { ...matchingSnapshot, reelId, index, owner: "fullscreen", transferId: Number(playbackRef?.current?.transferId || 0) + 1 };
++    if (playbackRef) playbackRef.current = transfer;
++    setActiveVideoIndex(-1);
++    setFullscreenReelId(reelId);
++  }, [discoveryItems, playbackRef, soundEnabled]);
++
++  const closeFullscreen = useCallback(() => {
++    if (fullscreenIndex < 0 || !fullscreenReelId) return;
++    const liveCandidate = readActiveHomeDiscoverySnapshot() || playbackRef?.current || {};
++    const live = liveCandidate.reelId === fullscreenReelId ? liveCandidate : playbackRef?.current?.reelId === fullscreenReelId ? playbackRef.current : { reelId: fullscreenReelId, currentTime: 0, playing: false, muted: true };
++    pauseActiveHomeDiscoveryMedia(false);
++    const visibleEnough = (ratiosRef.current.get(fullscreenIndex) || 0) >= 0.48;
++    if (playbackRef) playbackRef.current = {
++      ...live,
++      reelId: fullscreenReelId,
++      index: fullscreenIndex,
++      owner: "inline",
++      playing: Boolean(live.playing && visibleEnough),
++      transferId: Number(live.transferId || playbackRef.current?.transferId || 0) + 1
++    };
++    setFullscreenReelId("");
++    setActiveVideoIndex(visibleEnough ? fullscreenIndex : -1);
++    const restore = () => {
++      const scrollNode = sectionRef.current?.closest?.(".mg2-screen");
++      if (scrollNode) scrollNode.scrollTop = fullscreenScrollRef.current;
++    };
++    window.requestAnimationFrame(restore);
++    window.setTimeout(restore, 80);
++  }, [fullscreenIndex, fullscreenReelId, playbackRef]);
++
++  const toggleSharedLike = useCallback(async (reel, id) => {
++    const wasLiked = Boolean(likedFeed[id]);
++    const baseCount = likeCounts[id] ?? homeReelLikeCount(reel);
++    const nextCount = Math.max(0, baseCount + (wasLiked ? -1 : 1));
++    setLikeCounts((current) => ({ ...current, [id]: nextCount }));
++    try {
++      await Promise.resolve(toggleFeedLike(id));
++    } catch (error) {
++      setLikeCounts((current) => ({ ...current, [id]: baseCount }));
++      throw error;
++    }
++  }, [likeCounts, likedFeed, toggleFeedLike]);
+   const stopEndedReel = useCallback((index) => {
+     ratiosRef.current.set(index, 0);
+     setActiveVideoIndex((current) => current === index ? -1 : current);
+   }, []);
+   if (!items.length) return null;
+   return (
+-    <section className="mg-home-v3-section mg-home-v3-discover">
++    <section ref={sectionRef} className="mg-home-v3-section mg-home-v3-discover">
+       <div className="mg-home-v3-section-head"><h2>More to Discover</h2></div>
+       <div className="mg-home-v3-reel-feed">
+-        {items.slice(0, 16).map((reel, index) => {
++        {discoveryItems.map((reel, index) => {
+           const item = homeReelContent(reel);
+-          const id = `home-reel:${reelIdentity(reel)}`;
++          const id = reelIdentity(reel);
+           const storedItem = Object.values(watchlist || {}).find((entry) => itemMatches(entry, item));
+           return (
+             <article ref={(node) => { postRefs.current[index] = node; }} data-home-reel-index={index} key={id} className="mg-home-v3-reel-post">
+               <HomeReelCreatorRow reel={reel} />
+-              <HomeReelMedia reel={reel} index={index} surface="inline" active={!commentItem && !shareItem && !detailsOpen && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onEnded={() => stopEndedReel(index)} />
+-              <HomeDiscoveryActions liked={Boolean(likedFeed[id])} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => toggleFeedLike(id)} onComment={() => openComments(reel, item, index)} onDetails={() => openDetails(item, index)} onList={() => onWatchlist(item)} onAsap={() => onWatchAsap(item)} onShare={() => openShare(reel, item, index)} />
++              <HomeReelMedia reel={reel} index={index} surface="inline" active={fullscreenIndex < 0 && !commentItem && !shareItem && !detailsOpen && activeVideoIndex === index} priority={index < 2} soundEnabled={soundEnabled} onEnableSound={enableSound} playbackRef={playbackRef} onOpenFullscreen={(snapshot) => openFullscreen(id, snapshot)} onEnded={() => stopEndedReel(index)} />
++              <HomeDiscoveryActions liked={Boolean(likedFeed[id])} likeCount={likeCounts[id] ?? homeReelLikeCount(reel)} saved={Boolean(storedItem)} asap={Boolean(storedItem?.watch_asap || storedItem?.watchAsap)} onLike={() => toggleSharedLike(reel, id)} onComment={() => openComments(reel, item, index)} onDetails={() => openDetails(item, index)} onList={() => onWatchlist(item)} onAsap={() => onWatchAsap(item)} onShare={() => openShare(reel, item, index)} />
+               <HomeReelCaption reel={reel} item={item} showIdentity={false} />
+             </article>
+           );
+         })}
+       </div>
++      {fullscreenIndex >= 0 && discoveryItems[fullscreenIndex] && <HomeDiscoveryFullscreen items={discoveryItems} activeReelId={fullscreenReelId} active={!commentItem && !shareItem && !detailsOpen} suspended={detailsOpen} likedFeed={likedFeed} likeCounts={likeCounts} watchlist={watchlist} soundEnabled={soundEnabled} playbackRef={playbackRef} onEnableSound={enableSound} onClose={closeFullscreen} onActiveReelChange={setFullscreenReelId} onLike={toggleSharedLike} onComment={openComments} onDetails={openDetails} onList={onWatchlist} onAsap={onWatchAsap} onShare={openShare} />}
+       {commentItem && <HomeReelCommentsSheet selection={commentItem} onClose={closeComments} />}
+       {shareItem && <HomeReelShareSheet selection={shareItem} onClose={closeShare} />}
+     </section>
+@@ -8842,119 +9059,369 @@ function ReelsScreen({ rows, watched = {}, watchlist = {}, ratings = {}, reviews
+   );
+ }
+ 
+-function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, tonightItems = [], onOpen, onOpenDiary, onOpenStats }) {
+-  const [logTab, setLogTab] = useState("watchlist");
+-  const [logQuery, setLogQuery] = useState("");
+-  const [typeFilter, setTypeFilter] = useState("all");
+-  const [genreFilter, setGenreFilter] = useState("all");
+-  const watchedCollection = normalizeTrackingCollection(watched);
+-  const saved = Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection));
+-  const watchAsapItems = saved.filter((item) => item.watch_asap || item.watchAsap);
+-  const watchedItems = Object.values(watchedCollection).filter((item) => isReleased(item));
+-  const favoriteItems = Object.values(favorites);
+-  const userListCards = Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [] }));
+-  const listCards = userListCards.length ? userListCards : [
+-    { id: "weekend", title: "Weekend Watch Party", subtitle: "Create your own lists from Details", items: dedupe([...(rows.trending || []), ...fallbackRows.trending]).slice(0, 3) }
+-  ];
+-  const logTabs = [
+-    { id: "watchlist", label: "Watchlist" },
+-    { id: "watched", label: "Watched" },
+-    { id: "lists", label: "Lists" },
+-    { id: "favorites", label: "Favorites" }
+-  ];
+-  const sourceItems = logTab === "watchlist"
+-    ? (saved.length ? saved : dedupe([...(rows.trending || []), ...fallbackRows.trending]))
+-    : logTab === "watched"
+-      ? (watchedItems.length ? watchedItems : dedupe([...(rows.movies || []), ...fallbackRows.movies]))
+-      : favoriteItems;
+-  const filteredItems = sourceItems.filter((item) => {
+-    const searchable = `${titleOf(item)} ${item.overview || ""}`.toLowerCase();
+-    const queryMatch = titleOf(item).toLowerCase().includes(logQuery.trim().toLowerCase());
+-    const typeMatch = typeFilter === "all" || mediaType(item) === typeFilter;
+-    const genreMatch = genreFilter === "all" || searchable.includes(genreFilter) || (genreFilter === "anime" && mediaType(item) === "tv");
+-    return queryMatch && typeMatch && genreMatch;
+-  });
++function LogSectionHeader({ title, onSeeAll }) {
++  return (
++    <div className="mg-log-v2-section-head">
++      <h2>{title}</h2>
++      {onSeeAll && <button type="button" onClick={onSeeAll}>See All <span aria-hidden="true">ΓÇ║</span></button>}
++    </div>
++  );
++}
+ 
++function LogTypeFilters({ value, onChange }) {
+   return (
+-    <section className="mg2-log-screen">
+-      <div className="mg2-log-search">
+-        <Icon name="search" />
+-        <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="Search your movies and shows" />
++    <div className="mg-log-v2-filters" aria-label="Media type">
++      {[{ id: "all", label: "All" }, { id: "movie", label: "Movies" }, { id: "tv", label: "TV Shows" }].map((filter) => (
++        <button key={filter.id} className={value === filter.id ? "active" : ""} type="button" onClick={() => onChange(filter.id)}>{filter.label}</button>
++      ))}
++    </div>
++  );
++}
++
++function LogPosterTile({ item, onOpen, onWatchlist, onOpenListPicker, saved, match }) {
++  const holdTimerRef = useRef(null);
++  const heldRef = useRef(false);
++  const clearHold = () => {
++    if (holdTimerRef.current) window.clearTimeout(holdTimerRef.current);
++    holdTimerRef.current = null;
++  };
++  useEffect(() => clearHold, []);
++  const beginHold = () => {
++    heldRef.current = false;
++    clearHold();
++    holdTimerRef.current = window.setTimeout(() => {
++      heldRef.current = true;
++      onOpenListPicker?.(item);
++    }, 520);
++  };
++  const toggleDefaultList = (event) => {
++    event.stopPropagation();
++    clearHold();
++    if (heldRef.current) {
++      heldRef.current = false;
++      return;
++    }
++    onWatchlist?.(item);
++  };
++  return (
++    <article className="mg-log-v2-poster">
++      <button className="mg-log-v2-poster-open" type="button" onClick={() => onOpen(item)}>
++        <span>
++          <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
++          {match ? <em>{match}% match</em> : null}
++        </span>
++        <strong>{titleOf(item)}</strong>
++        <small>{mediaType(item) === "tv" ? "TV Show" : "Movie"} ┬╖ {yearOf(item)}</small>
++      </button>
++      {onWatchlist && (
++        <button
++          className={`mg-log-v2-bookmark${saved ? " active" : ""}`}
++          type="button"
++          aria-label={saved ? `Remove ${titleOf(item)} from Watchlist` : `Add ${titleOf(item)} to Watchlist. Hold for lists.`}
++          aria-pressed={saved}
++          onPointerDown={beginHold}
++          onPointerUp={toggleDefaultList}
++          onPointerCancel={clearHold}
++          onPointerLeave={clearHold}
++          onContextMenu={(event) => event.preventDefault()}
++        >
++          <Icon name="bookmark" />
++        </button>
++      )}
++    </article>
++  );
++}
++
++function LogPosterGrid({ items, onOpen, watchlist, onWatchlist, onOpenListPicker }) {
++  return (
++    <div className="mg-log-v2-grid">
++      {items.map((item) => <LogPosterTile key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} />)}
++    </div>
++  );
++}
++
++function LogPosterRail({ items, onOpen, watchlist, onWatchlist, onOpenListPicker, showMatch = false, showBookmark = true }) {
++  return (
++    <div className="mg-log-v2-rail">
++      {items.map((item, index) => (
++        <LogPosterTile
++          key={keyOf(item)}
++          item={item}
++          onOpen={onOpen}
++          saved={hasStoredItem(item, watchlist)}
++          onWatchlist={showBookmark ? onWatchlist : undefined}
++          onOpenListPicker={showBookmark ? onOpenListPicker : undefined}
++          match={showMatch ? Math.max(76, Math.min(98, Number(item.__matchPercent || (95 - index * 3)))) : null}
++        />
++      ))}
++    </div>
++  );
++}
++
++function LogWrappedPage({ watchedItems, ratings, onBack, onOpen }) {
++  const movies = watchedItems.filter((item) => mediaType(item) === "movie");
++  const shows = watchedItems.filter((item) => mediaType(item) === "tv");
++  const watchedMinutes = watchedItems.reduce((sum, item) => sum + Number(item.runtime || item.episode_run_time?.[0] || 0), 0);
++  const rated = watchedItems.map((item) => ratingForItem(item, ratings)).filter(Boolean);
++  const average = rated.length ? (rated.reduce((sum, rating) => sum + rating, 0) / rated.length).toFixed(1) : "-";
++  const heroItem = watchedItems.find((item) => item.backdrop_path) || watchedItems[0];
++  return (
++    <section className="mg-log-v2-subpage mg-log-v2-wrapped">
++      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Wrapped</h2></div>
++      <div className="mg-log-v2-collection-hero" style={heroItem ? { backgroundImage: `linear-gradient(90deg, rgba(5,5,10,.96), rgba(20,8,42,.48) 65%, rgba(5,5,10,.24)), linear-gradient(0deg, #05050a, transparent 65%), url(${backdropUrl(heroItem.backdrop_path || heroItem.poster_path, "w1280")})` } : undefined}>
++        <small>YOUR RECAP</small>
++        <strong>{watchedItems.length ? "The stories you watched." : "Your next chapter starts here."}</strong>
++        <span>{watchedItems.length} watched title{watchedItems.length === 1 ? "" : "s"}</span>
+       </div>
+-      <div className="mg2-log-tabs" aria-label="Log sections">
+-        {logTabs.map((tab) => <button key={tab.id} className={logTab === tab.id ? "active" : ""} type="button" onClick={() => setLogTab(tab.id)}>{tab.label}</button>)}
++      <div className="mg-log-v2-watched-summary">
++        <span><Icon name="reels" /><strong>{movies.length}</strong><small>Movies</small></span>
++        <span><Icon name="log" /><strong>{shows.length}</strong><small>TV shows</small></span>
++        <span><Icon name="clock" /><strong>{Math.round(watchedMinutes / 60)}h</strong><small>Time spent</small></span>
++        <span><Icon name="sparkle" /><strong>{average}</strong><small>Avg rating</small></span>
+       </div>
+-      <button className="mg2-diary-entry" type="button" onClick={onOpenDiary}>
+-        <span><strong>Watch Calendar / Diary</strong><small>See your watched history by date</small></span>
+-        <Icon name="log" />
++      {movies.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Movies in your recap" /><LogPosterRail items={movies} onOpen={onOpen} showBookmark={false} /></section>}
++      {shows.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Shows in your recap" /><LogPosterRail items={shows} onOpen={onOpen} showBookmark={false} /></section>}
++      {!watchedItems.length && <div className="mg2-empty">Mark movies and shows watched to build your Wrapped recap.</div>}
++    </section>
++  );
++}
++
++function LogContinueCard({ item, onOpen, onToggleEpisode }) {
++  const [busy, setBusy] = useState(false);
++  const nextEpisode = item.__nextEpisode;
++  const progress = Math.max(1, Math.min(99, Number(item.__seriesProgress || 0)));
++  const remaining = Math.max(0, Number(item.__releasedEpisodeCount || 0) - Number(item.__watchedEpisodeCount || 0));
++  const advance = async (event) => {
++    event.stopPropagation();
++    if (busy) return;
++    setBusy(true);
++    try {
++      const result = await Promise.resolve(onToggleEpisode?.(item, nextEpisode));
++      if (result === false) throw new Error("Episode progress failed");
++    } finally {
++      setBusy(false);
++    }
++  };
++  return (
++    <article className="mg-log-v2-continue">
++      <button className="mg-log-v2-continue-open" type="button" onClick={() => onOpen(item)}>
++        <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
++        <span>
++          <strong>{titleOf(item)}</strong>
++          <small>S{nextEpisode.season_number} E{nextEpisode.episode_number}{nextEpisode.name ? ` ┬╖ ${nextEpisode.name}` : " next"}</small>
++          <em>{remaining} released episode{remaining === 1 ? "" : "s"} left</em>
++          <i><b style={{ width: `${progress}%` }} /></i>
++        </span>
+       </button>
+-      <div className="mg2-log-cp24-actions" aria-label="Personal analytics">
+-        <button type="button" onClick={onOpenDiary}><Icon name="book" /><span>Watch History</span></button>
+-        <button type="button" onClick={onOpenStats}><Icon name="chart" /><span>Stats</span></button>
+-        <button type="button" onClick={onOpenStats}><Icon name="sparkle" /><span>Wrapped</span></button>
++      <button className={`mg-log-v2-continue-check${busy ? " loading" : ""}`} type="button" disabled={busy} aria-label={`Mark S${nextEpisode.season_number} E${nextEpisode.episode_number} watched`} onClick={advance}>
++        {busy ? <span aria-hidden="true" /> : <Icon name="check" />}
++      </button>
++    </article>
++  );
++}
++
++function LogCollectionPage({ title, items, watchlist, onBack, onOpen, onWatchlist, onOpenListPicker, showHero = true }) {
++  const [filter, setFilter] = useState("all");
++  const filtered = items.filter((item) => filter === "all" || mediaType(item) === filter);
++  const heroItem = items.find((item) => item.backdrop_path) || items[0];
++  return (
++    <section className="mg-log-v2-subpage">
++      <div className="mg-log-v2-subhead">
++        <button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
++        <h2>{title}</h2>
+       </div>
+-      <div className="mg2-log-filters" aria-label="Log filters">
+-        <button className={typeFilter === "all" ? "active" : ""} type="button" onClick={() => setTypeFilter("all")}>All</button>
+-        <button className={typeFilter === "movie" ? "active" : ""} type="button" onClick={() => setTypeFilter("movie")}>Movie</button>
+-        <button className={typeFilter === "tv" ? "active" : ""} type="button" onClick={() => setTypeFilter("tv")}>TV</button>
+-        <select value={genreFilter} onChange={(event) => setGenreFilter(event.target.value)} aria-label="Genre filter">
+-          <option value="all">Genre</option>
+-          <option value="drama">Drama</option>
+-          <option value="sci-fi">Sci-Fi</option>
+-          <option value="anime">Anime</option>
+-        </select>
++      {showHero && heroItem && (
++        <div className="mg-log-v2-collection-hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(5,5,10,.96), rgba(5,5,10,.48) 62%, rgba(5,5,10,.2)), linear-gradient(0deg, #05050a, transparent 65%), url(${backdropUrl(heroItem.backdrop_path || heroItem.poster_path, "w1280")})` }}>
++          <small>YOUR COLLECTION</small>
++          <strong>{title}</strong>
++          <span>{items.length} title{items.length === 1 ? "" : "s"}</span>
++        </div>
++      )}
++      <LogTypeFilters value={filter} onChange={setFilter} />
++      {filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /> : <div className="mg2-empty">No {filter === "movie" ? "movies" : "TV shows"} in this collection.</div>}
++    </section>
++  );
++}
++
++function logCurrentStreak(items = []) {
++  const days = [...new Set(items.map((item) => String(item.watchedAt || "").slice(0, 10)).filter(Boolean))].sort().reverse();
++  if (!days.length) return 0;
++  let streak = 1;
++  for (let index = 1; index < days.length; index += 1) {
++    const prior = new Date(`${days[index - 1]}T00:00:00`);
++    const current = new Date(`${days[index]}T00:00:00`);
++    if (Math.round((prior - current) / 86400000) !== 1) break;
++    streak += 1;
++  }
++  return streak;
++}
++
++function LogDiaryPage({ watchedItems, continueItems, ratings, onBack, onOpen }) {
++  const monthKey = new Date().toISOString().slice(0, 7);
++  const thisMonth = watchedItems.filter((item) => String(item.watchedAt || "").startsWith(monthKey));
++  const hours = Math.round(thisMonth.reduce((sum, item) => sum + Number(item.runtime || item.episode_run_time?.[0] || 0), 0) / 60);
++  const rated = watchedItems.map((item) => ratingForItem(item, ratings)).filter(Boolean);
++  const average = rated.length ? (rated.reduce((sum, rating) => sum + rating, 0) / rated.length).toFixed(1) : "ΓÇö";
++  return (
++    <section className="mg-log-v2-subpage mg-log-v2-diary">
++      <div className="mg-log-v2-subhead"><button type="button" onClick={onBack} aria-label="Back"><Icon name="back" /></button><h2>Diary</h2></div>
++      <div className="mg-log-v2-diary-summary">
++        <span><strong>{thisMonth.length}</strong><small>This Month</small></span>
++        <span><strong>{hours}</strong><small>Hours</small></span>
++        <span><strong>{logCurrentStreak(watchedItems)}</strong><small>Streak</small></span>
++        <span><strong>{average}</strong><small>Avg Rating</small></span>
+       </div>
++      {continueItems.length > 0 && (
++        <section>
++          <LogSectionHeader title="In Progress" />
++          <div className="mg-log-v2-diary-progress">
++            {continueItems.slice(0, 5).map((item) => <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}><img src={posterUrl(item.poster_path, "w185")} alt="" /><span><strong>{titleOf(item)}</strong><small>S{item.__nextEpisode.season_number} E{item.__nextEpisode.episode_number} next</small></span></button>)}
++          </div>
++        </section>
++      )}
++      <section>
++        <LogSectionHeader title="Watch History" />
++        {watchedItems.length ? (
++          <div className="mg-log-v2-timeline">
++            {watchedItems.map((item) => (
++              <button key={keyOf(item)} type="button" onClick={() => onOpen(item)}>
++                <time>{item.watchedAt ? new Date(item.watchedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Saved"}</time>
++                <img src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
++                <span><strong>{titleOf(item)}</strong><small>{mediaType(item) === "tv" ? "TV Show" : "Movie"} ┬╖ {yearOf(item)}</small>{ratingForItem(item, ratings) ? <em>Γÿà {ratingForItem(item, ratings)}</em> : null}</span>
++              </button>
++            ))}
++          </div>
++        ) : <div className="mg2-empty">Your diary will appear after you mark a title watched.</div>}
++      </section>
++    </section>
++  );
++}
+ 
+-      {logTab === "lists" ? (
+-        <div className="mg2-log-lists">
+-          {listCards.map((list) => (
+-            <button key={list.id} type="button">
+-              <span className="mg2-log-list-posters">
+-                {list.items.map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}
+-              </span>
+-              <span><strong>{list.title}</strong><small>{list.subtitle}</small></span>
+-              <em>{list.items.length}</em>
+-            </button>
+-          ))}
+-        </div>
+-      ) : filteredItems.length ? (
++function LogScreen({ rows, watchlist = {}, watched = {}, ratings = {}, favorites = {}, customLists = {}, tonightItems = [], episodeProgress = {}, apiFetch, onOpen, onOpenStats, onWatchlist, onOpenListPicker, onCreateList, onToggleEpisode }) {
++  const [logTab, setLogTab] = useState("watchlist");
++  const [typeFilter, setTypeFilter] = useState("all");
++  const [subpage, setSubpage] = useState(null);
++  const [createOpen, setCreateOpen] = useState(false);
++  const [newListTitle, setNewListTitle] = useState("");
++  const watchedCollection = useMemo(() => normalizeTrackingCollection(watched), [watched]);
++  const saved = useMemo(() => Object.values(enforceWatchExclusivity(normalizeTrackingCollection(watchlist), watchedCollection)).filter(isReleased), [watchlist, watchedCollection]);
++  const watchedItems = useMemo(() => Object.values(watchedCollection).filter(isReleased).sort((a, b) => new Date(b.watchedAt || 0) - new Date(a.watchedAt || 0)), [watchedCollection]);
++  const watchAsapItems = useMemo(() => saved.filter((item) => item.watch_asap || item.watchAsap), [saved]);
++  const rowItems = useMemo(() => dedupe(Object.values(rows || {}).flatMap((row) => Array.isArray(row) ? row : [])), [rows]);
++  const customListItems = useMemo(() => dedupe(Object.values(customLists || {}).flatMap((list) => list.items || [])), [customLists]);
++  const candidateUniverse = useMemo(() => dedupe([...saved, ...watchedItems, ...customListItems, ...rowItems]), [customListItems, rowItems, saved, watchedItems]);
++  const continueCandidates = useMemo(() => dedupe([...saved, ...watchedItems, ...customListItems, ...rowItems.filter((item) => mediaType(item) === "tv")]), [customListItems, rowItems, saved, watchedItems]);
++  const continueItems = useHomeSeriesProgress({ episodeProgress, candidates: continueCandidates, apiFetch });
++  const recentlyWatched = useMemo(() => {
++    const cutoff = Date.now() - 7 * 86400000;
++    return watchedItems.filter((item) => {
++      const watchedAt = new Date(item.watchedAt || 0).getTime();
++      return Number.isFinite(watchedAt) && watchedAt >= cutoff;
++    });
++  }, [watchedItems]);
++  const tonightPool = useMemo(() => dedupe([
++    ...tonightItems,
++    ...saved,
++    ...customListItems,
++    ...watchedItems.filter((item) => item.rewatch || Number(item.rewatchCount || item.watch_count || 0) > 1)
++  ]).filter(isReleased).slice(0, 16).map((item, index) => ({ ...item, __matchPercent: Math.max(76, Math.min(98, 96 - index * 2 + (item.watch_asap || item.watchAsap ? 2 : 0))) })), [customListItems, saved, tonightItems, watchedItems]);
++  const ratedItems = useMemo(() => candidateUniverse.filter((item) => ratingForItem(item, ratings)).sort((a, b) => ratingForItem(b, ratings) - ratingForItem(a, ratings)), [candidateUniverse, ratings]);
++  const rewatchItems = useMemo(() => watchedItems.filter((item) => item.rewatch || Number(item.rewatchCount || item.watch_count || item.watched_count || 0) > 1), [watchedItems]);
++  const favoriteItems = useMemo(() => Object.values(favorites || {}).filter(Boolean), [favorites]);
++  const averageRating = ratedItems.length ? (ratedItems.reduce((sum, item) => sum + ratingForItem(item, ratings), 0) / ratedItems.length).toFixed(1) : "ΓÇö";
++  const watchedMinutes = watchedItems.reduce((sum, item) => sum + Number(item.runtime || item.episode_run_time?.[0] || 0), 0);
++  const filtered = (logTab === "watched" ? watchedItems : saved).filter((item) => typeFilter === "all" || mediaType(item) === typeFilter);
++  const listCards = [
++    { id: "watchlist", title: "Watchlist", subtitle: "Saved for later", items: saved, icon: "bookmark" },
++    { id: "asap", title: "ASAP", subtitle: "Watch next", items: watchAsapItems, icon: "clock" },
++    { id: "rated", title: "Rated", subtitle: "Your ratings", items: ratedItems, icon: "sparkle" },
++    { id: "rewatch", title: "Rewatch", subtitle: "Worth another watch", items: rewatchItems, icon: "reels" },
++    { id: "favorites", title: "Favourites", subtitle: "Your favourites", items: favoriteItems, icon: "heart" },
++    ...Object.values(customLists || {}).map((list) => ({ ...list, subtitle: "Custom list", items: list.items || [], icon: "list" }))
++  ];
++
++  const openCollection = (title, items) => setSubpage({ type: "collection", title, items: dedupe(items || []) });
++  const createList = async (event) => {
++    event.preventDefault();
++    const title = newListTitle.trim();
++    if (!title) return;
++    await Promise.resolve(onCreateList?.(title, null, { visibility: "private" }));
++    setNewListTitle("");
++    setCreateOpen(false);
++  };
++
++  if (subpage?.type === "diary") return <LogDiaryPage watchedItems={watchedItems} continueItems={continueItems} ratings={ratings} onBack={() => setSubpage(null)} onOpen={onOpen} />;
++  if (subpage?.type === "wrapped") return <LogWrappedPage watchedItems={watchedItems} ratings={ratings} onBack={() => setSubpage(null)} onOpen={onOpen} />;
++  if (subpage?.type === "collection") return <LogCollectionPage title={subpage.title} items={subpage.items} watchlist={watchlist} onBack={() => setSubpage(null)} onOpen={onOpen} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} />;
++
++  return (
++    <section className="mg2-log-screen mg-log-v2">
++      <div className="mg-log-v2-tabs" aria-label="Log sections">
++        {[{ id: "watchlist", label: "Watchlist" }, { id: "watched", label: "Watched" }, { id: "lists", label: "Lists" }].map((tab) => (
++          <button key={tab.id} className={logTab === tab.id ? "active" : ""} type="button" onClick={() => { setLogTab(tab.id); setTypeFilter("all"); }}>{tab.label}</button>
++        ))}
++      </div>
++
++      {logTab === "watchlist" && (
+         <>
+-          {logTab === "watchlist" && watchAsapItems.length > 0 && (
+-            <section className="mg2-watch-asap-shelf" aria-label="Watch ASAP">
+-              <div className="mg2-section-head"><h2>Watch ASAP</h2><span>{watchAsapItems.length}</span></div>
+-              <div className="mg2-watch-asap-row">
+-                {watchAsapItems.map((item) => (
+-                  <button key={`log-asap-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+-                    <img src={posterUrl(item.poster_path, "w185")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+-                    <span>{titleOf(item)}</span>
+-                  </button>
+-                ))}
+-              </div>
++          <section className="mg-log-v2-hub" style={saved[0] ? { backgroundImage: `linear-gradient(90deg, rgba(18,8,42,.97), rgba(15,8,35,.6)), url(${backdropUrl(saved.find((item) => item.backdrop_path)?.backdrop_path || saved[0].poster_path, "w780")})` } : undefined}>
++            <small>TRACKING HUB</small>
++            <h2>Your movie journey, in sync.</h2>
++            <p>Every watch, every rating, every moment.</p>
++            <div>
++              <button type="button" onClick={() => setSubpage({ type: "diary" })}><Icon name="book" /><span><strong>Diary</strong><small>Log your journey</small></span></button>
++              <button type="button" onClick={onOpenStats}><Icon name="chart" /><span><strong>Stats</strong><small>See your progress</small></span></button>
++              <button type="button" onClick={() => setSubpage({ type: "wrapped" })}><Icon name="sparkle" /><span><strong>Wrapped</strong><small>Your recap</small></span></button>
++            </div>
++          </section>
++
++          {continueItems.length > 0 && (
++            <section className="mg-log-v2-section">
++              <LogSectionHeader title="Continue Watching" onSeeAll={() => openCollection("Continue Watching", continueItems)} />
++              <div className="mg-log-v2-continue-rail">{continueItems.map((item) => <LogContinueCard key={keyOf(item)} item={item} onOpen={onOpen} onToggleEpisode={onToggleEpisode} />)}</div>
+             </section>
+           )}
+-          {logTab === "watchlist" && tonightItems.length > 0 && (
+-            <section className="mg2-watch-asap-shelf mg2-watch-tonight" aria-label="What to Watch Tonight">
+-              <div className="mg2-section-head"><h2>What to Watch Tonight</h2><span>Smart picks</span></div>
+-              <div className="mg2-smart-row">
+-                {tonightItems.map((item) => (
+-                  <button key={`log-tonight-${keyOf(item)}`} type="button" onClick={() => onOpen(item)}>
+-                    <img src={posterUrl(item.poster_path, "w342")} alt={titleOf(item)} loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />
+-                    <strong>{titleOf(item)}</strong>
+-                    <small>{item.__recReasons?.[0] || "High match tonight"}</small>
+-                  </button>
+-                ))}
+-              </div>
+-            </section>
++          {watchAsapItems.length > 0 && (
++            <section className="mg-log-v2-section"><LogSectionHeader title="Watch ASAP" onSeeAll={() => openCollection("Watch ASAP", watchAsapItems)} /><LogPosterRail items={watchAsapItems} onOpen={onOpen} showBookmark={false} /></section>
++          )}
++          {tonightPool.length > 0 && (
++            <section className="mg-log-v2-section"><LogSectionHeader title="What to Watch Tonight" onSeeAll={() => openCollection("What to Watch Tonight", tonightPool)} /><LogPosterRail items={tonightPool} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} showMatch /></section>
+           )}
+-          <div className="mg2-log-grid">
+-            {filteredItems.map((item) => {
+-              const userRating = ratingForItem(item, ratings);
+-              return <PosterCard key={keyOf(item)} item={item} onOpen={onOpen} saved={hasStoredItem(item, watchlist)} watched={hasStoredItem(item, watched)} rating={userRating} favorite={hasStoredItem(item, favorites)} compact />;
+-            })}
++          <section className="mg-log-v2-section mg-log-v2-all"><LogSectionHeader title="All Watchlist" /><LogTypeFilters value={typeFilter} onChange={setTypeFilter} />{filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /> : <div className="mg2-empty">Your watchlist is empty. Save a title to begin.</div>}</section>
++        </>
++      )}
++
++      {logTab === "watched" && (
++        <>
++          <div className="mg-log-v2-watched-summary">
++            <span><Icon name="log" /><strong>{watchedItems.length}</strong><small>Titles watched</small></span>
++            <span><Icon name="clock" /><strong>{Math.round(watchedMinutes / 60)}h</strong><small>Time spent</small></span>
++            <span><Icon name="sparkle" /><strong>{logCurrentStreak(watchedItems)}</strong><small>Current streak</small></span>
++            <span><Icon name="heart" /><strong>{averageRating}</strong><small>Avg rating</small></span>
++          </div>
++          {recentlyWatched.length > 0 && <section className="mg-log-v2-section"><LogSectionHeader title="Recently Watched" onSeeAll={() => openCollection("Recently Watched", recentlyWatched)} /><LogPosterRail items={recentlyWatched} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /></section>}
++          <section className="mg-log-v2-section mg-log-v2-all"><LogSectionHeader title="All Watched" /><LogTypeFilters value={typeFilter} onChange={setTypeFilter} />{filtered.length ? <LogPosterGrid items={filtered} onOpen={onOpen} watchlist={watchlist} onWatchlist={onWatchlist} onOpenListPicker={onOpenListPicker} /> : <div className="mg2-empty">Your watched history will appear here.</div>}</section>
++        </>
++      )}
++
++      {logTab === "lists" && (
++        <>
++          <section className="mg-log-v2-lists-hero">
++            <small>YOUR COLLECTIONS</small><h2>Your collections, your way.</h2><p>{listCards.length} lists ┬╖ {dedupe(listCards.flatMap((list) => list.items)).length} unique titles</p>
++            <button type="button" onClick={() => setCreateOpen((current) => !current)}><Icon name="list" /> Create New List</button>
++            {createOpen && <form onSubmit={createList}><input autoFocus value={newListTitle} onChange={(event) => setNewListTitle(event.target.value)} maxLength={80} placeholder="List name" /><button type="submit">Create</button></form>}
++          </section>
++          <div className="mg-log-v2-list-cards">
++            {listCards.map((list) => (
++              <button key={list.id} type="button" onClick={() => openCollection(list.title, list.items)}>
++                <i><Icon name={list.icon || "list"} /></i>
++                <span><strong>{list.title}</strong><small>{list.items.length} item{list.items.length === 1 ? "" : "s"} ┬╖ {list.subtitle}</small></span>
++                <em>{list.items.slice(0, 3).map((item) => <img key={keyOf(item)} src={posterUrl(item.poster_path, "w185")} alt="" loading="lazy" onError={(event) => { event.currentTarget.src = POSTER_FALLBACK; }} />)}</em>
++                <b aria-hidden="true">ΓÇ║</b>
++              </button>
++            ))}
+           </div>
+         </>
+-      ) : (
+-        <div className="mg2-empty">{logTab === "watchlist" ? "Your watchlist is empty. Save titles from Home, Explore, or Details." : logTab === "watched" ? "Mark titles watched from Details to build your history." : "No titles match your current filters."}</div>
+       )}
+     </section>
+   );
+@@ -11139,6 +11606,11 @@ export default function Home() {
+   const skipNextRemoteAutosync = useRef(false);
+   const sessionRemoteLoad = useRef({ userId: "", inFlight: false, cooldownUntil: 0 });
+ 
++  useEffect(() => {
++    const requestedTab = new URLSearchParams(window.location.search).get("tab");
++    if (tabs.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab);
++  }, []);
++
+   const apiFetch = useCallback(async (path, params = {}) => {
+     if (!API_KEY) throw new Error("Missing NEXT_PUBLIC_TMDB_API_KEY.");
+     const url = new URL(`${API_BASE}${path}`);
+@@ -12981,24 +13453,24 @@ export default function Home() {
+ 
+   async function createCustomList(title, item, options = {}) {
+     const id = `list-${Date.now()}`;
+-    const normalized = { ...item, media_type: mediaType(item) };
++    const normalized = item ? { ...item, media_type: mediaType(item) } : null;
+     let listId = id;
+     if (supabaseUser?.id) {
+       const remoteList = await createUserList(supabaseUser.id, { name: title, description: options.description || "", visibility: options.visibility || "public" });
+       if (remoteList?.id) {
+         listId = remoteList.id;
+-        addItemToList(supabaseUser.id, remoteList.id, normalized);
++        if (normalized) addItemToList(supabaseUser.id, remoteList.id, normalized);
+       }
+     }
+     const next = {
+       ...customLists,
+-      [listId]: { id: listId, title, description: options.description || "", privacy: options.visibility || "public", createdAt: new Date().toISOString(), items: [normalized] }
++      [listId]: { id: listId, title, description: options.description || "", privacy: options.visibility || "public", createdAt: new Date().toISOString(), items: normalized ? [normalized] : [] }
+     };
+     setCustomLists(next);
+     persist("moviegram.customLists", next);
+     setProfileStats((current) => current ? { ...current, lists: (current.lists || 0) + 1 } : current);
+     syncTrackingNow("custom_list_create", { customLists: next });
+-    logActivity("list_create", normalized, { listKey: listId, title, description: options.description || "", visibility: options.visibility || "public" });
++    if (normalized) logActivity("list_create", normalized, { listKey: listId, title, description: options.description || "", visibility: options.visibility || "public" });
+   }
+ 
+   function toggleCustomListItem(listId, item) {
+@@ -13250,7 +13722,7 @@ export default function Home() {
+   } else if (activeTab === "reels") {
+     screen = <ReelsScreen rows={rows} watched={libraryState.watched} watchlist={libraryState.watchlist} ratings={libraryState.ratings} reviews={libraryState.reviews} favorites={favorites} socialActivity={socialActivity} userId={supabaseUser?.id || "guest"} detailsOpen={Boolean(selected)} onOpen={openItem} onWatchlist={toggleWatchlist} onWatchAsap={toggleWatchAsap} onWatched={toggleWatched} onFavorite={toggleFavorite} onOpenListSheet={(item) => setListItem({ ...item, media_type: mediaType(item) })} onSafetyAction={openSafetyAction} onReelActivity={recordReelActivity} />;
+   } else if (activeTab === "log") {
+-    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} tonightItems={tonightItems} onOpen={openItem} onOpenDiary={() => setActiveSocial("diary")} onOpenStats={() => setActiveSocial("stats")} />;
++    screen = <LogScreen rows={rows} watchlist={libraryState.watchlist} watched={libraryState.watched} ratings={libraryState.ratings} favorites={favorites} customLists={customLists} tonightItems={tonightItems} episodeProgress={episodeProgress} apiFetch={apiFetch} onOpen={openItem} onOpenStats={() => setActiveSocial("stats")} onWatchlist={toggleWatchlist} onOpenListPicker={(item) => setListItem({ ...item, media_type: mediaType(item) })} onCreateList={createCustomList} onToggleEpisode={toggleHomeEpisodeWatched} />;
+   } else if (activeTab === "explore") {
+     screen = (
+       <ExploreScreen
